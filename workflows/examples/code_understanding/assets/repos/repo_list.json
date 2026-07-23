@@ -1,0 +1,62 @@
+[
+    {
+        "git_repo": "https://github.com/agapebondservant/tic-tac-toe-sample",
+        "git_branch": "main",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/agapebondservant/spacefx-sample-javafx",
+        "git_branch": "main",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/asciimoo/yappb",
+        "git_branch": "master",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/ParthKolekar/pacman-game",
+        "git_branch": "master",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://gitlab.com/agapebondservant/ticket-monster",
+        "git_branch": "2.7.0.Final-with-tutorials",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/Sajith-Dilshan/Authentication-Module-Java-Web-Project",
+        "git_branch": "master",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/banago/simple-php-website",
+        "git_branch": "main",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/agapebondservant/lamp-simple-rhel7",
+        "git_branch": "main",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/jariolaine/apex-blog",
+        "git_branch": "master",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    },
+    {
+        "git_repo": "https://github.com/Tzoop/MemoryGame",
+        "git_branch": "master",
+        "parent_source_path": "source",
+        "parent_target_path": "target"
+    }
+]

@@ -1,0 +1,53 @@
+```
+-Target activity-
+You are an AI assistant that helps analyze software codebases and extract dependency information.
+
+-Goal-
+Given a text document representing a code module, identify all relevant software entities and their relationships.
+
+-Steps-
+1. Identify all repositories, modules, classes, functions, and packages mentioned
+2. Identify dependency relationships (imports, inheritance, function calls)
+3. For each identified entity, extract:
+   - entity_name: Name of the repository, module, class, package or function.
+   For repositories, always use the git_slug.
+   For all other entities: if number of repos > 1, qualify as <git_slug>::<name>
+   (e.g., acme-payments-main::PaymentService); otherwise use the bare name.
+   - entity_type: One of [repository, module, class, function, package, dependency]
+   - entity_description: Brief description of what it does. For repositories, include both slug and URL in the format
+4. For each relationship, extract:
+   - source: The module/class that depends on another
+   - target: The module/class being depended upon
+   - relationship_type: Type of dependency (import, inheritance, call, etc.)
+   - relationship_strength: Numerical score (1-10) indicating coupling strength
+
+-Examples-
+Entity Types:
+- repository: A git repository
+  Description format: "Repository <git_slug>, hosted at <git_url>"
+  Example: "Repository jhani-user-app-main, hosted at https://github.com/jhani/user-app"
+- module: A source code file (e.g., user_service.py, AuthController.java)
+- class: A class definition
+- function: A function or method
+- package: A namespace or package
+- dependency: An external library or framework
+
+Relationship Types:
+- IMPORTS: Module A imports Module B
+- INHERITS: Class A inherits from Class B
+- CALLS: Function A calls Function B
+- USES: Module A uses functionality from Module B
+- DEPENDS_ON: Generic dependency relationship
+- BELONGS_TO: Module/Class/Function/Package A belongs to Repository B
+- CROSS_REPO_IMPORTS: Module A in one repo imports Module B from a different repo
+- CROSS_REPO_DEPENDS_ON: Module A in one repo depends on Module B from a different repo
+
+######################
+-Real Data-
+######################
+git_slug: {git_slug}
+git_url: {git_url}
+entity_types: repository, module, class, function, package, dependency
+text: {input_text}
+######################
+Output:

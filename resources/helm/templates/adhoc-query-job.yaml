@@ -1,0 +1,48 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-adhoc-query
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: pipeline-upload-job
+      containers:
+        - name: adhoc-query
+          image: {{ .Values.analysis.image.registry }}/{{ .Values.analysis.image.name }}:{{ .Values.analysis.image.version }}
+          command:
+            - sh
+            - -c
+            - |
+              git config --global --add safe.directory /opt/app-root/src >/dev/null 2>&1
+              git -C /opt/app-root/src init -q >/dev/null 2>&1
+              git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" >/dev/null 2>&1 || true
+              git -C /opt/app-root/src fetch origin "{{ .Values.repoRef }}" -q >/dev/null 2>&1
+              git -C /opt/app-root/src reset --hard FETCH_HEAD >/dev/null 2>&1
+              workflows/examples/code_understanding/scripts/run_adhoc_query.sh "$QUESTION"
+          workingDir: /opt/app-root/src
+          env:
+            - name: QUESTION
+              valueFrom:
+                secretKeyRef:
+                  name: adhoc-query-params
+                  key: QUESTION
+            - name: GRAPHRAG_DIR
+              value: "{{ .Values.adhocQuery.graphragDir }}"
+            - name: USE_GLOBAL
+              value: "{{ .Values.adhocQuery.useGlobal }}"
+            - name: RETRY_COUNT
+              value: "{{ .Values.adhocQuery.retryCount }}"
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+                optional: true
+          volumeMounts:
+            - name: workspace
+              mountPath: /opt/app-root/src
+      volumes:
+        - name: workspace
+          emptyDir: {}

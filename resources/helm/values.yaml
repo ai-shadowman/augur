@@ -1,0 +1,55 @@
+namespace: demo
+requester: ""
+kfpHost: ""
+deployNotebooks: false
+
+repoUrl: ""
+repoRef: main
+
+version: latest
+
+minio:
+  rootUser: ""
+  rootPassword: ""
+  namespace: minio
+  service: minio-service
+  bucket: demo
+
+dataGeneration:
+  image:
+    registry: ""
+    name: ""
+    title: "Agent Mesh - Data Generation"
+    version: latest
+    digestRef: ""
+  notebook:
+    name: data-generation
+
+graphrag:
+  image:
+    registry: ""
+    name: ""
+    title: "Agent Mesh - GraphRAG Indexing"
+    version: latest
+    digestRef: ""
+  notebook:
+    name: graphrag-indexing
+
+analysis:
+  image:
+    registry: ""
+    name: ""
+    title: "Agent Mesh - Analysis"
+    version: latest
+  notebook:
+    name: graphrag-analysis
+
+adhocQuery:
+  graphragDir: "graph_rag_app/source"
+  useGlobal: "1"
+  retryCount: "3"
+
+runPipelines:
+  args: "--single"
+  targetPath: "target"
+  graphragSourcePath: "graph_rag_app/source"

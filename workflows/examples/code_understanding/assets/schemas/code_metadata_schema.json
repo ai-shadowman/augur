@@ -1,0 +1,41 @@
+{
+  "file_path": "",
+  "git_repo": "",
+  "git_slug": "",
+  "language": "",
+  "purpose": "",
+  "package": "",
+  "imports": [],
+  "classes": [],
+  "methods": [
+    {
+      "method_name": "",
+      "code": "",
+      "callers": [],
+      "parameters": [],
+      "template_parameters": [],
+      "annotations": [],
+      "return value": "",
+      "exceptions": []
+    }
+  ],
+  "libraries": [
+    {
+      "library_name": "",
+      "library_version": "",
+      "library_version_source": "",
+      "runtime_version": "",
+      "deprecated": "",
+      "vulnerabilities": [],
+      "supported_on_rhel10": "",
+      "supported_on_rhel10_reason": ""
+    }
+  ],
+  "repo_packages": [
+    {
+      "package": "",
+      "library": "",
+      "reason": ""
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-pipelines
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: pipeline-upload-job
+      containers:
+        - name: run-pipelines
+          image: registry.access.redhat.com/ubi9/python-311
+          command:
+            - sh
+            - -c
+            - |
+              pip install --quiet 'kfp>=2.0.0,<3.0.0'
+              git config --global --add safe.directory /opt/app-root/src >/dev/null 2>&1
+              git -C /opt/app-root/src init -q >/dev/null 2>&1
+              git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" >/dev/null 2>&1 || true
+              git -C /opt/app-root/src fetch origin "{{ .Values.repoRef }}" -q >/dev/null 2>&1
+              git -C /opt/app-root/src reset --hard FETCH_HEAD >/dev/null 2>&1
+              workflows/examples/code_understanding/scripts/run_pipelines.sh {{ .Values.runPipelines.args }}
+          workingDir: /opt/app-root/src
+          env:
+            - name: KFP_HOST
+              value: "https://ds-pipeline-dspa.{{ .Values.namespace }}.svc.cluster.local:8443"
+            - name: KFP_NAMESPACE
+              value: "{{ .Values.namespace }}"
+            - name: KFP_DATA_GENERATION_OUTPUT_PATH
+              value: "{{ .Values.runPipelines.targetPath }}"
+            - name: KFP_DATA_INDEXING_OUTPUT_PATH
+              value: "{{ .Values.runPipelines.graphragSourcePath }}"
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+                optional: true
+          volumeMounts:
+            - name: workspace
+              mountPath: /opt/app-root/src
+      volumes:
+        - name: workspace
+          emptyDir: {}

@@ -1,0 +1,77 @@
+metadata:
+  id: graph-rag-456
+  name: "Config Generation"
+  description: "Prepares codebase for GraphRAG indexing"
+  version: "1.0.0"
+  author: "Omotola Awofolu"
+
+  recommended_models:
+    default: "meta-llama/llama-4-maverick"
+    compatible: ["mistralai/devstral-2512", "mistralai/ministral-14b-2512"]
+    experimental: []
+
+  tags:
+    - "code-refactoring"
+    - "code-generation"
+
+  license: "Apache-2.0"
+
+  dataset_requirements:
+    required_columns:
+      - git_repo
+      - git_slug
+      - file_path
+      - language
+      - code
+      - multi_repo
+    description: "Input dataset should contain fundamental data about the codebase."
+
+  output_columns:
+  - code_metadata
+
+blocks:
+
+  - block_type: PromptBuilderBlock
+    block_config:
+      block_name: code_to_metadata_prompt
+      input_cols:
+      - git_repo
+      - git_slug
+      - file_path
+      - language
+      - code
+      - multi_repo
+      output_cols: extract_metadata_prompt
+      prompt_config_path: prompts/data_from_config.yaml
+      format_as_messages: true
+
+  - block_type: LLMChatBlock
+    block_config:
+      block_name: get_code_metadata
+      input_cols: extract_metadata_prompt
+      output_cols: extracted_code_metadata
+      max_tokens: 64000
+      async_mode: true
+      n: 5
+
+  - block_type: LLMParserBlock
+    block_config:
+      block_name: get_code_metadata_output
+      input_cols: extracted_code_metadata
+      extract_content: true
+
+  - block_type: TextParserBlock
+    block_config:
+      block_name: extract_code_to_metadata_prompt_text
+      input_cols: get_code_metadata_output_content
+      output_cols: extracted_data
+      start_tags: [""]
+      end_tags: [""]
+
+  - block_type: CustomDeleteColumnsBlock
+    block_config:
+      block_name: drop_fields
+      input_cols:
+        - extract_metadata_prompt
+        - get_code_metadata_output_content
+        - extracted_code_metadata

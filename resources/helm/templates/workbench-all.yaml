@@ -1,0 +1,88 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: datagen-storage
+  namespace: {{ .Values.namespace}}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: graphrag-storage
+  namespace: {{ .Values.namespace}}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: custom-data-generation
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/created-by: "byon"
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-name: "{{ .Values.dataGeneration.image.title}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.version}}"
+    opendatahub.io/recommended-accelerators: '[]'
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: {{ .Values.dataGeneration.image.version}}
+      annotations:
+        opendatahub.io/notebook-python-dependencies: '[]'
+        opendatahub.io/notebook-software: '[]'
+        opendatahub.io/imported-from: {{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.version}}
+      from:
+        kind: DockerImage
+        name: '{{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.version}}'
+      importPolicy:
+        importMode: Legacy
+      referencePolicy:
+        type: Source
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: custom-graphrag
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/created-by: "byon"
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-name: "{{ .Values.graphrag.image.title}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.version}}"
+    opendatahub.io/recommended-accelerators: '[]'
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: {{ .Values.graphrag.image.version}}
+      annotations:
+        opendatahub.io/notebook-python-dependencies: '[]'
+        opendatahub.io/notebook-software: '[]'
+        opendatahub.io/imported-from: {{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.version}}
+      from:
+        kind: DockerImage
+        name: '{{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.version}}'
+      importPolicy:
+        importMode: Legacy
+      referencePolicy:
+        type: Source

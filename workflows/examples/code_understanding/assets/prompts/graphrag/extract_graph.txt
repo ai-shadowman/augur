@@ -1,0 +1,82 @@
+-Target activity-
+You are an AI assistant that helps analyze software codebases and extract dependency information.
+
+-Goal-
+Given a text document describing a software artifact — which may be source code in any programming language, a configuration file, an infrastructure definition, or a build script — identify all software entities and the relationships between them.
+
+-Steps-
+1. Identify all entities. For each identified entity, extract the following information:
+- entity_name: Most specific identifier available for the entity.
+  For repositories, always use the git_slug (e.g., jhani-user-app-main).
+  For all other entities: if multi_repo is true, prefix with <git_slug>:: to
+  avoid cross-repo name collisions
+  (e.g., acme-payments-main::com.acme.payments.PaymentService); otherwise use the bare name.
+  Within the name, preserve the original casing from the source: fully qualified names for Java/Python
+  (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
+  or filename for flat files. External dependencies shared across repos are never prefixed.
+- entity_type: One of the following types: [{entity_types}]
+- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors.
+  For repositories, use the format: "Repository <git_slug>, hosted at <git_url>"
+Format each entity as ("entity"{tuple_delimiter}<entity_name>{tuple_delimiter}<entity_type>{tuple_delimiter}<entity_description>)
+
+2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
+For each pair of related entities, extract the following information:
+- source_entity: name of the source entity, as identified in step 1
+- target_entity: name of the target entity, as identified in step 1
+- relationship_description: explanation of how the source entity depends on or uses the target entity
+- relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
+For dependencies that cross repository boundaries, use CROSS_REPO_IMPORTS or CROSS_REPO_DEPENDS_ON as the relationship type in the description.
+Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
+
+3. For every package entity identified in step 1, emit a USES_LIBRARY relationship for each dependency entity (external library) used by modules within that package.
+- source_entity: the package entity
+- target_entity: the dependency entity
+- relationship_description: e.g., "com.acme.payments imports org.springframework.web.bind.annotation"
+- relationship_strength: a numeric score reflecting how central the dependency is to the package
+Omit USES_LIBRARY if no modules within the package import or reference the dependency.
+
+4. For every non-repository entity identified in step 1, emit a BELONGS_TO relationship linking it to its repository entity, with the following exceptions:
+- Class and function entities are optional, since they are reachable through their parent module.
+- Dependency entities: emit BELONGS_TO only if the dependency is internal to the repository (i.e., defined within the same codebase). Omit BELONGS_TO for external third-party libraries and frameworks.
+
+5. Return output as a single list of all the entities and relationships identified in steps 1, 2, 3, and 4. Use **{record_delimiter}** as the list delimiter.
+
+6. When finished, output {completion_delimiter}
+
+######################
+-Entity Types-
+######################
+- repository: A git repository. entity_name = git_slug (e.g., jhani-user-app-main).
+  Description format: "Repository <git_slug>, hosted at <git_url>"
+- module: A single source file or compilation unit
+- class: A class definition
+- function: A function or method
+- package: A fully qualified language-specific namespace or directory that groups related modules or classes, or file path for Javascript/Typescript
+- dependency: An external code reference or declared library. Covers both import statements from source files and versioned libraries declared in build or config files (with optional version, vulnerability, and deprecation metadata). Never prefixed with git_slug
+- config_file: A configuration file (e.g., application.yaml, .env, terraform.tfvars)
+- service: A configured service or infrastructure component (e.g., spring.datasource)
+- variable: An environment variable or configuration property
+
+######################
+-Relationship Types-
+######################
+- IMPORTS: Module A imports Module B within the same repository
+- INHERITS: Class A inherits from Class B
+- CALLS: Function A calls Function B
+- USES: Module A uses functionality from Module B
+- DEPENDS_ON: Generic dependency relationship within the same repository
+- BELONGS_TO: Module/Class/Function/Package/Config A belongs to Repository B
+- USES_LIBRARY: Package A (a codebase namespace or grouping unit) uses library B
+- CROSS_REPO_IMPORTS: Module A in one repo imports Module B from a different repo
+- CROSS_REPO_DEPENDS_ON: Module A in one repo depends on Module B from a different repo
+
+######################
+-Real Data-
+######################
+git_slug: {git_slug}
+git_url: {git_url}
+multi_repo: {multi_repo}
+Entity_types: {entity_types}
+Text: {input_text}
+######################
+Output:

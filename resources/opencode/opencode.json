@@ -1,0 +1,82 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "docs/custom-guidelines.md"
+  ],
+  "autoupdate": false,
+  "agent": {
+    "default": {
+      "steps": 15
+    }
+  },
+  "plugin": [
+    "opencode-plugin-openspec"
+  ],
+  "provider": {
+    "vllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "vLLM Server",
+      "options": {
+        "baseURL": "{env:CODE_LLM_API_BASE}",
+        "apiKey": "{env:CODE_LLM_TOKEN}",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000,
+        "setCacheKey": true
+      },
+      "models": {
+        "mistralai/devstral-2512": {
+          "name": "mistralai/devstral-2512"
+        },
+        "google/gemma-4-31b-it": {
+          "name": "google/gemma-4-31b-it",
+          "options": {
+            "chat_template_kwargs": {
+              "enable_thinking": true
+            },
+            "prompt_prefix": "<|think|>\n"
+          }
+        },
+        "openai/gpt-oss-120b": {
+          "name": "openai/gpt-oss-120b",
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "auto"
+          }
+        }
+      }
+    },
+
+    "openrouter": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenRouter Provider",
+      "options": {
+        "baseURL": "{env:CODE_LLM_API_BASE}",
+        "apiKey": "{env:CODE_LLM_TOKEN}",
+        "timeout": 3600000,
+        "chunkTimeout": 3600000,
+        "setCacheKey": true
+      },
+      "models": {
+        "mistralai/devstral-2512": {
+          "name": "mistralai/devstral-2512"
+        },
+        "google/gemma-4-31b-it": {
+          "name": "google/gemma-4-31b-it",
+          "options": {
+            "reasoning": {
+              "max_tokens": 4096
+            }
+          }
+        },
+        "openai/gpt-oss-120b": {
+          "name": "openai/gpt-oss-120b",
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "auto"
+          }
+        }
+      }
+    }
+  },
+  "model": "vllm/google/gemma-4-31b-it"
+}

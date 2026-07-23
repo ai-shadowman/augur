@@ -1,0 +1,103 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: upload-assets
+  namespace: {{ .Values.namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: upload-assets
+          image: registry.access.redhat.com/ubi9/python-311
+          command:
+            - sh
+            - -c
+            - |
+              pip install --quiet "mlflow[kubernetes]>=3.11"
+              git config --global --add safe.directory /opt/app-root/src
+              git -C /opt/app-root/src init
+              git -C /opt/app-root/src remote add origin "${REPO_URL}" 2>/dev/null || true
+              git -C /opt/app-root/src fetch origin "${REPO_REF}"
+              git -C /opt/app-root/src reset --hard FETCH_HEAD
+              python - <<'PYEOF'
+              import os, logging, mlflow, requests
+              from mlflow.tracking import MlflowClient
+
+              logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+              EXPERIMENT_NAME = f"/{os.environ['MLFLOW_WORKSPACE']}/code-refactoring/assets"
+              ASSETS_DIR = "workflows/examples/code_understanding/assets"
+
+              def _get_or_create_experiment(client):
+                  all_experiments = client.search_experiments()
+                  logging.info(f"All visible experiments: {[(e.name, e.experiment_id) for e in all_experiments]}")
+                  experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
+                  logging.info(f"get_experiment_by_name('{EXPERIMENT_NAME}'): {experiment}")
+                  if experiment:
+                      if experiment.lifecycle_stage == "deleted":
+                          logging.info(f"Experiment '{EXPERIMENT_NAME}' is deleted. Restoring.")
+                          client.restore_experiment(experiment.experiment_id)
+                      elif experiment.lifecycle_stage != "active":
+                          logging.info(f"Experiment '{EXPERIMENT_NAME}' is not active. Deleting and recreating.")
+                          client.delete_experiment(experiment.experiment_id)
+                      return experiment.experiment_id
+                  return client.create_experiment(name=EXPERIMENT_NAME)
+
+              mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.redhat-ods-applications.svc:8443"))
+              client = MlflowClient()
+
+              experiment_id = _get_or_create_experiment(client)
+              logging.info(f"Experiment: {EXPERIMENT_NAME} (id={experiment_id})")
+
+              _RUN_NAME = "code-understanding"
+
+              existing = client.search_runs(
+                  experiment_ids=[experiment_id],
+                  filter_string=f"attributes.run_name = '{_RUN_NAME}' AND attributes.status = 'FINISHED'",
+              )
+              if existing:
+                  logging.info(f"Assets already uploaded (run_id={existing[0].info.run_id}). Skipping.")
+              else:
+                  run = client.create_run(experiment_id, run_name=_RUN_NAME)
+                  run_id = run.info.run_id
+                  logging.info(f"Created run: {run_id}")
+
+                  try:
+                      for entry in sorted(os.scandir(ASSETS_DIR), key=lambda e: e.name):
+                          if entry.is_dir():
+                              logging.info(f"Uploading {entry.name}/")
+                              client.log_artifacts(run_id, entry.path, artifact_path=entry.name)
+                          elif entry.is_file():
+                              logging.info(f"Uploading {entry.name}")
+                              client.log_artifact(run_id, entry.path, artifact_path="")
+                      client.set_terminated(run_id, status="FINISHED")
+                      logging.info(f"Upload complete. Run id: {run_id}")
+                  except Exception as e:
+                      client.set_terminated(run_id, status="FAILED")
+                      raise
+              PYEOF
+          workingDir: /opt/app-root/src
+          env:
+            - name: REPO_URL
+              value: "{{ .Values.repoUrl }}"
+            - name: REPO_REF
+              value: "{{ .Values.repoRef }}"
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
+            - name: MLFLOW_WORKSPACE
+              value: "{{ .Values.namespace }}"
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+          volumeMounts:
+            - name: workspace
+              mountPath: /opt/app-root/src
+      volumes:
+        - name: workspace
+          emptyDir: {}

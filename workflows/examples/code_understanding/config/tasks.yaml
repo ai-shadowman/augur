@@ -1,0 +1,43 @@
+plan:
+  description: >
+    Here is a summary of the migration task to be performed:
+    Creating a migration plan to refactor a legacy Java application into a 
+    modern version for RHEL 10 operating system
+    
+    Your job is to research this migration task and provide a comprehensive summary 
+    of the step-by-step migration process. 
+    
+    Use the Rag Tool to search 
+    for information from the following files:
+    {knowledge_source_files}
+    
+    Save the summary to a file named 
+    {output_base_path}/migration_plan_research.txt.
+
+  expected_output: >
+    A summary of the step-by-step migration process related to the migration
+    task to refactor a legacy Java application.
+  agent: architect
+  allow_delegation: False
+  output_file: "{output_base_path}/migration_plan_research.txt"
+
+build:
+  description: >
+    Here is a summary of the migration task to be performed:
+    Creating a migration plan to refactor a legacy Java application into a 
+    modern version for RHEL 10 operating system
+    
+    Here is the file containing background research relevant to the 
+    migration task:
+    {output_base_path}/migration_plan_research.txt
+    
+    Your task is to rewrite this file as a list of Markdown bullet points. 
+    Save the list to a file named {output_base_path}/migration_plan.txt.
+
+  expected_output: >
+    A list of Markdown bullet points related to the migration task.
+  agent: tech_writer
+  allow_delegation: False
+  context:
+    - plan
+  output_file: "{output_base_path}/migration_plan.txt"

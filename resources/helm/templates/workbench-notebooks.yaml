@@ -1,0 +1,138 @@
+{{- if .Values.deployNotebooks }}
+{{- $datagen_image := .Values.dataGeneration.image.digestRef | default (printf "%s/%s:%s" .Values.dataGeneration.image.registry .Values.dataGeneration.image.name .Values.dataGeneration.image.version) }}
+{{- $graphrag_image := .Values.graphrag.image.digestRef | default (printf "%s/%s:%s" .Values.graphrag.image.registry .Values.graphrag.image.name .Values.graphrag.image.version) }}
+---
+apiVersion: kubeflow.org/v1
+kind: Notebook
+metadata:
+  annotations:
+    notebooks.opendatahub.io/inject-auth: "true"
+    notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.version}}"
+    opendatahub.io/workbench-image-namespace: redhat-ods-applications
+    opendatahub.io/image-display-name: {{ .Values.dataGeneration.image.title}}
+    opendatahub.io/hardware-profile-name: default-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+  name: {{ .Values.dataGeneration.notebook.name}}
+  namespace: {{ .Values.namespace}}
+  labels:
+    opendatahub.io/odh-managed: "true"
+    opendatahub.io/dashboard: "true"
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: git-clone
+          image: {{ $datagen_image }}
+          command:
+            - sh
+            - -c
+            - |
+              REPO_NAME=$(basename "{{ .Values.repoUrl }}" .git)
+              TARGET="/opt/app-root/src/$REPO_NAME"
+              git config --global --add safe.directory "$TARGET"
+              git init "$TARGET"
+              git -C "$TARGET" remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
+              git -C "$TARGET" fetch origin "{{ .Values.repoRef }}"
+              git -C "$TARGET" reset --hard FETCH_HEAD
+          volumeMounts:
+            - name: workspace-volume
+              mountPath: /opt/app-root/src
+      containers:
+        - name: {{ .Values.dataGeneration.notebook.name}}
+          image: {{ $datagen_image }}
+          workingDir: /opt/app-root/src
+          resources:
+            limits:
+              cpu: "2"
+              memory: 8Gi
+            requests:
+              cpu: "1"
+              memory: 4Gi
+          volumeMounts:
+            - name: workspace-volume
+              mountPath: /opt/app-root/src
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+          env:
+            - name: NOTEBOOK_ARGS
+              value: >-
+                --ServerApp.port=8888
+                --ServerApp.token=''
+                --ServerApp.password=''
+                --ServerApp.base_url=/notebook/{{ .Values.namespace }}/{{ .Values.dataGeneration.notebook.name }}
+                --ServerApp.quit_button=False
+            - name: JUPYTER_IMAGE
+              value: "{{ $datagen_image }}"
+      volumes:
+        - name: workspace-volume
+          persistentVolumeClaim:
+            claimName: datagen-storage
+---
+apiVersion: kubeflow.org/v1
+kind: Notebook
+metadata:
+  annotations:
+    notebooks.opendatahub.io/inject-auth: "true"
+    notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.version}}"
+    opendatahub.io/workbench-image-namespace: redhat-ods-applications
+    opendatahub.io/image-display-name: {{ .Values.graphrag.image.title}}
+    opendatahub.io/hardware-profile-name: default-profile
+    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
+  name: {{ .Values.graphrag.notebook.name}}
+  namespace: {{ .Values.namespace}}
+  labels:
+    opendatahub.io/odh-managed: "true"
+    opendatahub.io/dashboard: "true"
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: git-clone
+          image: {{ $graphrag_image }}
+          command:
+            - sh
+            - -c
+            - |
+              REPO_NAME=$(basename "{{ .Values.repoUrl }}" .git)
+              TARGET="/opt/app-root/src/$REPO_NAME"
+              git config --global --add safe.directory "$TARGET"
+              git init "$TARGET"
+              git -C "$TARGET" remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
+              git -C "$TARGET" fetch origin "{{ .Values.repoRef }}"
+              git -C "$TARGET" reset --hard FETCH_HEAD
+          volumeMounts:
+            - name: workspace-volume
+              mountPath: /opt/app-root/src
+      containers:
+        - name: {{ .Values.graphrag.notebook.name}}
+          image: {{ $graphrag_image }}
+          workingDir: /opt/app-root/src
+          resources:
+            limits:
+              cpu: "2"
+              memory: 8Gi
+            requests:
+              cpu: "1"
+              memory: 4Gi
+          volumeMounts:
+            - name: workspace-volume
+              mountPath: /opt/app-root/src
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+          env:
+            - name: NOTEBOOK_ARGS
+              value: >-
+                --ServerApp.port=8888
+                --ServerApp.token=''
+                --ServerApp.password=''
+                --ServerApp.base_url=/notebook/{{ .Values.namespace }}/{{ .Values.graphrag.notebook.name }}
+                --ServerApp.quit_button=False
+            - name: JUPYTER_IMAGE
+              value: "{{ $graphrag_image }}"
+      volumes:
+        - name: workspace-volume
+          persistentVolumeClaim:
+            claimName: graphrag-storage
+{{- end }}

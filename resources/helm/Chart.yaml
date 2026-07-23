@@ -1,0 +1,5 @@
+apiVersion: v2
+name: agent-mesh
+description: Agent Mesh for Software Modernization - Code Understanding
+type: application
+version: 0.1.0
