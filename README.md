@@ -138,8 +138,8 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 
 ![High Level Overview](code_understanding.jpg)
 
-The **Code Understanding** workflow is the initial **iteration** in the 
-process. It is a **tool-driven workflow** which generates artifacts for the 
+The **Code Understanding** workflow is the initial **iteration** in the AI 
+software modernization process. It is a **tool-driven workflow** which generates artifacts for the 
 **refactoring catalog**. These artifacts are optionally combined with 
 other tools (organizational vulnerability scanners, static rules engines, 
 etc) to build the **migration plan** for the **Code Migration** workflow.
