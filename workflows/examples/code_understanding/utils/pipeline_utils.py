@@ -32,61 +32,58 @@ def _inject_agentmesh_code(yaml_path: str):
     `pipelines.*` and `utils.*` importable without any changes to the notebook
     or the container images.
 
-    PYTHONPATH is also set to program_path before the executor runs so that
-    components that omit sys.path.insert (e.g. run_adhoc_query_op) are covered
-    as well.
+    PYTHONPATH is also exported to program_path before the executor runs so
+    that components that omit sys.path.insert (e.g. run_adhoc_query_op) are
+    covered as well.
 
     Reads AGENTMESH_REPO_URL and AGENTMESH_REPO_REF from the environment; does
     nothing if AGENTMESH_REPO_URL is unset.
+
+    Uses direct string manipulation rather than a yaml parse/dump round-trip so
+    that the original YAML formatting is preserved exactly.
     """
+    import re
+
     repo_url = os.getenv("AGENTMESH_REPO_URL", "")
     if not repo_url:
+        logging.warning("  AGENTMESH_REPO_URL not set; skipping code injection for %s", yaml_path)
         return
 
     repo_ref = os.getenv("AGENTMESH_REPO_REF", "main")
 
-    # These lines are injected just before _KFP_RUNTIME=true so they run after
-    # ephemeral_component.py has been written to program_path.
-    clone_snippet = (
-        f'git clone --depth=1 --branch "{repo_ref}" "{repo_url}"'
-        ' /tmp/_agentmesh_src >/dev/null 2>&1 || true\n'
-        'cp -r /tmp/_agentmesh_src/workflows/examples/code_understanding/.'
-        ' "$program_path/" 2>/dev/null || true\n'
-        'PYTHONPATH="$program_path:${PYTHONPATH:-}"\n'
-        'export PYTHONPATH\n'
-    )
-
-    import yaml
+    # Lines injected just before _KFP_RUNTIME=true, after ephemeral_component.py
+    # has been written to program_path.
+    clone_lines = [
+        f'git clone --depth=1 --branch "{repo_ref}" "{repo_url}" /tmp/_agentmesh_src >/dev/null 2>&1 || true',
+        'cp -r /tmp/_agentmesh_src/workflows/examples/code_understanding/. "$program_path/" 2>/dev/null || true',
+        'PYTHONPATH="$program_path:${PYTHONPATH:-}"',
+        'export PYTHONPATH',
+    ]
 
     with open(yaml_path) as f:
-        pipeline = yaml.safe_load(f)
+        content = f.read()
 
-    modified = False
-    executors = (pipeline.get("deploymentSpec") or {}).get("executors") or {}
-    for executor in executors.values():
-        container = executor.get("container")
-        if not container:
-            continue
-        command = container.get("command")
-        if not command:
-            continue
-        for i, part in enumerate(command):
-            if (
-                isinstance(part, str)
-                and "_KFP_RUNTIME=true" in part
-                and clone_snippet not in part
-            ):
-                command[i] = part.replace(
-                    "_KFP_RUNTIME=true",
-                    clone_snippet + "_KFP_RUNTIME=true",
-                )
-                modified = True
-                break
+    if "/tmp/_agentmesh_src" in content:
+        logging.info("  Already injected agent-mesh clone into %s", yaml_path)
+        return
 
-    if modified:
-        with open(yaml_path, "w") as f:
-            yaml.dump(pipeline, f, default_flow_style=False)
-        logging.info(f"  Injected agent-mesh code path into {yaml_path}")
+    if "_KFP_RUNTIME=true" not in content:
+        logging.warning("  No '_KFP_RUNTIME=true' found in %s; nothing to inject", yaml_path)
+        return
+
+    def _inject(match):
+        # Preserve whatever indentation the line has in the YAML block literal.
+        indent = match.group(1)
+        snippet = "".join(indent + line + "\n" for line in clone_lines)
+        return snippet + match.group(0)
+
+    new_content = re.sub(r"^( *)_KFP_RUNTIME=true", _inject, content, flags=re.MULTILINE)
+
+    with open(yaml_path, "w") as f:
+        f.write(new_content)
+
+    count = len(re.findall(r"^( *)_KFP_RUNTIME=true", content, re.MULTILINE))
+    logging.info("  Injected agent-mesh clone into %d executor(s) in %s", count, yaml_path)
 
 
 def compile_and_exit(pipeline_fn):
