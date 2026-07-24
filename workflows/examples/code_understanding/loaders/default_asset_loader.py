@@ -37,3 +37,7 @@ class DefaultAssetLoader(AssetLoader):
     def upload(self, asset_file_path: str, upload_dir: str):
 
         return self._loader.upload(asset_file_path, upload_dir)
+
+    def upload_all_assets(self, assets_dir: str):
+
+        return self._loader.upload_all_assets(assets_dir)

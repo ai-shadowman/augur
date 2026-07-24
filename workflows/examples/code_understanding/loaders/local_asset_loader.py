@@ -92,3 +92,7 @@ class LocalAssetLoader(AssetLoader):
     def upload(self, asset_file_path: str, upload_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""
         pass
+
+    def upload_all_assets(self, assets_dir: str):
+        """No-op. Local assets are already on disk and require no upload step."""
+        pass
