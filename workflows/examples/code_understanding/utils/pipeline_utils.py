@@ -24,33 +24,17 @@ ANALYSIS_BASE_IMAGE = (
 def _inject_agentmesh_code(yaml_path: str):
     """Post-processes a compiled KFP pipeline YAML to embed the code_understanding
     source package into every executor's startup shell script.
-
-    KFP's generated executor script always creates a temp directory (program_path)
-    and writes the component function there as ephemeral_component.py.  By
-    extracting a tar archive of all subdirectories of code_understanding/ into that
-    same directory we make those packages importable without any changes to the
-    notebook or the container images.
-
-    The archive is created from the local source tree at compile time and embedded
-    as a base64-encoded string directly in the YAML.  This avoids needing git,
-    network access, or credentials inside component pods.
-
-    PYTHONPATH is also exported to program_path before the executor runs so that
-    components that omit sys.path.insert are covered as well.
-
-    Uses direct string manipulation rather than a yaml parse/dump round-trip so
-    that the original YAML formatting is preserved exactly.
     """
     import re
     import io
     import tarfile
     import base64 as _b64
 
-    # Locate code_understanding/ from this file's location (utils/pipeline_utils.py).
-    this_dir = os.path.dirname(os.path.abspath(__file__))  # .../utils/
-    code_dir = os.path.dirname(this_dir)                    # .../code_understanding/
+    # Locate code_understanding/ from this file's location
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    code_dir = os.path.dirname(this_dir)
 
-    # Collect all subdirectories and the top-level __init__.py (if present).
+    # Collect all subdirectories and the top-level __init__.py
     entries = sorted(os.scandir(code_dir), key=lambda e: e.name)
     embed_dirs = [e.name for e in entries if e.is_dir()]
     if not embed_dirs:
@@ -67,7 +51,6 @@ def _inject_agentmesh_code(yaml_path: str):
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        # Include top-level __init__.py if present so code_understanding is a package.
         init_py = os.path.join(code_dir, "__init__.py")
         if os.path.isfile(init_py):
             tar.add(init_py, arcname="__init__.py")
@@ -76,9 +59,6 @@ def _inject_agentmesh_code(yaml_path: str):
     buf.seek(0)
     b64_data = _b64.b64encode(buf.read()).decode("ascii")
 
-    # Lines injected just before _KFP_RUNTIME=true, after ephemeral_component.py
-    # has been written to program_path.  printf is a POSIX shell builtin so there
-    # is no exec argument-length limit even for very large base64 payloads.
     inject_lines = [
         f"printf '%s' '{b64_data}' | base64 -d | tar -xz -C \"$program_path/\"",
         'echo "[agentmesh-inject] program_path contents:" >&2',
