@@ -26,7 +26,7 @@ spec:
               git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
               git -C /opt/app-root/src fetch origin "{{ .Values.repoRef }}"
               git -C /opt/app-root/src reset --hard FETCH_HEAD
-              workflows/examples/code_understanding/scripts/run_pipelines.sh --upload-single --upload-aggregated
+              workflows/examples/code_understanding/scripts/upload_pipelines.sh
           workingDir: /opt/app-root/src
           env:
             - name: KFP_HOST
