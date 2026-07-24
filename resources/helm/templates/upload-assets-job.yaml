@@ -26,54 +26,13 @@ spec:
               git -C /opt/app-root/src fetch origin "${REPO_REF}"
               git -C /opt/app-root/src reset --hard FETCH_HEAD
               python - <<'PYEOF'
-              import os, logging, mlflow, requests
-              from mlflow.tracking import MlflowClient
-
-              logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-              EXPERIMENT_NAME = f"/{os.environ['MLFLOW_WORKSPACE']}/code-refactoring/assets"
-              ASSETS_DIR = "workflows/examples/code_understanding/assets"
-
-              def _get_or_create_experiment(client):
-                  all_experiments = client.search_experiments()
-                  logging.info(f"All visible experiments: {[(e.name, e.experiment_id) for e in all_experiments]}")
-                  experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
-                  logging.info(f"get_experiment_by_name('{EXPERIMENT_NAME}'): {experiment}")
-                  if experiment:
-                      if experiment.lifecycle_stage == "deleted":
-                          logging.info(f"Experiment '{EXPERIMENT_NAME}' is deleted. Restoring.")
-                          client.restore_experiment(experiment.experiment_id)
-                      elif experiment.lifecycle_stage != "active":
-                          logging.info(f"Experiment '{EXPERIMENT_NAME}' is not active. Deleting and recreating.")
-                          client.delete_experiment(experiment.experiment_id)
-                      return experiment.experiment_id
-                  return client.create_experiment(name=EXPERIMENT_NAME)
+              import sys, os, mlflow
+              sys.path.insert(0, '/opt/app-root/src/workflows/examples/code_understanding')
+              from loaders.mlflow_asset_loader import MlFlowAssetLoader
 
               mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.redhat-ods-applications.svc:8443"))
-              client = MlflowClient()
 
-              experiment_id = _get_or_create_experiment(client)
-              logging.info(f"Experiment: {EXPERIMENT_NAME} (id={experiment_id})")
-
-              _RUN_NAME = "code-understanding"
-
-              run = client.create_run(experiment_id, run_name=_RUN_NAME)
-              run_id = run.info.run_id
-              logging.info(f"Created run: {run_id}")
-
-              try:
-                  for entry in sorted(os.scandir(ASSETS_DIR), key=lambda e: e.name):
-                      if entry.is_dir():
-                          logging.info(f"Uploading {entry.name}/")
-                          client.log_artifacts(run_id, entry.path, artifact_path=entry.name)
-                      elif entry.is_file():
-                          logging.info(f"Uploading {entry.name}")
-                          client.log_artifact(run_id, entry.path, artifact_path="")
-                  client.set_terminated(run_id, status="FINISHED")
-                  logging.info(f"Upload complete. Run id: {run_id}")
-              except Exception as e:
-                  client.set_terminated(run_id, status="FAILED")
-                  raise
+              MlFlowAssetLoader().upload_all_assets("workflows/examples/code_understanding/assets")
               PYEOF
           workingDir: /opt/app-root/src
           env:
