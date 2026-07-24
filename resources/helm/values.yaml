@@ -45,11 +45,13 @@ analysis:
     name: graphrag-analysis
 
 adhocQuery:
+  run: false
   graphragDir: "graph_rag_app/source"
   useGlobal: "1"
   retryCount: "3"
 
 runPipelines:
+  run: false
   args: "--single"
   targetPath: "target"
   graphragSourcePath: "graph_rag_app/source"

@@ -149,6 +149,7 @@ run-adhoc-query:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set adhocQuery.run=true \
 		--set-string adhocQuery.graphragDir="$${GRAPHRAG_DIR:-graph_rag_app/source}" \
 		--set-string adhocQuery.useGlobal="$${USE_GLOBAL:-1}" \
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
@@ -171,6 +172,7 @@ run-pipelines:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set runPipelines.run=true \
 		--set-string runPipelines.args="$${ARGS:---single}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
 		--set-string runPipelines.graphragSourcePath="$${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}" \

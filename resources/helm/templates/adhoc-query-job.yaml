@@ -1,3 +1,4 @@
+{{- if .Values.adhocQuery.run }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -46,3 +47,4 @@ spec:
       volumes:
         - name: workspace
           emptyDir: {}
+{{- end }}
