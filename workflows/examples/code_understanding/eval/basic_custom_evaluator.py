@@ -22,10 +22,6 @@ def _llm_kwargs(prefix: str) -> dict:
 
 class BasicCustomEvaluator(CustomEvaluator):
     """LLM-as-judge evaluator using direct LiteLLM calls without an external evaluation framework.
-
-    Reads model configuration from environment variables:
-      GROUND_TRUTH_LLM_PROVIDER, GROUND_TRUTH_LLM_ID, GROUND_TRUTH_LLM_API_BASE, GROUND_TRUTH_LLM_TOKEN
-      JUDGE_LLM_PROVIDER, JUDGE_LLM_ID, JUDGE_LLM_API_BASE, JUDGE_LLM_TOKEN
     """
 
     _JUDGE_PROMPT = """Evaluate the following answer against the reference answer.

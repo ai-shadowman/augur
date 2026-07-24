@@ -46,12 +46,14 @@ class CustomEvaluator(ABC):
     ):
         """Runs evaluate() for every row in a CSV dataset and uploads the results.
 
-        For each row the input is constructed by concatenating the "Question"
-        and "One-shot example" columns (separated by a newline). The actual
-        answer is stored in the "Answer" column, and all metric results (scores
-        and reasoning) returned by evaluate() are expanded into additional
-        columns. The updated dataset is uploaded once after the full loop
-        completes.
+        For each row:
+        - The input is constructed by concatenating the "Question"
+        and "One-shot example" columns.
+        - The actual answer is stored in the "Answer" column.
+        - All metric results (scores and reasoning) returned by evaluate()
+        are expanded into additional columns.
+
+        The updated dataset is uploaded once after the full loop completes.
 
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
@@ -67,27 +69,43 @@ class CustomEvaluator(ABC):
         df = pd.read_csv(eval_dataset_file)
 
         for idx, row in df.iterrows():
+
             question = str(row["question"])
+
             one_shot = row.get("one_shot_example", "")
+
             if pd.notna(one_shot) and str(one_shot).strip():
+
                 input_text = f"{question}\n{one_shot}"
+
             else:
+
                 input_text = question
 
             try:
+
                 result = self.evaluate(input_text, graphrag_source_dir)
+
                 df.at[idx, "answer"] = result.get("actual_answer", "")
+
                 for key, value in result.items():
+
                     if key not in ("question", "actual_answer"):
+
                         df.at[idx, key] = value
+
             except Exception as e:
+
                 logging.error(f"Error evaluating row {idx}: {e}")
+
                 df.at[idx, "answer"] = f"ERROR: {e}"
 
         result_file = os.path.join(
             tempfile.gettempdir(), "code_understanding_results.csv"
         )
+
         df.to_csv(result_file, index=False)
+        
         DefaultAssetLoader().log_results(
             result_file, artifact_path="results/evaluations"
         )
