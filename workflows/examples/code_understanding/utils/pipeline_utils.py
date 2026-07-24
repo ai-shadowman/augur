@@ -22,40 +22,65 @@ ANALYSIS_BASE_IMAGE = (
 
 
 def _inject_agentmesh_code(yaml_path: str):
-    """Post-processes a compiled KFP pipeline YAML to inject an agent-mesh repo
-    clone into every executor's startup shell script.
+    """Post-processes a compiled KFP pipeline YAML to embed the code_understanding
+    source package into every executor's startup shell script.
 
-    KFP's generated executor script always creates a temp directory
-    (program_path) and writes the component function there as
-    ephemeral_component.py. By cloning the agent-mesh repo and copying the
-    code_understanding package contents into that same directory we make
-    `pipelines.*` and `utils.*` importable without any changes to the notebook
-    or the container images.
+    KFP's generated executor script always creates a temp directory (program_path)
+    and writes the component function there as ephemeral_component.py.  By
+    extracting a tar archive of all subdirectories of code_understanding/ into that
+    same directory we make those packages importable without any changes to the
+    notebook or the container images.
 
-    PYTHONPATH is also exported to program_path before the executor runs so
-    that components that omit sys.path.insert (e.g. run_adhoc_query_op) are
-    covered as well.
+    The archive is created from the local source tree at compile time and embedded
+    as a base64-encoded string directly in the YAML.  This avoids needing git,
+    network access, or credentials inside component pods.
 
-    Reads AGENTMESH_REPO_URL and AGENTMESH_REPO_REF from the environment; does
-    nothing if AGENTMESH_REPO_URL is unset.
+    PYTHONPATH is also exported to program_path before the executor runs so that
+    components that omit sys.path.insert are covered as well.
 
     Uses direct string manipulation rather than a yaml parse/dump round-trip so
     that the original YAML formatting is preserved exactly.
     """
     import re
+    import io
+    import tarfile
+    import base64 as _b64
 
-    repo_url = os.getenv("AGENTMESH_REPO_URL", "")
-    if not repo_url:
-        logging.warning("  AGENTMESH_REPO_URL not set; skipping code injection for %s", yaml_path)
+    # Locate code_understanding/ from this file's location (utils/pipeline_utils.py).
+    this_dir = os.path.dirname(os.path.abspath(__file__))  # .../utils/
+    code_dir = os.path.dirname(this_dir)                    # .../code_understanding/
+
+    # Collect all subdirectories and the top-level __init__.py (if present).
+    entries = sorted(os.scandir(code_dir), key=lambda e: e.name)
+    embed_dirs = [e.name for e in entries if e.is_dir()]
+    if not embed_dirs:
+        logging.warning(
+            "  No subdirs found under %s; skipping injection for %s",
+            code_dir, yaml_path,
+        )
         return
 
-    repo_ref = os.getenv("AGENTMESH_REPO_REF", "main")
+    def _skip_pycache(info: tarfile.TarInfo):
+        if "__pycache__" in info.name or info.name.endswith(".pyc"):
+            return None
+        return info
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        # Include top-level __init__.py if present so code_understanding is a package.
+        init_py = os.path.join(code_dir, "__init__.py")
+        if os.path.isfile(init_py):
+            tar.add(init_py, arcname="__init__.py")
+        for d in embed_dirs:
+            tar.add(os.path.join(code_dir, d), arcname=d, filter=_skip_pycache)
+    buf.seek(0)
+    b64_data = _b64.b64encode(buf.read()).decode("ascii")
 
     # Lines injected just before _KFP_RUNTIME=true, after ephemeral_component.py
-    # has been written to program_path.
-    clone_lines = [
-        f'git clone --depth=1 --branch "{repo_ref}" "{repo_url}" /tmp/_agentmesh_src >/dev/null 2>&1 || true',
-        'cp -r /tmp/_agentmesh_src/workflows/examples/code_understanding/. "$program_path/" 2>/dev/null || true',
+    # has been written to program_path.  printf is a POSIX shell builtin so there
+    # is no exec argument-length limit even for very large base64 payloads.
+    inject_lines = [
+        f"printf '%s' '{b64_data}' | base64 -d | tar -xz -C \"$program_path/\"",
         'PYTHONPATH="$program_path:${PYTHONPATH:-}"',
         'export PYTHONPATH',
     ]
@@ -63,8 +88,8 @@ def _inject_agentmesh_code(yaml_path: str):
     with open(yaml_path) as f:
         content = f.read()
 
-    if "/tmp/_agentmesh_src" in content:
-        logging.info("  Already injected agent-mesh clone into %s", yaml_path)
+    if "base64 -d | tar -xz" in content:
+        logging.info("  Already injected embedded code into %s", yaml_path)
         return
 
     if "_KFP_RUNTIME=true" not in content:
@@ -74,7 +99,7 @@ def _inject_agentmesh_code(yaml_path: str):
     def _inject(match):
         # Preserve whatever indentation the line has in the YAML block literal.
         indent = match.group(1)
-        snippet = "".join(indent + line + "\n" for line in clone_lines)
+        snippet = "".join(indent + line + "\n" for line in inject_lines)
         return snippet + match.group(0)
 
     new_content = re.sub(r"^( *)_KFP_RUNTIME=true", _inject, content, flags=re.MULTILINE)
@@ -83,7 +108,10 @@ def _inject_agentmesh_code(yaml_path: str):
         f.write(new_content)
 
     count = len(re.findall(r"^( *)_KFP_RUNTIME=true", content, re.MULTILINE))
-    logging.info("  Injected agent-mesh clone into %d executor(s) in %s", count, yaml_path)
+    logging.info(
+        "  Embedded %d dir(s) into %d executor(s) in %s",
+        len(embed_dirs), count, yaml_path,
+    )
 
 
 def compile_and_exit(pipeline_fn):
