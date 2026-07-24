@@ -89,7 +89,8 @@ versions = client.list_pipeline_versions(pipeline_id=pipeline_id)
 if not versions.pipeline_versions:
     print(f"Error: pipeline '{pipeline_name}' has no versions in KFP.", file=sys.stderr)
     sys.exit(1)
-version_id = versions.pipeline_versions[0].pipeline_version_id
+latest_version = sorted(versions.pipeline_versions, key=lambda v: v.created_at, reverse=True)[0]
+version_id = latest_version.pipeline_version_id
 
 experiment = client.create_experiment(name="Default")
 run = client.run_pipeline(
