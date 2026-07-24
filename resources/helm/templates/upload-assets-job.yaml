@@ -57,30 +57,23 @@ spec:
 
               _RUN_NAME = "code-understanding"
 
-              existing = client.search_runs(
-                  experiment_ids=[experiment_id],
-                  filter_string=f"attributes.run_name = '{_RUN_NAME}' AND attributes.status = 'FINISHED'",
-              )
-              if existing:
-                  logging.info(f"Assets already uploaded (run_id={existing[0].info.run_id}). Skipping.")
-              else:
-                  run = client.create_run(experiment_id, run_name=_RUN_NAME)
-                  run_id = run.info.run_id
-                  logging.info(f"Created run: {run_id}")
+              run = client.create_run(experiment_id, run_name=_RUN_NAME)
+              run_id = run.info.run_id
+              logging.info(f"Created run: {run_id}")
 
-                  try:
-                      for entry in sorted(os.scandir(ASSETS_DIR), key=lambda e: e.name):
-                          if entry.is_dir():
-                              logging.info(f"Uploading {entry.name}/")
-                              client.log_artifacts(run_id, entry.path, artifact_path=entry.name)
-                          elif entry.is_file():
-                              logging.info(f"Uploading {entry.name}")
-                              client.log_artifact(run_id, entry.path, artifact_path="")
-                      client.set_terminated(run_id, status="FINISHED")
-                      logging.info(f"Upload complete. Run id: {run_id}")
-                  except Exception as e:
-                      client.set_terminated(run_id, status="FAILED")
-                      raise
+              try:
+                  for entry in sorted(os.scandir(ASSETS_DIR), key=lambda e: e.name):
+                      if entry.is_dir():
+                          logging.info(f"Uploading {entry.name}/")
+                          client.log_artifacts(run_id, entry.path, artifact_path=entry.name)
+                      elif entry.is_file():
+                          logging.info(f"Uploading {entry.name}")
+                          client.log_artifact(run_id, entry.path, artifact_path="")
+                  client.set_terminated(run_id, status="FINISHED")
+                  logging.info(f"Upload complete. Run id: {run_id}")
+              except Exception as e:
+                  client.set_terminated(run_id, status="FAILED")
+                  raise
               PYEOF
           workingDir: /opt/app-root/src
           env:
