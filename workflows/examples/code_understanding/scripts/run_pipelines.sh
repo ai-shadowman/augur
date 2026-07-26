@@ -3,11 +3,13 @@
 # Pipelines must be uploaded first via: make upload-pipelines
 #
 # Usage:
-#   ./run_pipelines.sh --single      # trigger existing single-repo pipeline run
-#   ./run_pipelines.sh --aggregated  # trigger existing aggregated pipeline run
+#   ./run_pipelines.sh --single-repo   # trigger existing single-repo pipeline run
+#   ./run_pipelines.sh --multi-repo    # trigger existing multi-repo pipeline run
 #
 # Environment variables:
 #   KFP_NAMESPACE         Kubernetes namespace (KFP_HOST is derived from this)
+#   GIT_REPO              Git repository URL to analyse (required for --single-repo)
+#   GIT_BRANCH            Git branch to clone (default: main)
 #   KFP_DATA_GENERATION_OUTPUT_PATH  Output path from data generation (default: target)
 #   KFP_DATA_INDEXING_OUTPUT_PATH    GraphRAG source path for indexing (default: graph_rag_app/source)
 
@@ -18,12 +20,14 @@ usage() {
 Usage: $(basename "$0") [OPTION]...
 
 Options:
-  --single      Trigger existing single-repo pipeline run
-  --aggregated  Trigger existing aggregated pipeline run
-  -h, --help    Show this help message
+  --single-repo   Trigger existing single-repo pipeline run
+  --multi-repo    Trigger existing multi-repo pipeline run
+  -h, --help      Show this help message
 
 Environment variables:
   KFP_NAMESPACE  Kubernetes namespace, used to derive KFP_HOST (required)
+  GIT_REPO       Git repository URL to analyse (required for --single-repo)
+  GIT_BRANCH     Git branch to clone (default: main)
   KFP_DATA_GENERATION_OUTPUT_PATH  Output path from data generation (default: target)
   KFP_DATA_INDEXING_OUTPUT_PATH    GraphRAG source path for indexing (default: graph_rag_app/source)
 EOF
@@ -36,6 +40,8 @@ fi
 
 KFP_HOST="${KFP_HOST:-https://ds-pipeline-dspa.${KFP_NAMESPACE}.svc.cluster.local:8443}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+GIT_REPO="${GIT_REPO:-}"
+GIT_BRANCH="${GIT_BRANCH:-main}"
 TARGET_PATH="${KFP_DATA_GENERATION_OUTPUT_PATH:-target}"
 GRAPHRAG_SOURCE_PATH="${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}"
 
@@ -106,28 +112,32 @@ PYEOF
     echo "  OK: $run_name submitted."
 }
 
-RUN_SINGLE=false
-RUN_AGGREGATED=false
+RUN_SINGLE_REPO=false
+RUN_MULTI_REPO=false
 
 if [[ $# -eq 0 ]]; then
-    RUN_SINGLE=true
-    RUN_AGGREGATED=true
+    RUN_SINGLE_REPO=true
+    RUN_MULTI_REPO=true
 fi
 
 for arg in "$@"; do
     case "$arg" in
-        --single)     RUN_SINGLE=true ;;
-        --aggregated) RUN_AGGREGATED=true ;;
-        -h|--help)    usage; exit 0 ;;
+        --single-repo) RUN_SINGLE_REPO=true ;;
+        --multi-repo)  RUN_MULTI_REPO=true ;;
+        -h|--help)     usage; exit 0 ;;
         *) echo "Error: Unknown argument: $arg" >&2; usage; exit 1 ;;
     esac
 done
 
-if $RUN_SINGLE; then
-    trigger_pipeline "single_full" "single_full_${TIMESTAMP}" \
-        "{\"target_path\": \"$TARGET_PATH\", \"graphrag_source_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
+if $RUN_SINGLE_REPO; then
+    if [[ -z "$GIT_REPO" ]]; then
+        echo "Error: GIT_REPO must be set and non-empty for --single-repo." >&2
+        exit 1
+    fi
+    trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
+        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"target_path\": \"$TARGET_PATH\", \"graphrag_source_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
 fi
 
-$RUN_AGGREGATED && trigger_pipeline "aggregated" "aggregated_${TIMESTAMP}"
+$RUN_MULTI_REPO && trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}"
 
 echo "All done."

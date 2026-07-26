@@ -36,29 +36,17 @@ fi
 
 RESULT=$(CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" QUESTION="$QUESTION" GRAPHRAG_DIR="$GRAPHRAG_DIR" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" \
   python3 - << 'PYEOF'
-import asyncio, os, sys
+import os, sys
 sys.path.insert(0, os.environ["CODE_UNDERSTANDING_DIR"])
-from utils.graphrag_utils import DependencyAnalyzer
-analyzer = DependencyAnalyzer(root_dir=os.environ["GRAPHRAG_DIR"])
-result = asyncio.run(analyzer.query_with_llm(
-    os.environ["QUESTION"],
+from pipelines.base.analysis import run_adhoc_query_pipeline
+result = run_adhoc_query_pipeline(
+    graphrag_source_path=os.environ["GRAPHRAG_DIR"],
+    question=os.environ["QUESTION"],
     retry_count=int(os.environ["RETRY_COUNT"]),
     use_global=os.environ["USE_GLOBAL"] == "1",
-))
+)
 print(result)
 PYEOF
 )
-
-TIMESTAMP=$(date +%Y%m%d%H%M%S)
-RESULT_FILE="adhoc_query_${TIMESTAMP}.txt"
-printf "Question: %s\n\nAnswer:\n%s" "$QUESTION" "$RESULT" > "$RESULT_FILE"
-
-CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" RESULT_FILE="$RESULT_FILE" \
-  python3 - << 'PYEOF'
-import os, sys
-sys.path.insert(0, os.environ["CODE_UNDERSTANDING_DIR"])
-from loaders.default_asset_loader import DefaultAssetLoader
-DefaultAssetLoader().log_results(os.environ["RESULT_FILE"], artifact_path="results/adhoc_queries")
-PYEOF
 
 echo "$RESULT"

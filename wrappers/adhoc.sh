@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shortcut for: make run-adhoc-query QUESTION="..."
-# Usage: ./shell/adhoc.sh Which modules are riskiest to refactor?
+# Usage: ./wrappers/adhoc.sh Which modules are riskiest to refactor?
 
 [ $# -lt 1 ] && { echo "Usage: $0 <question>" >&2; exit 1; }
 

@@ -117,22 +117,22 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 
 ## Running the Code Understanding Workflow
 1. To run the **Code Understanding** pipeline for a single repository, run:
-```make run-pipelines ARGS="--single"```
+```make run-pipelines ARGS="--single-repo"```
 
 2. To run the **Code Understanding** pipeline for multiple repositories, 
    perform the following steps:
     - Update `assets/repos/repo_list.json` with the list of repositories to 
       be processed.
     - Run the following command:
-   ```make run-pipelines ARGS="--aggregated"```
+   ```make run-pipelines ARGS="--multi-repo"```
 
 ## Running Adhoc Queries
 1. To run adhoc queries about the indexed code, run the following:
-```shell/adhoc.sh <query>```
+```wrappers/adhoc.sh <query>```
    - For example: 
-     - `shell/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes? Include the fully qualified names."`
-     - `shell/adhoc.sh "Which modules or components would be riskiest to refactor first? Include the fully qualified names."`
-     - `shell/adhoc.sh "Which modules or components would be the least risky to refactor first? Include the fully qualified names."`
+     - `wrappers/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes? Include the fully qualified names."`
+     - `wrappers/adhoc.sh "Which modules or components would be riskiest to refactor first? Include the fully qualified names."`
+     - `wrappers/adhoc.sh "Which modules or components would be the least risky to refactor first? Include the fully qualified names."`
 
 ## More About the Code Understanding Workflow
 

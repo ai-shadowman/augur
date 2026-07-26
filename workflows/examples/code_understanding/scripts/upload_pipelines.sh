@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles kubeflow_generation.ipynb and uploads all KFP pipeline templates.
+# Compiles and uploads all KFP pipeline templates.
 # Intended to run inside the upload-kubeflow-pipelines Kubernetes job where
 # the service account token is available for KFP authentication.
 #
@@ -18,30 +18,20 @@ KFP_HOST="${KFP_HOST:-https://ds-pipeline-dspa.${KFP_NAMESPACE}.svc.cluster.loca
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_UNDERSTANDING_DIR="$(dirname "$SCRIPT_DIR")"
-COMPILED_DIR="$SCRIPT_DIR/compiled_pipelines"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+YAML_DIR="$SCRIPT_DIR/compiled_pipelines/${TIMESTAMP}_yamls"
 
-TEMP_SCRIPT="$COMPILED_DIR/${TIMESTAMP}_kubeflow_generation.py"
-YAML_DIR="$COMPILED_DIR/${TIMESTAMP}_yamls"
-
-mkdir -p "$COMPILED_DIR"
+mkdir -p "$YAML_DIR"
 
 # ---------------------------------------------------------------------------
-# Compile notebook to YAML pipeline definitions
+# Compile all pipelines to YAML
 # ---------------------------------------------------------------------------
-echo "Converting kubeflow_generation.ipynb to script..."
-jupyter nbconvert --to python \
-    "$CODE_UNDERSTANDING_DIR/utils/notebooks/kubeflow_generation.ipynb" \
-    --output "$COMPILED_DIR/${TIMESTAMP}_kubeflow_generation"
-
 echo "Compiling all pipelines..."
 PIPELINE_COMPILE_ONLY=1 \
 KFP_PIPELINE_OUTPUT_DIR="$YAML_DIR" \
 PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \
-python3 "$TEMP_SCRIPT"
+python3 "$CODE_UNDERSTANDING_DIR/pipelines/full_pipelines.py"
 echo "  Compiled YAMLs -> $YAML_DIR/"
-
-rm -f "$TEMP_SCRIPT"
 
 # ---------------------------------------------------------------------------
 # upload_pipeline
@@ -91,7 +81,13 @@ PYEOF
     echo "  OK: $pipeline_name uploaded."
 }
 
-upload_pipeline "$YAML_DIR/single_full.yaml" "single_full"
-upload_pipeline "$YAML_DIR/aggregated.yaml"  "aggregated"
+# ---------------------------------------------------------------------------
+# Auto-discover and upload all compiled YAML files
+# ---------------------------------------------------------------------------
+for yaml_file in "$YAML_DIR"/*.yaml; do
+    [[ -e "$yaml_file" ]] || continue
+    pipeline_name="$(basename "$yaml_file" .yaml)"
+    upload_pipeline "$yaml_file" "$pipeline_name"
+done
 
 echo "All pipelines uploaded."

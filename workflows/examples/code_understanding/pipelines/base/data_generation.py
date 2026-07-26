@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
 def clone_from_repo(repo_url, destination_path, branch="master"):
@@ -387,7 +387,7 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
     return result
 
 
-def run_full_pipeline_aggregated(git_repos: list):
+def run_full_pipeline_multi_repo(git_repos: list):
     """Runs run_full_pipeline for each repository in git_repos and returns a list of status dicts."""
     import logging
     from utils import code_utils
@@ -417,3 +417,5 @@ def run_full_pipeline_aggregated(git_repos: list):
         pipeline_results.append(result)
 
     return pipeline_results
+
+

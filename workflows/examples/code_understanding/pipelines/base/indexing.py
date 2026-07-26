@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+
 
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_slug: str = None, multi_repo: bool = False):
@@ -116,3 +120,5 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
     DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines")
 
     return result
+
+
