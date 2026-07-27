@@ -34,6 +34,7 @@ spec:
     enableExternalRoute: true
     minio:
       deploy: true
+      image: {}
       pvcSize: 10Gi
       bucket: {{ .Values.minio.bucket }}pipelines
       s3CredentialsSecret:
