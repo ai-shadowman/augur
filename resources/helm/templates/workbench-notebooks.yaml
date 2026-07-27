@@ -10,8 +10,6 @@ metadata:
     notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.version}}"
     opendatahub.io/workbench-image-namespace: redhat-ods-applications
     opendatahub.io/image-display-name: {{ .Values.dataGeneration.image.title}}
-    opendatahub.io/hardware-profile-name: default-profile
-    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
   name: {{ .Values.dataGeneration.notebook.name}}
   namespace: {{ .Values.namespace}}
   labels:
@@ -77,8 +75,6 @@ metadata:
     notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.version}}"
     opendatahub.io/workbench-image-namespace: redhat-ods-applications
     opendatahub.io/image-display-name: {{ .Values.graphrag.image.title}}
-    opendatahub.io/hardware-profile-name: default-profile
-    opendatahub.io/hardware-profile-namespace: redhat-ods-applications
   name: {{ .Values.graphrag.notebook.name}}
   namespace: {{ .Values.namespace}}
   labels:
