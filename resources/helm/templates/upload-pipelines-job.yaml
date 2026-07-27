@@ -33,6 +33,10 @@ spec:
               value: "https://ds-pipeline-dspa.{{ .Values.namespace }}.svc.cluster.local:8443"
             - name: KFP_NAMESPACE
               value: "{{ .Values.namespace }}"
+            - name: MLFLOW_WORKSPACE
+              value: "{{ .Values.namespace }}"
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
             - name: AGENTMESH_REPO_URL
               value: "{{ .Values.repoUrl }}"
             - name: AGENTMESH_REPO_REF

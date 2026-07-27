@@ -10,6 +10,7 @@ install:
 	\
 	echo "==> Granting mlflow role to default user for MLflow workspace access ..." && \
 	oc adm policy add-role-to-user mlflow default -n $$KFP_NAMESPACE && \
+	oc adm policy add-role-to-user mlflow -z pipeline-upload-job -n $$KFP_NAMESPACE && \
 	\
 	echo "==> Running helm upgrade..." && \
 	helm upgrade --install agent-mesh-for-sw resources/helm \
@@ -85,7 +86,7 @@ apply-secrets:
 	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
 	oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge \
-		-p "{\"stringData\":{\"MLFLOW_NAMESPACE\":\"$$KFP_NAMESPACE\",\"MLFLOW_TRACKING_TOKEN\":\"$$(oc whoami --show-token)\"}}"
+		-p "{\"stringData\":{\"MLFLOW_NAMESPACE\":\"$$KFP_NAMESPACE\"}}"
 
 build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
