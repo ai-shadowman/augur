@@ -11,10 +11,8 @@ version: latest
 minio:
   rootUser: ""
   rootPassword: ""
-  namespace: minio
-  service: minio-service
   bucket: demo
-  region: us-east-1
+
 
 dataGeneration:
   image:

@@ -6,7 +6,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_slug: str = None, multi_repo: bool = False):
     """Generates a GraphRAG index from the provided codebase."""
-    from minio import Minio
     import os, lancedb, shutil, traceback, subprocess, string, tracemalloc, nest_asyncio, logging
     from loaders.default_asset_loader import DefaultAssetLoader
 

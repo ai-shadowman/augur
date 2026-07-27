@@ -17,7 +17,6 @@ install:
 		--no-hooks \
 		--create-namespace \
 		--set namespace="$$KFP_NAMESPACE" \
-		--set minio.apiServerEndpoint="https://minio-api-minio.$(CLUSTER_DOMAIN)" \
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
