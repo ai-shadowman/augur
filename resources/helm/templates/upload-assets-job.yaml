@@ -12,6 +12,7 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      serviceAccountName: pipeline-upload-job
       containers:
         - name: upload-assets
           image: registry.access.redhat.com/ubi9/python-311

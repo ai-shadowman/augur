@@ -9,7 +9,7 @@ install:
 	sed "s|{{ .Values.namespace }}|$$KFP_NAMESPACE|g; s|{{ .Values.requester }}|$$(oc whoami)|g" resources/helm/templates/namespace.yaml | oc apply -f - && \
 	\
 	echo "==> Granting mlflow role to default user for MLflow workspace access ..." && \
-	oc adm policy add-role-to-user mlflow default -n $$KFP_NAMESPACE && \
+	oc adm policy add-role-to-user mlflow -z default -n $$KFP_NAMESPACE && \
 	oc adm policy add-role-to-user mlflow -z pipeline-upload-job -n $$KFP_NAMESPACE && \
 	\
 	echo "==> Running helm upgrade..." && \
@@ -32,10 +32,11 @@ install:
 		--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
-	[ "$$ASSET_LOADER" = "mlflow" ] && \
-	echo "==> Preloading MLflow assets..." && \
-	$(MAKE) preload-mlflow-assets || true && \
-	$(MAKE) deploy-notebooks || true
+	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
+		echo "==> Preloading MLflow assets..." && \
+		$(MAKE) preload-mlflow-assets; \
+	fi
+	$(MAKE) deploy-notebooks
 	$(MAKE) upload-pipelines
 
 deploy-notebooks:
