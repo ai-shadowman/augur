@@ -43,23 +43,19 @@ deploy-notebooks:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Waiting for data-generation ImageStream to import..." && \
-	timeElapsed=0; until oc get imagestreamtag custom-data-generation:$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do \
-		[ $$timeElapsed -ge 300 ] && echo "  Timed out waiting for data-generation ImageStream" >&2 && exit 1; \
-		sleep 5; timeElapsed=$$(($$timeElapsed+5)); \
-	done && \
+	until oc get imagestreamtag custom-data-generation:$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
 	DATAGEN_IMAGE="$$(oc get imagestream custom-data-generation -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" && \
 	echo "  image: $$DATAGEN_IMAGE" && \
 	\
 	echo "==> Waiting for graphrag ImageStream to import..." && \
-	timeElapsed=0; until oc get imagestreamtag custom-graphrag:$$KFP_INDEXING_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do \
-		[ $$timeElapsed -ge 300 ] && echo "  Timed out waiting for graphrag ImageStream" >&2 && exit 1; \
-		sleep 5; timeElapsed=$$(($$timeElapsed+5)); \
-	done && \
+	until oc get imagestreamtag custom-graphrag:$$KFP_INDEXING_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
 	GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_VERSION" && \
 	echo "  image: $$GRAPHRAG_IMAGE" && \
 	\
 	echo "==> Deploying notebooks..." && \
 	sleep 10 && \
+	oc delete mutatingwebhookconfiguration notebooks.opendatahub.io --ignore-not-found=true 2>/dev/null || true && \
+	oc delete validatingwebhookconfiguration notebooks.opendatahub.io --ignore-not-found=true 2>/dev/null || true && \
 	oc patch notebook data-generation -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true && \
 	oc patch notebook graphrag-indexing -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true && \
 	oc delete notebook data-generation graphrag-indexing -n $$KFP_NAMESPACE --ignore-not-found=true && \
