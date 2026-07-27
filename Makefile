@@ -53,11 +53,8 @@ deploy-notebooks:
 	echo "  image: $$GRAPHRAG_IMAGE" && \
 	\
 	echo "==> Deploying notebooks..." && \
-	sleep 10 && \
-	oc delete mutatingwebhookconfiguration notebooks.opendatahub.io --ignore-not-found=true 2>/dev/null || true && \
-	oc delete validatingwebhookconfiguration notebooks.opendatahub.io --ignore-not-found=true 2>/dev/null || true && \
-	oc patch notebook data-generation -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true && \
-	oc patch notebook graphrag-indexing -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true && \
+	oc patch notebook data-generation -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
+	oc patch notebook graphrag-indexing -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
 	oc delete notebook data-generation graphrag-indexing -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
