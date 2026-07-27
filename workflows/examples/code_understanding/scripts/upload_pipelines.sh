@@ -35,6 +35,49 @@ python3 "$CODE_UNDERSTANDING_DIR/pipelines/full_pipelines.py"
 echo "  Compiled YAMLs -> $YAML_DIR/"
 
 # ---------------------------------------------------------------------------
+# preflight_check
+#   Verifies the KFP API server is reachable and accepting requests before
+#   any upload is attempted.  Prints the HTTP status and body so failures
+#   can be diagnosed without needing to check server logs separately.
+# ---------------------------------------------------------------------------
+preflight_check() {
+    echo "Running preflight check against $KFP_HOST..."
+    python3 <<PYEOF
+import json, os, ssl, sys, urllib.request
+
+host = "$KFP_HOST"
+token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+with open(token_path) as f:
+    token = f.read().strip()
+
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+
+url = f"{host}/apis/v2beta1/pipelines?page_size=1"
+req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+
+try:
+    with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+        status = resp.status
+        body = resp.read().decode("utf-8", errors="replace")[:200]
+        print(f"  Preflight GET {url} -> HTTP {status}")
+        print(f"  Response snippet: {body}")
+except urllib.error.HTTPError as e:
+    body = e.read().decode("utf-8", errors="replace")[:500]
+    print(f"  Preflight GET {url} -> HTTP {e.code} ({e.reason})", file=sys.stderr)
+    print(f"  Response body: {body}", file=sys.stderr)
+    print(f"  Hint: check 'oc logs -l app=ds-pipeline-dspa -n $KFP_NAMESPACE --all-containers'", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"  Preflight failed: {e}", file=sys.stderr)
+    print(f"  Hint: check 'oc logs -l app=ds-pipeline-dspa -n $KFP_NAMESPACE --all-containers'", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
 # upload_pipeline
 #   Uploads a compiled YAML to KFP as a reusable template.
 #   Adds a new version if the pipeline already exists.
@@ -45,7 +88,9 @@ echo "  Compiled YAMLs -> $YAML_DIR/"
 upload_pipeline() {
     local yaml="$1"
     local pipeline_name="$2"
-    echo "Uploading $pipeline_name to $KFP_HOST..."
+    local yaml_size
+    yaml_size="$(du -sh "$yaml" | cut -f1)"
+    echo "Uploading $pipeline_name ($yaml_size) to $KFP_HOST..."
     KFP_UPLOAD_YAML="$yaml" \
     KFP_UPLOAD_NAME="$pipeline_name" \
     python3 <<PYEOF
@@ -64,7 +109,8 @@ try:
     )
     print(f"  Uploaded pipeline id: {pipeline.pipeline_id}")
 except Exception as e:
-    if getattr(e, "status", None) == 409:
+    status = getattr(e, "status", None)
+    if status == 409:
         from datetime import datetime
         result = client.list_pipelines(filter=json.dumps({
             "predicates": [{"key": "display_name", "operation": "EQUALS", "stringValue": pipeline_name}]
@@ -77,6 +123,11 @@ except Exception as e:
         )
         print(f"  Uploaded new version id: {version.pipeline_version_id}")
     else:
+        body = getattr(e, "body", None)
+        print(f"  Upload failed: HTTP {status} - {getattr(e, 'reason', e)}", file=sys.stderr)
+        if body:
+            print(f"  Response body: {body[:500]}", file=sys.stderr)
+        print(f"  Hint: check 'oc logs -l app=ds-pipeline-dspa -n $KFP_NAMESPACE --all-containers'", file=sys.stderr)
         raise
 PYEOF
     echo "  OK: $pipeline_name uploaded."
@@ -85,6 +136,8 @@ PYEOF
 # ---------------------------------------------------------------------------
 # Auto-discover and upload all compiled YAML files
 # ---------------------------------------------------------------------------
+preflight_check
+
 for yaml_file in "$YAML_DIR"/*.yaml; do
     [[ -e "$yaml_file" ]] || continue
     pipeline_name="$(basename "$yaml_file" .yaml)"
