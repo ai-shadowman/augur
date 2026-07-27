@@ -53,8 +53,8 @@ deploy-notebooks:
 	echo "  image: $$GRAPHRAG_IMAGE" && \
 	\
 	echo "==> Deploying notebooks..." && \
-	oc patch notebook data-generation -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
-	oc patch notebook graphrag-indexing -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
+	{ oc get notebook data-generation -n $$KFP_NAMESPACE 2>/dev/null && oc patch notebook data-generation -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null; } || true && \
+	{ oc get notebook graphrag-indexing -n $$KFP_NAMESPACE 2>/dev/null && oc patch notebook graphrag-indexing -n $$KFP_NAMESPACE -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null; } || true && \
 	oc delete notebook data-generation graphrag-indexing -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
