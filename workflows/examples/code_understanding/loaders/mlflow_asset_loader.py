@@ -130,10 +130,8 @@ class MlFlowAssetLoader(AssetLoader):
 
                 os.makedirs(download_dir, exist_ok=True)
 
-            local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri,
+            asset_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri,
                                                              dst_path=download_dir)
-
-            asset_path = os.path.join(local_path, asset_uri)
 
             if not os.path.exists(asset_path):
 
