@@ -315,31 +315,23 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
         raise e
 
 
-def generate_all_code_and_meta(git_repo: str, git_branch: str, source_path: str, target_path: str,
-                               git_slug: str = None, multi_repo: bool = False):
-    """Detects languages and runs generate_code_and_meta for every language/config combination."""
-    import logging
+def generate_git_slug(git_repo: str, git_branch: str) -> str:
+    """Returns a filesystem-safe slug derived from the repo URL and branch."""
     from utils import code_utils
 
-    logging.basicConfig(level=logging.INFO)
+    return code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-    if git_slug is None:
-        git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+def detect_languages(source_path: str) -> list:
+    """Returns the list of programming languages detected in source_path."""
+    from utils import code_utils
 
     languages = code_utils.get_detected_languages_for_repo(source_path)
 
     if not languages:
-        raise Exception(f"No languages detected in repo={git_repo}.")
+        raise Exception(f"No languages detected in source_path='{source_path}'.")
 
-    for language in languages:
-
-        for config in [False, True]:
-
-            generate_code_and_meta(
-                git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
-                language=language, source_path=source_path, target_path=target_path, config=config,
-                multi_repo=multi_repo,
-            )
+    return languages
 
 
 def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_path: str,
@@ -347,22 +339,27 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
     """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
     import json, traceback, logging
     from pathlib import Path
-    from utils import code_utils
     from loaders.default_asset_loader import DefaultAssetLoader
 
     logging.basicConfig(level=logging.INFO)
 
     if git_slug is None:
-        git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
+        git_slug = generate_git_slug(git_repo, git_branch)
 
     try:
 
         prepare_environment(source_path=source_path, target_path=target_path,
                             git_repo=git_repo, git_branch=git_branch)
 
-        generate_all_code_and_meta(git_repo=git_repo, git_branch=git_branch,
-                                   source_path=source_path, target_path=target_path,
-                                   git_slug=git_slug, multi_repo=multi_repo)
+        for language in detect_languages(source_path):
+
+            for config in [False, True]:
+
+                generate_code_and_meta(
+                    git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
+                    language=language, source_path=source_path, target_path=target_path,
+                    config=config, multi_repo=multi_repo,
+                )
 
         logging.info("Data generation pipeline complete.")
 

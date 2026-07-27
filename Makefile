@@ -1,5 +1,6 @@
-ENV_FILE     ?= .env
-GIT_REPO_URL := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+ENV_FILE      ?= .env
+GIT_REPO_URL  := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+CLUSTER_DOMAIN := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 
 install:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -15,6 +16,7 @@ install:
 		--no-hooks \
 		--create-namespace \
 		--set namespace="$$KFP_NAMESPACE" \
+		--set minio.apiServerEndpoint="https://minio-api-minio.$(CLUSTER_DOMAIN)" \
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \

@@ -12,26 +12,15 @@ from utils.pipeline_utils import INDEXING_BASE_IMAGE
 ##############################################################################
 
 @dsl.component(base_image=INDEXING_BASE_IMAGE)
-def generate_graphrag_index_op(codebase_path: str, graphrag_source_path: str,
-                                git_slug: str = "", multi_repo: bool = False):
-
-    from pipelines.base.indexing import generate_graphrag_index
-
-    generate_graphrag_index(codebase_path=codebase_path,
-                            graphrag_source_path=graphrag_source_path,
-                            git_slug=git_slug or None, multi_repo=multi_repo)
-
-
-@dsl.component(base_image=INDEXING_BASE_IMAGE)
 def graphrag_indexing_op(codebase_path: str, graphrag_source_path: str,
                           result: Output[Artifact]):
 
     import json
 
-    from pipelines.base.indexing import run_full_pipeline as _run
+    from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
 
-    pipeline_result = _run(codebase_path=codebase_path,
-                           graphrag_source_path=graphrag_source_path)
+    pipeline_result = _run_full_pipeline(codebase_path=codebase_path,
+                                         graphrag_source_path=graphrag_source_path)
 
     with open(result.path, "w") as f:
 

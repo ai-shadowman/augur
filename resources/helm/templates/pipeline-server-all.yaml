@@ -36,7 +36,7 @@ spec:
       bucket: {{ .Values.minio.bucket }}pipelines
       host: {{ .Values.minio.service }}.{{ .Values.minio.namespace }}
       port: "9000"
-      region: us-east-1
+      region: {{ .Values.minio.region }}
       s3CredentialsSecret:
         accessKey: AWS_ACCESS_KEY_ID
         secretKey: AWS_SECRET_ACCESS_KEY

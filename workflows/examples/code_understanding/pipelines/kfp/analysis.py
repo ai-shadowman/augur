@@ -23,18 +23,6 @@ def generate_migration_report_op(graphrag_source_path: str, report: Output[Artif
         f.write(migration_report)
 
 
-@dsl.component(base_image=ANALYSIS_BASE_IMAGE)
-def run_analysis_pipeline_op(graphrag_source_path: str, report: Output[Artifact]):
-
-    from pipelines.base.analysis import run_full_pipeline
-
-    result = run_full_pipeline(graphrag_source_path)
-
-    with open(report.path, "w") as f:
-
-        f.write(result)
-
-
 ##############################################################################
 # Pipelines
 ##############################################################################
