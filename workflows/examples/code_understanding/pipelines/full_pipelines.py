@@ -21,9 +21,9 @@ from utils.pipeline_utils import uses_jupyter_runtime, uses_kfp
 
 if uses_kfp():
 
-    from pipelines.kfp.data_generation import run_full_pipeline as data_generation_pipeline
-    from pipelines.kfp.indexing import run_full_pipeline as graphrag_indexing_pipeline
-    from pipelines.kfp.analysis import run_full_pipeline as graphrag_analysis_pipeline
+    from pipelines.kubeflow.data_generation import run_full_pipeline as data_generation_pipeline
+    from pipelines.kubeflow.indexing import run_full_pipeline as graphrag_indexing_pipeline
+    from pipelines.kubeflow.analysis import run_full_pipeline as graphrag_analysis_pipeline
 
 else:
 
