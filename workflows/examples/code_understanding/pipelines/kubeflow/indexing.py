@@ -4,13 +4,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Output, Artifact
-from utils.pipeline_utils import INDEXING_BASE_IMAGE
+from utils.pipeline_utils import INDEXING_BASE_IMAGE, inject_git_creds
 
 
 ##############################################################################
 # Components
 ##############################################################################
 
+@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=INDEXING_BASE_IMAGE)
 def graphrag_indexing_op(codebase_path: str, graphrag_source_path: str,
                           result: Output[Artifact]):

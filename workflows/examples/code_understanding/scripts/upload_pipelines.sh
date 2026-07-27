@@ -18,8 +18,9 @@ KFP_HOST="${KFP_HOST:-https://ds-pipeline-dspa.${KFP_NAMESPACE}.svc.cluster.loca
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_UNDERSTANDING_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-YAML_DIR="$SCRIPT_DIR/compiled_pipelines/${TIMESTAMP}_yamls"
+YAML_DIR="$REPO_ROOT/compiled_pipelines/${TIMESTAMP}_yamls"
 
 mkdir -p "$YAML_DIR"
 

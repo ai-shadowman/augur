@@ -24,4 +24,4 @@ temp
 tmp1.txt
 tmp2.txt
 workflows/examples/code_understanding/graph_rag_app/
-workflows/examples/code_understanding/scripts/compiled_pipelines/
+**/compiled_pipelines/

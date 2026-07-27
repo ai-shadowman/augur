@@ -44,22 +44,6 @@ def uses_kfp():
 def _inject_agentmesh_code(yaml_path: str):
     """Post-processes a compiled KFP pipeline YAML to embed the code_understanding
     source package into every executor's startup shell script.
-
-    KFP's generated executor script always creates a temp directory (program_path)
-    and writes the component function there as ephemeral_component.py.  By
-    extracting a tar archive of all subdirectories of code_understanding/ into that
-    same directory we make those packages importable without any changes to the
-    notebook or the container images.
-
-    The archive is created from the local source tree at compile time and embedded
-    as a base64-encoded string directly in the YAML.  This avoids needing git,
-    network access, or credentials inside component pods.
-
-    PYTHONPATH is also exported to program_path before the executor runs so that
-    components that omit sys.path.insert are covered as well.
-
-    Uses direct string manipulation rather than a yaml parse/dump round-trip so
-    that the original YAML formatting is preserved exactly.
     """
     import re
     import io
@@ -70,7 +54,6 @@ def _inject_agentmesh_code(yaml_path: str):
     this_dir = os.path.dirname(os.path.abspath(__file__))  # .../utils/
     code_dir = os.path.dirname(this_dir)                    # .../code_understanding/
 
-    # Collect all subdirectories and the top-level __init__.py (if present).
     entries = sorted(os.scandir(code_dir), key=lambda e: e.name)
     embed_dirs = [e.name for e in entries if e.is_dir()]
     if not embed_dirs:
@@ -136,14 +119,29 @@ def _inject_agentmesh_code(yaml_path: str):
     )
 
 
-def compile_and_exit(pipeline_fn):
-    """Compiles pipeline_fn to YAML and exits if PIPELINE_COMPILE_ONLY is set."""
-    if os.getenv("PIPELINE_COMPILE_ONLY"):
-        from kfp import compiler
-        out = os.environ.get("PIPELINE_OUTPUT_YAML", "compiled_pipeline.yaml")
-        compiler.Compiler().compile(pipeline_fn, out)
-        _inject_agentmesh_code(out)
-        raise SystemExit(0)
+def inject_git_creds(secret_name: str, username_key: str, password_key: str):
+    """Decorator factory that injects git credentials into every invocation of a @dsl.component."""
+    import functools
+
+    def decorator(component_fn):
+
+        @functools.wraps(component_fn)
+        def wrapper(*args, **kwargs):
+            task = component_fn(*args, **kwargs)
+            try:
+                from kfp import kubernetes
+                kubernetes.use_secret_as_env(
+                    task,
+                    secret_name=secret_name,
+                    secret_key_to_env={"GIT_USERNAME": username_key, "GIT_TOKEN": password_key},
+                )
+            except ImportError:
+                pass
+            return task
+
+        return wrapper
+
+    return decorator
 
 
 def compile_all_and_exit(pipelines: dict):

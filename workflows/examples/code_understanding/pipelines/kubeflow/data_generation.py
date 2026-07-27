@@ -5,13 +5,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 from typing import List
 
 from kfp import dsl
-from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE
+from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, inject_git_creds
 
 
 ##############################################################################
 # Components
 ##############################################################################
 
+@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE)
 def prepare_environment_op(git_repo: str, git_branch: str, source_path: str, target_path: str):
 
@@ -21,6 +22,7 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_path: str, tar
                         git_repo=git_repo, git_branch=git_branch)
 
 
+@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE)
 def generate_git_slug_op(git_repo: str, git_branch: str) -> str:
 
@@ -29,6 +31,7 @@ def generate_git_slug_op(git_repo: str, git_branch: str) -> str:
     return generate_git_slug(git_repo, git_branch)
 
 
+@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE)
 def detect_languages_op(source_path: str) -> List[str]:
 
@@ -37,6 +40,7 @@ def detect_languages_op(source_path: str) -> List[str]:
     return detect_languages(source_path)
 
 
+@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE)
 def generate_code_and_meta_op(git_repo: str, git_branch: str, git_slug: str,
                                language: str, source_path: str, target_path: str):

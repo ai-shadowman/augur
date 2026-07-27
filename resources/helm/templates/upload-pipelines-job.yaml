@@ -20,7 +20,7 @@ spec:
             - sh
             - -c
             - |
-              pip install --quiet 'kfp>=2.0.0,<3.0.0' mlflow jupyter
+              pip install --quiet 'kfp>=2.0.0,<3.0.0' kfp-kubernetes mlflow jupyter
               git config --global --add safe.directory /opt/app-root/src
               git -C /opt/app-root/src init
               git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
