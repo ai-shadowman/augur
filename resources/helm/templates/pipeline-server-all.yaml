@@ -31,7 +31,7 @@ spec:
   dspVersion: v2
   objectStorage:
     disableHealthCheck: false
-    enableExternalRoute: true
+    enableExternalRoute: false
     minio:
       deploy: true
       image: {{ .Values.minio.image }}
