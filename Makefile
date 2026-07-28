@@ -36,8 +36,8 @@ install:
 		echo "==> Preloading MLflow assets..." && \
 		$(MAKE) preload-mlflow-assets; \
 	fi
-	$(MAKE) deploy-notebooks || echo "Warning: notebook deployment failed. Run 'make deploy-notebooks' manually to retry."
 	$(MAKE) upload-pipelines
+	$(MAKE) deploy-notebooks
 
 deploy-notebooks:
 	@set -a && . $(ENV_FILE) && set +a && \
