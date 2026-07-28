@@ -92,7 +92,7 @@ spec:
               subPath: minio
           terminationMessagePolicy: File
           image: >-
-            quay.io/minio/minio:latest
+            quay.io/opendatahub/minio:RELEASE.2019-08-14T20-37-41Z-license-compliance
           args:
             - server
             - /data
