@@ -18,3 +18,36 @@ subjects:
   - kind: ServiceAccount
     name: pipeline-upload-job
     namespace: {{ .Values.namespace }}
+---
+# The admin ClusterRole does not include permissions on the DSPA API
+# subresource. kube-rbac-proxy gates all KFP API calls (GET → verb:get,
+# POST → verb:create) against this resource, so the SA needs both.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pipeline-upload-dspa-api
+  namespace: {{ .Values.namespace }}
+rules:
+  - apiGroups:
+      - datasciencepipelinesapplications.opendatahub.io
+    resources:
+      - datasciencepipelinesapplications/api
+    resourceNames:
+      - dspa
+    verbs:
+      - get
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-upload-dspa-api
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pipeline-upload-dspa-api
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-upload-job
+    namespace: {{ .Values.namespace }}
