@@ -8,10 +8,6 @@ install:
 	echo "==> Creating namespace $$KFP_NAMESPACE..." && \
 	sed "s|{{ .Values.namespace }}|$$KFP_NAMESPACE|g; s|{{ .Values.requester }}|$$(oc whoami)|g" resources/helm/templates/namespace.yaml | oc apply -f - && \
 	\
-	echo "==> Granting mlflow role to default user for MLflow workspace access ..." && \
-	oc adm policy add-role-to-user mlflow -z default -n $$KFP_NAMESPACE && \
-	oc adm policy add-role-to-user mlflow -z pipeline-upload-job -n $$KFP_NAMESPACE && \
-	\
 	echo "==> Running helm upgrade..." && \
 	helm upgrade --install agent-mesh-for-sw resources/helm \
 		--no-hooks \
