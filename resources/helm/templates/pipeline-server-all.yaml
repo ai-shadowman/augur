@@ -21,6 +21,10 @@ spec:
     deploy: true
     enableOauth: true
     enableSamplePipeline: false
+    caBundleFileMountPath: ''
+    caBundleFileName: ''
+    cacheEnabled: true
+    pipelineStore: database
   database:
     disableHealthCheck: false
     mariaDB:
@@ -31,11 +35,13 @@ spec:
   dspVersion: v2
   objectStorage:
     disableHealthCheck: false
+    enableExternalRoute: false
     externalStorage:
       host: minio-service.{{ .Values.namespace }}.svc.cluster.local
       port: "9000"
       scheme: http
       secure: false
+      region: {{ .Values.minio.region }}
       bucket: {{ .Values.minio.bucket }}pipelines
       s3CredentialsSecret:
         accessKey: AWS_ACCESS_KEY_ID
@@ -44,6 +50,7 @@ spec:
   persistenceAgent:
     deploy: true
     numWorkers: 2
+  podToPodTLS: true
   scheduledWorkflow:
     cronScheduleTimezone: UTC
     deploy: true
