@@ -59,6 +59,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import kfp_server_api.configuration as _kfp_conf
 _kfp_conf.Configuration.verify_ssl = property(lambda self: False, lambda self, v: None)
 import kfp
+import traceback
 
 host          = "$KFP_HOST"
 yaml_path     = os.environ["KFP_UPLOAD_YAML"]
@@ -97,6 +98,7 @@ except Exception as e:
         print(f"  Uploaded version id: {version.pipeline_version_id}")
     else:
         print(f"  Upload failed: {e}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)
 PYEOF
     echo "  OK: $pipeline_name uploaded."
