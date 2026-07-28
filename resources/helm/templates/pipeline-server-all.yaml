@@ -31,11 +31,10 @@ spec:
   dspVersion: v2
   objectStorage:
     disableHealthCheck: false
-    enableExternalRoute: false
-    minio:
-      deploy: true
-      image: {{ .Values.minio.image }}
-      pvcSize: 10Gi
+    externalStorage:
+      host: minio-service.{{ .Values.namespace }}.svc.cluster.local
+      port: "9000"
+      secure: false
       bucket: {{ .Values.minio.bucket }}pipelines
       s3CredentialsSecret:
         accessKey: AWS_ACCESS_KEY_ID

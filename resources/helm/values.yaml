@@ -12,7 +12,6 @@ minio:
   rootUser: ""
   rootPassword: ""
   bucket: demo
-  image: "quay.io/minio/minio:latest"
 
 
 dataGeneration:
