@@ -91,7 +91,7 @@ spec:
               mountPath: /data
               subPath: minio
           terminationMessagePolicy: File
-          image: quay.io/minio/minio:RELEASE.2024-01-13T07-53-03Z
+          image: quay.io/minio/minio:latest
           args:
             - server
             - /data
