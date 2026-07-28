@@ -1,4 +1,18 @@
 ---
+# This ConfigMap triggers OpenShift to inject the cluster's service signing CA
+# into the namespace. The DSPA operator reads it when populating dsp-trusted-ca-dspa,
+# ensuring the MLMD gRPC TLS certificate can be verified by the API server.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: odh-trusted-ca-bundle
+  namespace: {{ .Values.namespace }}
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+data:
+  ca-bundle.crt: ""
+  odh-ca-bundle.crt: ""
+---
 apiVersion: v1
 kind: Secret
 metadata:
