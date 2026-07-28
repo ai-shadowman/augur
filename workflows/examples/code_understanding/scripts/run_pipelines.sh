@@ -3,15 +3,17 @@
 # Pipelines must be uploaded first via: make upload-pipelines
 #
 # Usage:
-#   ./run_pipelines.sh --single-repo   # trigger existing single-repo pipeline run
-#   ./run_pipelines.sh --multi-repo    # trigger existing multi-repo pipeline run
+#   ./run_pipelines.sh --single-repo   # trigger single-repo pipeline run
+#   ./run_pipelines.sh                 # trigger multi-repo pipeline run (default)
+#   ./run_pipelines.sh --multi-repo    # trigger multi-repo pipeline run
 #
 # Environment variables:
 #   KFP_NAMESPACE         Kubernetes namespace (KFP_HOST is derived from this)
 #   GIT_REPO              Git repository URL to analyse (required for --single-repo)
 #   GIT_BRANCH            Git branch to clone (default: main)
-#   KFP_DATA_GENERATION_OUTPUT_PATH  Output path from data generation (default: target)
-#   KFP_DATA_INDEXING_OUTPUT_PATH    GraphRAG source path for indexing (default: graph_rag_app/source)
+#   PARENT_SOURCE_PATH                 Parent source path (default: source)
+#   PARENT_TARGET_PATH                 Parent target path (default: target)
+#   KFP_DATA_INDEXING_OUTPUT_PATH      GraphRAG base path (default: graph_rag_app/source)
 
 set -euo pipefail
 
@@ -20,16 +22,17 @@ usage() {
 Usage: $(basename "$0") [OPTION]...
 
 Options:
-  --single-repo   Trigger existing single-repo pipeline run
-  --multi-repo    Trigger existing multi-repo pipeline run
+  --single-repo   Trigger single-repo pipeline run (GIT_REPO required)
+  --multi-repo    Trigger multi-repo pipeline run (default)
   -h, --help      Show this help message
 
 Environment variables:
   KFP_NAMESPACE  Kubernetes namespace, used to derive KFP_HOST (required)
   GIT_REPO       Git repository URL to analyse (required for --single-repo)
   GIT_BRANCH     Git branch to clone (default: main)
-  KFP_DATA_GENERATION_OUTPUT_PATH  Output path from data generation (default: target)
-  KFP_DATA_INDEXING_OUTPUT_PATH    GraphRAG source path for indexing (default: graph_rag_app/source)
+  PARENT_SOURCE_PATH                Parent source path (default: source)
+  PARENT_TARGET_PATH                Parent target path (default: target)
+  KFP_DATA_INDEXING_OUTPUT_PATH     GraphRAG base path (default: graph_rag_app/source)
 EOF
 }
 
@@ -42,7 +45,8 @@ KFP_HOST="${KFP_HOST:-https://ds-pipeline-dspa.${KFP_NAMESPACE}.svc.cluster.loca
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 GIT_REPO="${GIT_REPO:-}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
-TARGET_PATH="${KFP_DATA_GENERATION_OUTPUT_PATH:-target}"
+SOURCE_PATH="${PARENT_SOURCE_PATH:-source}"
+TARGET_PATH="${PARENT_TARGET_PATH:-target}"
 GRAPHRAG_SOURCE_PATH="${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}"
 
 # ---------------------------------------------------------------------------
@@ -112,32 +116,27 @@ PYEOF
     echo "  OK: $run_name submitted."
 }
 
-RUN_SINGLE_REPO=false
-RUN_MULTI_REPO=false
-
-if [[ $# -eq 0 ]]; then
-    RUN_SINGLE_REPO=true
-    RUN_MULTI_REPO=true
-fi
+MODE="multi"
 
 for arg in "$@"; do
     case "$arg" in
-        --single-repo) RUN_SINGLE_REPO=true ;;
-        --multi-repo)  RUN_MULTI_REPO=true ;;
+        --single-repo) MODE="single" ;;
+        --multi-repo)  MODE="multi" ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "Error: Unknown argument: $arg" >&2; usage; exit 1 ;;
     esac
 done
 
-if $RUN_SINGLE_REPO; then
+if [[ "$MODE" == "single" ]]; then
     if [[ -z "$GIT_REPO" ]]; then
         echo "Error: GIT_REPO must be set and non-empty for --single-repo." >&2
         exit 1
     fi
     trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
-        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"target_path\": \"$TARGET_PATH\", \"graphrag_source_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
+        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"graphrag_base_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
+else
+    trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}" \
+        "{\"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"graphrag_base_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
 fi
-
-$RUN_MULTI_REPO && trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}"
 
 echo "All done."
