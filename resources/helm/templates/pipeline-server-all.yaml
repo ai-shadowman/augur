@@ -38,7 +38,7 @@ spec:
     enableExternalRoute: false
     externalStorage:
       host: minio-service.{{ .Values.namespace }}.svc.cluster.local
-      port: "9090"
+      port: "9000"
       scheme: http
       secure: false
       region: {{ .Values.minio.region }}
