@@ -6,18 +6,23 @@ apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
   annotations:
-    notebooks.opendatahub.io/inject-auth: "false"
+    notebooks.opendatahub.io/inject-auth: "true"
     notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.version}}"
-    opendatahub.io/workbench-image-namespace: redhat-ods-applications
+    opendatahub.io/connections: ""
     opendatahub.io/image-display-name: {{ .Values.dataGeneration.image.title}}
+    opendatahub.io/workbench-image-namespace: ""
+    openshift.io/description: ""
+    openshift.io/display-name: {{ .Values.dataGeneration.notebook.name}}
   name: {{ .Values.dataGeneration.notebook.name}}
   namespace: {{ .Values.namespace}}
   labels:
+    app: {{ .Values.dataGeneration.notebook.name}}
     opendatahub.io/odh-managed: "true"
     opendatahub.io/dashboard: "true"
 spec:
   template:
     spec:
+      enableServiceLinks: false
       initContainers:
         - name: git-clone
           image: {{ $datagen_image }}
@@ -38,7 +43,12 @@ spec:
       containers:
         - name: {{ .Values.dataGeneration.notebook.name}}
           image: {{ $datagen_image }}
+          imagePullPolicy: Always
           workingDir: /opt/app-root/src
+          ports:
+            - containerPort: 8888
+              name: notebook-port
+              protocol: TCP
           resources:
             limits:
               cpu: "2"
@@ -46,9 +56,36 @@ spec:
             requests:
               cpu: "1"
               memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /notebook/{{ .Values.namespace }}/{{ .Values.dataGeneration.notebook.name }}/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /notebook/{{ .Values.namespace }}/{{ .Values.dataGeneration.notebook.name }}/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+            successThreshold: 1
           volumeMounts:
             - name: workspace-volume
               mountPath: /opt/app-root/src
+            - name: shm
+              mountPath: /dev/shm
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom-certs
+              readOnly: true
+            - name: runtime-images
+              mountPath: /opt/app-root/pipeline-runtimes/
           envFrom:
             - secretRef:
                 name: code-understanding-env
@@ -62,27 +99,55 @@ spec:
                 --ServerApp.quit_button=False
             - name: JUPYTER_IMAGE
               value: "{{ $datagen_image }}"
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: PIPELINES_SSL_SA_CERTS
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: KF_PIPELINES_SSL_SA_CERTS
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: GIT_SSL_CAINFO
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: PIP_CERT
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
       volumes:
         - name: workspace-volume
           persistentVolumeClaim:
             claimName: datagen-storage
+        - name: shm
+          emptyDir:
+            medium: Memory
+        - name: trusted-ca
+          configMap:
+            name: workbench-trusted-ca-bundle
+            optional: true
+        - name: runtime-images
+          configMap:
+            name: pipeline-runtime-images
+            optional: true
 ---
 apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
   annotations:
-    notebooks.opendatahub.io/inject-auth: "false"
+    notebooks.opendatahub.io/inject-auth: "true"
     notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.version}}"
-    opendatahub.io/workbench-image-namespace: redhat-ods-applications
+    opendatahub.io/connections: ""
     opendatahub.io/image-display-name: {{ .Values.graphrag.image.title}}
+    opendatahub.io/workbench-image-namespace: ""
+    openshift.io/description: ""
+    openshift.io/display-name: {{ .Values.graphrag.notebook.name}}
   name: {{ .Values.graphrag.notebook.name}}
   namespace: {{ .Values.namespace}}
   labels:
+    app: {{ .Values.graphrag.notebook.name}}
     opendatahub.io/odh-managed: "true"
     opendatahub.io/dashboard: "true"
 spec:
   template:
     spec:
+      enableServiceLinks: false
       initContainers:
         - name: git-clone
           image: {{ $graphrag_image }}
@@ -103,7 +168,12 @@ spec:
       containers:
         - name: {{ .Values.graphrag.notebook.name}}
           image: {{ $graphrag_image }}
+          imagePullPolicy: Always
           workingDir: /opt/app-root/src
+          ports:
+            - containerPort: 8888
+              name: notebook-port
+              protocol: TCP
           resources:
             limits:
               cpu: "2"
@@ -111,9 +181,36 @@ spec:
             requests:
               cpu: "1"
               memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /notebook/{{ .Values.namespace }}/{{ .Values.graphrag.notebook.name }}/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /notebook/{{ .Values.namespace }}/{{ .Values.graphrag.notebook.name }}/api
+              port: notebook-port
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+            successThreshold: 1
           volumeMounts:
             - name: workspace-volume
               mountPath: /opt/app-root/src
+            - name: shm
+              mountPath: /dev/shm
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/custom-certs
+              readOnly: true
+            - name: runtime-images
+              mountPath: /opt/app-root/pipeline-runtimes/
           envFrom:
             - secretRef:
                 name: code-understanding-env
@@ -127,8 +224,31 @@ spec:
                 --ServerApp.quit_button=False
             - name: JUPYTER_IMAGE
               value: "{{ $graphrag_image }}"
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: SSL_CERT_FILE
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: PIPELINES_SSL_SA_CERTS
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: KF_PIPELINES_SSL_SA_CERTS
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: GIT_SSL_CAINFO
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
+            - name: PIP_CERT
+              value: /etc/pki/tls/custom-certs/ca-bundle.crt
       volumes:
         - name: workspace-volume
           persistentVolumeClaim:
             claimName: graphrag-storage
+        - name: shm
+          emptyDir:
+            medium: Memory
+        - name: trusted-ca
+          configMap:
+            name: workbench-trusted-ca-bundle
+            optional: true
+        - name: runtime-images
+          configMap:
+            name: pipeline-runtime-images
+            optional: true
 {{- end }}
