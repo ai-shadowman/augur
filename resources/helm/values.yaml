@@ -12,6 +12,7 @@ minio:
   rootUser: ""
   rootPassword: ""
   bucket: demo
+  image: "quay.io/modh/minio:RELEASE.2019-08-14T20-37-41Z-license-compliance"
 
 
 dataGeneration:
