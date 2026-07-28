@@ -8,6 +8,10 @@ install:
 	echo "==> Creating namespace $$KFP_NAMESPACE..." && \
 	sed "s|{{ .Values.namespace }}|$$KFP_NAMESPACE|g; s|{{ .Values.requester }}|$$(oc whoami)|g" resources/helm/templates/namespace.yaml | oc apply -f - && \
 	\
+	echo "==> Waiting for OpenShift to inject service CA into odh-trusted-ca-bundle..." && \
+	until oc get configmap odh-trusted-ca-bundle -n $$KFP_NAMESPACE \
+		-o jsonpath='{.data.ca-bundle\.crt}' 2>/dev/null | grep -q CERTIFICATE; do sleep 5; done && \
+	\
 	echo "==> Running helm upgrade..." && \
 	helm upgrade --install agent-mesh-for-sw resources/helm \
 		--no-hooks \
