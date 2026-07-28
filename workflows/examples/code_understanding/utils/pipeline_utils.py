@@ -79,11 +79,8 @@ def _inject_agentmesh_code(yaml_path: str):
     buf.seek(0)
     b64_data = _b64.b64encode(buf.read()).decode("ascii")
 
-    # Lines injected just before _KFP_RUNTIME=true, after ephemeral_component.py
-    # has been written to program_path.  printf is a POSIX shell builtin so there
-    # is no exec argument-length limit even for very large base64 payloads.
     inject_lines = [
-        f"printf '%s' '{b64_data}' | base64 -d | tar -xz -C \"$program_path/\"",
+        f"printf ''%s'' ''{b64_data}'' | base64 -d | tar -xz -C \"$program_path/\"",
         'echo "[agentmesh-inject] program_path contents:" >&2',
         'ls "$program_path/" >&2',
         'PYTHONPATH="$program_path:${PYTHONPATH:-}"',
