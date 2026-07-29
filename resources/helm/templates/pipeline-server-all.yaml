@@ -38,6 +38,7 @@ spec:
     enableExternalRoute: true
     minio:
       deploy: true
+      image: quay.io/minio/minio:latest
       pvcSize: 200Gi
       s3CredentialsSecret:
         accessKey: AWS_ACCESS_KEY_ID
