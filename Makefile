@@ -55,9 +55,9 @@ deploy-notebooks:
 		GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_VERSION" && \
 		echo "  image: $$GRAPHRAG_IMAGE" && \
 		\
-		echo "==> Waiting for DSPA MinIO to be ready..." && \
-		until oc get deployment minio-dspa -n $$KFP_NAMESPACE 2>/dev/null; do sleep 5; done && \
-		oc wait deployment/minio-dspa -n $$KFP_NAMESPACE --for=condition=Available --timeout=300s && \
+		echo "==> Waiting for DSPA to be fully reconciled..." && \
+		until oc get datasciencepipelinesapplication dspa -n $$KFP_NAMESPACE \
+			-o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do sleep 5; done && \
 		\
 		echo "==> Deploying notebooks..." && \
 		helm template agent-mesh-for-sw resources/helm \
