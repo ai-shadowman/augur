@@ -43,9 +43,9 @@ else:
 # Shared defaults
 ##############################################################################
 
-_DEFAULT_PARENT_SOURCE_PATH  = os.getenv("SOURCE_PATH", "source")
-_DEFAULT_PARENT_TARGET_PATH  = os.getenv("TARGET_PATH", "target")
-_DEFAULT_GRAPHRAG_BASE_PATH  = "graph_rag_app/source"
+_DEFAULT_PARENT_SOURCE_PATH = os.getenv("SOURCE_PATH", "source")
+_DEFAULT_PARENT_TARGET_PATH = os.getenv("TARGET_PATH", "target")
+_DEFAULT_GRAPHRAG_BASE_PATH = "graph_rag_app/source"
 
 ##############################################################################
 # Multi-repo pipeline repo list
@@ -107,13 +107,13 @@ def single_repo_pipeline(
     )
 
     idx = graphrag_indexing_pipeline(
-        codebase_path=params.outputs["target_path"],
+        codebase_dir=dg.output,
         graphrag_source_path=params.outputs["graphrag_source_path"],
-    ).after(dg)
+    )
 
     graphrag_analysis_pipeline(
-        graphrag_source_path=params.outputs["graphrag_source_path"],
-    ).after(idx)
+        graphrag_dir=idx.output,
+    )
 
 
 @dsl.pipeline(name="multi-repo-pipeline")

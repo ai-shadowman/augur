@@ -142,7 +142,7 @@ def get_detected_languages_for_repo(code_dir: str):
     all_files = [os.path.join(root, f) for root, _, files in
                  os.walk(code_dir) for f in files]
 
-    logging.info(f"Files in code_dir: {all_files}")
+    logging.debug(f"Language mappings: {mappings}")
 
     for root, _, files in os.walk(code_dir):
 
@@ -152,8 +152,6 @@ def get_detected_languages_for_repo(code_dir: str):
 
                 extension = f.split(".")[-1]
 
-                logging.info(f"Extension: {extension}")
-
                 if visited.get(extension, -1) < threshold:
 
                     lexer = guess_lexer_for_filename(f, "")
@@ -161,8 +159,6 @@ def get_detected_languages_for_repo(code_dir: str):
                     pygments_name = lexer.name.lower()
 
                     logging.info(f"Detected language: {pygments_name}")
-
-                    logging.debug(f"Language mappings: {mappings}")
 
                     lang = mappings.get(pygments_name)
 
