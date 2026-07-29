@@ -137,6 +137,7 @@ metadata:
   name: minio-api
   namespace: {{ .Values.namespace }}
 spec:
+  host: minio-api-{{ .Values.namespace }}.{{ .Values.clusterDomain }}
   to:
     kind: Service
     name: minio-service
