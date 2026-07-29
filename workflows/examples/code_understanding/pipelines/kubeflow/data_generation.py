@@ -27,10 +27,14 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_path: str, tar
                             source_dir: Output[Dataset]):
     """Clones the repo to source_path and cleans target_path."""
 
+    import os
+
     from pipelines.base.data_generation import prepare_environment
 
     prepare_environment(source_path=source_path, target_path=target_path,
                         git_repo=git_repo, git_branch=git_branch)
+
+    os.makedirs(os.path.dirname(source_dir.path), exist_ok=True)
 
     with open(source_dir.path, "w") as f:
         f.write(source_path)
@@ -64,6 +68,8 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str, git_slug: str,
                                target_path: str, target_dir: Output[Dataset]):
     """Generates code metadata for all detected languages."""
 
+    import os
+
     from pipelines.base.data_generation import generate_code_and_meta
 
     with open(source_dir.path) as f:
@@ -78,6 +84,8 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str, git_slug: str,
                 language=language, source_path=source_path, target_path=target_path,
                 config=config,
             )
+
+    os.makedirs(os.path.dirname(target_dir.path), exist_ok=True)
 
     with open(target_dir.path, "w") as f:
         f.write(target_path)

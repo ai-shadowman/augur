@@ -24,6 +24,8 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def graphrag_indexing_op(codebase_dir: Input[Dataset], graphrag_source_path: str,
                           graphrag_dir: Output[Dataset], result: Output[Metrics]):
 
+    import os
+
     from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
 
     with open(codebase_dir.path) as f:
@@ -43,6 +45,8 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset], graphrag_source_path: str
     if pipeline_result.get("status") != "success":
 
         raise RuntimeError(f"GraphRAG indexing failed: {pipeline_result.get('fail_message')}")
+
+    os.makedirs(os.path.dirname(graphrag_dir.path), exist_ok=True)
 
     with open(graphrag_dir.path, "w") as f:
         f.write(graphrag_source_path)
