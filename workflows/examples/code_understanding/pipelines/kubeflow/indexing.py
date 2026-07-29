@@ -4,7 +4,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Output, Artifact
-from utils.pipeline_utils import INDEXING_BASE_IMAGE, inject_git_creds
+from utils.pipeline_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_git_creds
+
+_AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
+    git_username=os.getenv("GIT_USERNAME"),
+    git_token=os.getenv("GIT_TOKEN"),
+    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
+    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
+    subdirectory="workflows/examples/code_understanding",
+)
 
 
 ##############################################################################
@@ -12,7 +20,7 @@ from utils.pipeline_utils import INDEXING_BASE_IMAGE, inject_git_creds
 ##############################################################################
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
-@dsl.component(base_image=INDEXING_BASE_IMAGE)
+@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def graphrag_indexing_op(codebase_path: str, graphrag_source_path: str,
                           result: Output[Artifact]):
 

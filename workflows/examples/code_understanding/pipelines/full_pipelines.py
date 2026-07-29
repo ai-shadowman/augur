@@ -14,7 +14,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from typing import NamedTuple
 
 from kfp import dsl
-from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, compile_all_and_exit, inject_git_creds
+from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, compile_all_and_exit, get_pip_installable_git_url, inject_git_creds
+
+_AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
+    git_username=os.getenv("GIT_USERNAME"),
+    git_token=os.getenv("GIT_TOKEN"),
+    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
+    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
+    subdirectory="workflows/examples/code_understanding",
+)
 from loaders.default_asset_loader import DefaultAssetLoader
 
 from utils.pipeline_utils import uses_jupyter_runtime, uses_kfp
@@ -46,7 +54,7 @@ _DEFAULT_GRAPHRAG_BASE_PATH  = "graph_rag_app/source"
 _GIT_REPOS = DefaultAssetLoader().download("repos/repo_list.json")
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE)
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def inject_pipeline_params_op(
     git_repo: str,
     git_branch: str,

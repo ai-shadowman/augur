@@ -21,6 +21,23 @@ ANALYSIS_BASE_IMAGE = (
 )
 
 
+
+def get_pip_installable_git_url(
+    git_username: str,
+    git_token: str,
+    repo_url: str,
+    repo_ref: str,
+    subdirectory: str,
+) -> str:
+    """Returns a pip-installable VCS URL with embedded credentials."""
+    return (
+        f"git+https://{git_username}:{git_token}"
+        f"@{repo_url.removeprefix('https://')}"
+        f"@{repo_ref}"
+        f"#subdirectory={subdirectory}"
+    )
+
+
 def uses_jupyter_runtime():
     """Returns True if the current process is running inside a Jupyter notebook."""
     try:
@@ -39,81 +56,6 @@ def uses_kfp():
         return True
     except ImportError:
         return False
-
-
-def _inject_agentmesh_code(yaml_path: str):
-    """Post-processes a compiled KFP pipeline YAML to embed the code_understanding
-    source package into every executor's startup shell script.
-    """
-    import re
-    import io
-    import tarfile
-    import base64 as _b64
-
-    # Locate code_understanding/ from this file's location (utils/pipeline_utils.py).
-    this_dir = os.path.dirname(os.path.abspath(__file__))  # .../utils/
-    code_dir = os.path.dirname(this_dir)                    # .../code_understanding/
-
-    entries = sorted(os.scandir(code_dir), key=lambda e: e.name)
-    embed_dirs = [e.name for e in entries if e.is_dir()]
-    if not embed_dirs:
-        logging.warning(
-            "  No subdirs found under %s; skipping injection for %s",
-            code_dir, yaml_path,
-        )
-        return
-
-    def _skip_pycache(info: tarfile.TarInfo):
-        if "__pycache__" in info.name or info.name.endswith(".pyc"):
-            return None
-        return info
-
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        # Include top-level __init__.py if present so code_understanding is a package.
-        init_py = os.path.join(code_dir, "__init__.py")
-        if os.path.isfile(init_py):
-            tar.add(init_py, arcname="__init__.py")
-        for d in embed_dirs:
-            tar.add(os.path.join(code_dir, d), arcname=d, filter=_skip_pycache)
-    buf.seek(0)
-    b64_data = _b64.b64encode(buf.read()).decode("ascii")
-
-    inject_lines = [
-        f"printf ''%s'' ''{b64_data}'' | base64 -d | tar -xz -C \"$program_path/\" ;",
-        'echo "[agentmesh-inject] program_path contents:" >&2 ;',
-        'ls "$program_path/" >&2 ;',
-        'PYTHONPATH="$program_path:${PYTHONPATH:-}" ;',
-        'export PYTHONPATH ;',
-    ]
-
-    with open(yaml_path) as f:
-        content = f.read()
-
-    if "base64 -d | tar -xz" in content:
-        logging.info("  Already injected embedded code into %s", yaml_path)
-        return
-
-    if "_KFP_RUNTIME=true" not in content:
-        logging.warning("  No '_KFP_RUNTIME=true' found in %s; nothing to inject", yaml_path)
-        return
-
-    def _inject(match):
-        # Preserve whatever indentation the line has in the YAML block literal.
-        indent = match.group(1)
-        snippet = "".join(indent + line + "\n" for line in inject_lines)
-        return snippet + match.group(0)
-
-    new_content = re.sub(r"^( *)_KFP_RUNTIME=true", _inject, content, flags=re.MULTILINE)
-
-    with open(yaml_path, "w") as f:
-        f.write(new_content)
-
-    count = len(re.findall(r"^( *)_KFP_RUNTIME=true", content, re.MULTILINE))
-    logging.info(
-        "  Embedded %d dir(s) into %d executor(s) in %s",
-        len(embed_dirs), count, yaml_path,
-    )
 
 
 def inject_git_creds(secret_name: str, username_key: str, password_key: str):
@@ -150,6 +92,5 @@ def compile_all_and_exit(pipelines: dict):
         for name, fn in pipelines.items():
             out = os.path.join(output_dir, f"{name}.yaml")
             compiler.Compiler().compile(fn, out)
-            _inject_agentmesh_code(out)
             logging.info(f"  Compiled {name} -> {out}")
         raise SystemExit(0)
