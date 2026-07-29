@@ -35,11 +35,14 @@ spec:
   dspVersion: v2
   objectStorage:
     disableHealthCheck: false
-    enableExternalRoute: true
-    minio:
-      deploy: true
-      image: quay.io/minio/minio:latest
-      pvcSize: 200Gi
+    enableExternalRoute: false
+    externalStorage:
+      host: minio-service.{{ .Values.namespace }}.svc.cluster.local
+      port: "9000"
+      scheme: http
+      secure: false
+      region: {{ .Values.minio.region }}
+      bucket: {{ .Values.minio.bucket }}pipelines
       s3CredentialsSecret:
         accessKey: AWS_ACCESS_KEY_ID
         secretKey: AWS_SECRET_ACCESS_KEY
