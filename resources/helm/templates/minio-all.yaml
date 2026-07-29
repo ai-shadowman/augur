@@ -134,24 +134,6 @@ spec:
 kind: Route
 apiVersion: route.openshift.io/v1
 metadata:
-  name: minio-api
-  namespace: {{ .Values.namespace }}
-spec:
-  host: minio-api-{{ .Values.namespace }}.{{ .Values.clusterDomain }}
-  to:
-    kind: Service
-    name: minio-service
-    weight: 100
-  port:
-    targetPort: api
-  wildcardPolicy: None
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
----
-kind: Route
-apiVersion: route.openshift.io/v1
-metadata:
   name: minio-ui
   namespace: {{ .Values.namespace }}
 spec:
