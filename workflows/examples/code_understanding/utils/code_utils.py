@@ -139,8 +139,6 @@ def get_detected_languages_for_repo(code_dir: str):
 
     mappings = _MAPPINGS["pygments_mappings"]
 
-    logging.info(f"Language mappings: {mappings}")
-
     for root, _, files in os.walk(code_dir):
 
         for f in files:

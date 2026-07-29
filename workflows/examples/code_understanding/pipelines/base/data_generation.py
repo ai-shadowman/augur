@@ -14,6 +14,10 @@ def clone_from_repo(repo_url, destination_path, branch="master"):
 
         Repo.clone_from(repo_url, destination_path, branch=branch)
 
+        all_files = [os.path.join(root, f) for root, _, files in
+                     os.walk(destination_path) for f in files]
+        logging.info(f"Files in code_dir: {all_files}")
+
         logging.info(f"Repository '{repo_url}' cloned successfully to '{destination_path}'.")
 
     except Exception as e:
