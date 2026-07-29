@@ -59,4 +59,4 @@ def run_full_pipeline(
         graphrag_source_path=graphrag_source_path,
     )
 
-    return task.output
+    return task.outputs["Output"]
