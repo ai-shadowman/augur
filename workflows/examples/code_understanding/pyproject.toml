@@ -9,3 +9,23 @@ version = "0.1.0"
 [tool.setuptools.packages.find]
 namespaces = true
 exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "*.egg-info*"]
+
+[tool.setuptools.package-data]
+"*" = [
+    "*.json",
+    "*.jsonl",
+    "*.yaml",
+    "*.yaml.in",
+    "*.toml",
+    "*.txt",
+    "*.md",
+    "*.csv",
+    "*.tsv",
+    "*.xml",
+    "*.jinja",
+    "*.jinja2",
+    "*.j2",
+    "*.in",
+    "*.html",
+    "*.parquet",
+]
