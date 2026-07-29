@@ -7,7 +7,5 @@ name = "agentmesh-code-understanding"
 version = "0.1.0"
 
 [tool.setuptools.packages.find]
-# Auto-discover all Python packages; namespaces=true handles directories
-# (e.g. pipelines/) that lack an __init__.py but contain sub-packages that do.
 namespaces = true
 exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "*.egg-info*"]
