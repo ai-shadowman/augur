@@ -80,11 +80,12 @@ def _inject_agentmesh_code(yaml_path: str):
     b64_data = _b64.b64encode(buf.read()).decode("ascii")
 
     inject_lines = [
-        f"printf ''%s'' ''{b64_data}'' | base64 -d | tar -xz -C \"$program_path/\"",
-        'echo "[agentmesh-inject] program_path contents:" >&2',
-        'ls "$program_path/" >&2',
-        'PYTHONPATH="$program_path:${PYTHONPATH:-}"',
-        'export PYTHONPATH',
+        f"printf '%s' '{b64_data}'"
+        f" | base64 -d | tar -xz -C \"$program_path/\""
+        f" ; echo '[agentmesh-inject] program_path contents:' >&2"
+        f" ; ls \"$program_path/\" >&2"
+        f" ; PYTHONPATH=\"$program_path:${{PYTHONPATH:-}}\""
+        f" ; export PYTHONPATH ;",
     ]
 
     with open(yaml_path) as f:
