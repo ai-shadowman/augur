@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from kfp import dsl
-from kfp.dsl import Output, Artifact
+from kfp.dsl import Markdown, Output
 from utils.pipeline_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_git_creds
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
@@ -21,7 +21,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_migration_report_op(graphrag_source_path: str, report: Output[Artifact]):
+def generate_migration_report_op(graphrag_source_path: str, report: Output[Markdown]):
 
     from pipelines.base.analysis import run_full_pipeline
 

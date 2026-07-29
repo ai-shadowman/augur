@@ -1,6 +1,7 @@
 namespace: demo
 requester: ""
 kfpHost: ""
+clusterDomain: ""
 deployNotebooks: false
 
 repoUrl: ""

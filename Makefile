@@ -29,7 +29,8 @@ install:
 		--set graphrag.image.version="$$KFP_INDEXING_BASE_IMAGE_VERSION" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
-		--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION"
+		--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION" \
+		--set clusterDomain="$(CLUSTER_DOMAIN)"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
