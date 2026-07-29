@@ -141,6 +141,9 @@ def get_detected_languages_for_repo(code_dir: str):
 
     logging.info(f"Code directory: {code_dir}")
 
+    all_files = [os.path.join(root, f) for root, _, files in os.walk(code_dir) for f in files]
+    logging.info(f"Files in code_dir: {all_files}")
+
     for root, _, files in os.walk(code_dir):
 
         for f in files:
