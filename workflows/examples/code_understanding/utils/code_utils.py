@@ -153,6 +153,10 @@ def get_detected_languages_for_repo(code_dir: str):
 
                     pygments_name = lexer.name.lower()
 
+                    logging.info(f"Detected language: {pygments_name}")
+
+                    logging.debug(f"Language mappings: {mappings}")
+
                     lang = mappings.get(pygments_name)
 
                     if lang:
