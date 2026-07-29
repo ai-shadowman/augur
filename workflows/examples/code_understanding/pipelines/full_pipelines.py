@@ -107,12 +107,12 @@ def single_repo_pipeline(
     )
 
     idx = graphrag_indexing_pipeline(
-        codebase_dir=dg.output,
+        codebase_path=dg.output,
         graphrag_source_path=params.outputs["graphrag_source_path"],
     )
 
     graphrag_analysis_pipeline(
-        graphrag_dir=idx.output,
+        graphrag_source_path=idx.output,
     )
 
 

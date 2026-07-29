@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Metrics, Output
+from kfp.dsl import Metrics, Output
 from utils.pipeline_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_git_creds
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
@@ -21,15 +21,10 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def graphrag_indexing_op(codebase_dir: Input[Dataset], graphrag_source_path: str,
-                          graphrag_dir: Output[Dataset], result: Output[Metrics]):
-
-    import os
+def graphrag_indexing_op(codebase_path: str, graphrag_source_path: str,
+                          result: Output[Metrics]) -> str:
 
     from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
-
-    with open(codebase_dir.path) as f:
-        codebase_path = f.read().strip()
 
     pipeline_result = _run_full_pipeline(codebase_path=codebase_path,
                                          graphrag_source_path=graphrag_source_path)
@@ -46,10 +41,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset], graphrag_source_path: str
 
         raise RuntimeError(f"GraphRAG indexing failed: {pipeline_result.get('fail_message')}")
 
-    os.makedirs(os.path.dirname(graphrag_dir.path), exist_ok=True)
-
-    with open(graphrag_dir.path, "w") as f:
-        f.write(graphrag_source_path)
+    return graphrag_source_path
 
 
 ##############################################################################
@@ -58,13 +50,13 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset], graphrag_source_path: str
 
 @dsl.pipeline(name="graphrag-indexing-pipeline")
 def run_full_pipeline(
-    codebase_dir: Input[Dataset],
+    codebase_path: str,
     graphrag_source_path: str = "graph_rag_app/source",
-) -> Dataset:
+) -> str:
 
     task = graphrag_indexing_op(
-        codebase_dir=codebase_dir,
+        codebase_path=codebase_path,
         graphrag_source_path=graphrag_source_path,
     )
 
-    return task.outputs["graphrag_dir"]
+    return task.output
