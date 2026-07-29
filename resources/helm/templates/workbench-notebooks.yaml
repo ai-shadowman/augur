@@ -8,7 +8,6 @@ metadata:
   annotations:
     notebooks.opendatahub.io/inject-auth: "true"
     notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.version}}"
-    opendatahub.io/connections: "[]"
     opendatahub.io/image-display-name: {{ .Values.dataGeneration.image.title}}
     opendatahub.io/workbench-image-namespace: "redhat-ods-applications"
     openshift.io/description: ""
@@ -133,7 +132,6 @@ metadata:
   annotations:
     notebooks.opendatahub.io/inject-auth: "true"
     notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.version}}"
-    opendatahub.io/connections: "[]"
     opendatahub.io/image-display-name: {{ .Values.graphrag.image.title}}
     opendatahub.io/workbench-image-namespace: "redhat-ods-applications"
     openshift.io/description: ""
