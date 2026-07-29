@@ -147,6 +147,8 @@ def get_detected_languages_for_repo(code_dir: str):
 
                 extension = f.split(".")[-1]
 
+                logging.info(f"Extension: {extension}")
+
                 if visited.get(extension, -1) < threshold:
 
                     lexer = guess_lexer_for_filename(f, "")
