@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Output
-from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_git_creds
+from utils.kubeflow_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     git_username=os.getenv("GIT_USERNAME"),
@@ -19,7 +19,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 # Components
 ##############################################################################
 
-@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
+@inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
@@ -37,7 +37,8 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
         )
 
 
-@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
+@inject_secret_as_env(secret_name="code-understanding-env")
+@inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset]):

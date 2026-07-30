@@ -90,7 +90,7 @@ apply-secrets:
 	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
 	oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge \
-		-p "{\"stringData\":{\"MLFLOW_NAMESPACE\":\"$$KFP_NAMESPACE\"}}"
+		-p "{\"stringData\":{\"MLFLOW_WORKSPACE\":\"$$KFP_NAMESPACE\"}}"
 
 build-images:
 	@set -a && . $(ENV_FILE) && set +a && \

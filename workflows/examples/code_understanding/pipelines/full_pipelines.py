@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from kfp import dsl
-from utils.pipeline_utils import compile_all_and_exit
+from utils.kubeflow_utils import compile_all_and_exit
 from loaders.default_asset_loader import DefaultAssetLoader
 
 from utils.pipeline_utils import uses_kfp

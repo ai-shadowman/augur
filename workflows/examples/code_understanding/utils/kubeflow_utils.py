@@ -1,37 +1,148 @@
-"""Context managers for KFP component tar artifact I/O.
-
-Each component that exchanges data through KFP's MinIO-backed Dataset artifacts
-should use these helpers instead of writing the tar/tempdir boilerplate inline.
-
-Usage inside a @dsl.component function body::
-
-    from utils.kubeflow_utils import read_from_input_artifact, write_to_output_artifact
-
-    # Input only
-    with read_from_input_artifact(source_dir) as tmp_source:
-        ...
-
-    # Output only
-    with write_to_output_artifact(target_dir) as tmp_target:
-        ...
-
-    # Input + output (combined with statement)
-    with read_from_input_artifact(source_dir) as tmp_src, write_to_output_artifact(target_dir) as tmp_dst:
-        ...
-
-    # Scratch directory (no artifact, just guaranteed cleanup)
-    with use_ephemeral_space() as tmp:
-        ...
-"""
+import os
+import logging
 from contextlib import contextmanager
 
+logging.basicConfig(level=logging.INFO)
+
+##############################################################################
+# Base images
+##############################################################################
+
+DATA_GENERATION_BASE_IMAGE = (
+    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
+    f"/{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_NAME')}"
+    f":{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_VERSION')}"
+)
+
+INDEXING_BASE_IMAGE = (
+    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
+    f"/{os.getenv('KFP_INDEXING_BASE_IMAGE_NAME')}"
+    f":{os.getenv('KFP_INDEXING_BASE_IMAGE_VERSION')}"
+)
+
+ANALYSIS_BASE_IMAGE = (
+    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
+    f"/{os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME')}"
+    f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_VERSION')}"
+)
+
+
+##############################################################################
+# Git URL helper
+##############################################################################
+
+def get_pip_installable_git_url(
+    git_username: str,
+    git_token: str,
+    repo_url: str,
+    repo_ref: str,
+    subdirectory: str,
+) -> str:
+    """Returns a pip-installable VCS URL with embedded credentials."""
+    return (
+        f"git+https://{git_username}:{git_token}"
+        f"@{repo_url.removeprefix('https://')}"
+        f"@{repo_ref}"
+        f"#subdirectory={subdirectory}"
+    )
+
+
+##############################################################################
+# Secret-injection decorator
+##############################################################################
+
+def inject_secret_as_env(secret_name: str):
+    """Decorator factory that injects ALL keys from a K8s secret as env vars.
+
+    Args:
+        secret_name: Name of the Kubernetes Secret whose keys should be
+                     exposed as environment variables of the same name.
+    """
+    import functools
+
+    def read_secret_keys() -> list:
+        """Returns the data keys of the secret, or [] on any error.
+        """
+        try:
+
+            from kubernetes import client as k8s_client, config as k8s_config
+
+            try:
+                k8s_config.load_incluster_config()
+            except Exception:
+                k8s_config.load_kube_config()
+
+            namespace = os.getenv("KFP_NAMESPACE", "default")
+
+            secret = k8s_client.CoreV1Api().read_namespaced_secret(
+                name=secret_name, namespace=namespace
+            )
+
+            return list((secret.data or {}).keys())
+
+        except Exception:
+
+            return []
+
+    def decorator(component_fn):
+
+        @functools.wraps(component_fn)
+        def wrapper(*args, **kwargs):
+            task = component_fn(*args, **kwargs)
+            try:
+                from kfp import kubernetes
+
+                keys = read_secret_keys()
+
+                if keys:
+                    kubernetes.use_secret_as_env(
+                        task,
+                        secret_name=secret_name,
+                        secret_key_to_env={k: k for k in keys},
+                    )
+
+            except ImportError:
+                pass
+
+            return task
+
+        return wrapper
+
+    return decorator
+
+
+##############################################################################
+# Pipeline compilation helper
+##############################################################################
+
+def compile_all_and_exit(pipelines: dict):
+    """Compiles all pipeline functions to <KFP_PIPELINE_OUTPUT_DIR>/<name>.yaml and exits."""
+    if os.getenv("PIPELINE_COMPILE_ONLY"):
+
+        from kfp import compiler
+
+        output_dir = os.environ.get("KFP_PIPELINE_OUTPUT_DIR", "compiled_pipelines")
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        for name, fn in pipelines.items():
+
+            out = os.path.join(output_dir, f"{name}.yaml")
+
+            compiler.Compiler().compile(fn, out)
+
+            logging.info(f"  Compiled {name} -> {out}")
+
+        raise SystemExit(0)
+
+
+##############################################################################
+# Artifact I/O context managers
+##############################################################################
 
 @contextmanager
 def read_from_input_artifact(artifact):
     """Extract a KFP Input[Dataset] tar.gz archive to a temp dir.
-
-    Yields the path of the extracted directory.  The directory is removed on
-    exit regardless of whether an exception was raised.
     """
     import shutil, tarfile, tempfile
 
@@ -52,10 +163,6 @@ def read_from_input_artifact(artifact):
 @contextmanager
 def write_to_output_artifact(artifact, compresslevel=1):
     """Yield a fresh temp dir; archive it to a KFP Output[Dataset] on clean exit.
-
-    If the body raises an exception the archive step is skipped (so the output
-    artifact is not written with partial data).  The temp dir is removed in
-    either case.
 
     Args:
         artifact:      KFP Output[Dataset] whose ``.path`` receives the archive.
@@ -83,12 +190,7 @@ def write_to_output_artifact(artifact, compresslevel=1):
 
 @contextmanager
 def use_ephemeral_space():
-    """Yield a temporary directory and remove it on exit.
-
-    Use this for scratch directories that are not backed by a KFP artifact
-    (e.g. a ``target_path`` passed to a base pipeline helper that the caller
-     does not need to persist).
-    """
+    """Yield a temporary directory and remove it on exit."""
     import shutil, tempfile
 
     tmp = tempfile.mkdtemp()
