@@ -1,4 +1,4 @@
-ENV_FILE      ?= .env
+ENV_FILE      ?= ./.env
 GIT_REPO_URL  := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
 CLUSTER_DOMAIN := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 
