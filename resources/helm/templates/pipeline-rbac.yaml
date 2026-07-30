@@ -60,7 +60,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: view
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: default
@@ -74,7 +74,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: view
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: pipeline-upload-job
@@ -88,7 +88,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: view
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: pipeline-runner-dspa
@@ -102,7 +102,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: view
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: data-generation
@@ -116,7 +116,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: view
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: graphrag-indexing
@@ -130,7 +130,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: default
@@ -144,7 +144,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: pipeline-upload-job
@@ -158,7 +158,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: pipeline-runner-dspa
@@ -172,7 +172,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: data-generation
@@ -186,7 +186,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: graphrag-indexing
