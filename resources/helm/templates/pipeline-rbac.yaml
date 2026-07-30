@@ -56,7 +56,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: mlflow-default
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -70,7 +70,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: mlflow-pipeline-upload-job
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -84,7 +84,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: mlflow-pipeline-runner-dspa
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -98,7 +98,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: mlflow-notebook-data-generation
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -112,7 +112,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: mlflow-notebook-graphrag-indexing
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

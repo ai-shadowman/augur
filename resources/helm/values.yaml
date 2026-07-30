@@ -1,4 +1,5 @@
 namespace: demo
+mlflowNamespace: redhat-ods-applications
 requester: ""
 kfpHost: ""
 clusterDomain: ""
