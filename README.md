@@ -41,6 +41,7 @@ Understanding** and **Code Migration**. This repository demonstrates the **Code 
 - Openshift AI Pipelines [Installation](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/openshift_ai_tutorial_-_fraud_detection_example/setting-up-a-project-and-storage#enabling-ai-pipelines)
 - OpenShift CLI (`oc`)
 - Helm CLI (`helm`)
+- Make (`make`)
 
 ## Installing the Code Understanding Workflow
 
