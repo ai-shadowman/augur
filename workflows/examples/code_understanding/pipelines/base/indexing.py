@@ -58,7 +58,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         logging.info("Running index...")
 
-        graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "graphrag.sh")
+        graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
 
         result = subprocess.run(
             ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
