@@ -24,17 +24,10 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
 
-    import os
-    import shutil
-    import tarfile
-    import tempfile
-
     from pipelines.base.data_generation import prepare_environment
+    from utils.kubeflow_utils import write_to_output_artifact, use_ephemeral_space
 
-    tmp_source = tempfile.mkdtemp()
-    tmp_target = tempfile.mkdtemp()
-
-    try:
+    with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
 
         prepare_environment(
             source_path=tmp_source,
@@ -43,17 +36,6 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
             git_branch=git_branch,
         )
 
-        os.makedirs(os.path.dirname(source_dir.path), exist_ok=True)
-
-        # compresslevel=1: fastest gzip, ~3-5x quicker than default at ~5-10% size cost.
-        with tarfile.open(source_dir.path, "w:gz", compresslevel=1) as tar:
-            tar.add(tmp_source, arcname=".")
-
-    finally:
-
-        shutil.rmtree(tmp_source, ignore_errors=True)
-        shutil.rmtree(tmp_target, ignore_errors=True)
-
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
@@ -61,20 +43,10 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset]):
     """Detects languages and generates code metadata for all detected languages."""
 
-    import os
-    import shutil
-    import tarfile
-    import tempfile
-
     from pipelines.base.data_generation import detect_languages, generate_code_and_meta, generate_git_slug
+    from utils.kubeflow_utils import read_from_input_artifact, write_to_output_artifact
 
-    tmp_source = tempfile.mkdtemp()
-    tmp_target = tempfile.mkdtemp()
-
-    try:
-
-        with tarfile.open(source_dir.path, "r:gz") as tar:
-            tar.extractall(tmp_source)
+    with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
 
         git_slug = generate_git_slug(git_repo, git_branch)
 
@@ -89,16 +61,6 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                     language=language, source_path=tmp_source, target_path=tmp_target,
                     config=config,
                 )
-
-        os.makedirs(os.path.dirname(target_dir.path), exist_ok=True)
-
-        with tarfile.open(target_dir.path, "w:gz", compresslevel=1) as tar:
-            tar.add(tmp_target, arcname=".")
-
-    finally:
-
-        shutil.rmtree(tmp_source, ignore_errors=True)
-        shutil.rmtree(tmp_target, ignore_errors=True)
 
 
 ##############################################################################

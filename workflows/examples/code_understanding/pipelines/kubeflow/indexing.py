@@ -24,20 +24,11 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics]):
 
-    import os
-    import shutil
-    import tarfile
-    import tempfile
-
     from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
+    from utils.kubeflow_utils import read_from_input_artifact, write_to_output_artifact
 
-    tmp_codebase = tempfile.mkdtemp()
-    tmp_graphrag = tempfile.mkdtemp()
-
-    try:
-
-        with tarfile.open(codebase_dir.path, "r:gz") as tar:
-            tar.extractall(tmp_codebase)
+    with read_from_input_artifact(codebase_dir) as tmp_codebase, \
+         write_to_output_artifact(graphrag_dir) as tmp_graphrag:
 
         pipeline_result = _run_full_pipeline(
             codebase_path=tmp_codebase,
@@ -55,18 +46,6 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
         if pipeline_result.get("status") != "success":
 
             raise RuntimeError(f"GraphRAG indexing failed: {pipeline_result.get('fail_message')}")
-
-        os.makedirs(os.path.dirname(graphrag_dir.path), exist_ok=True)
-
-        # GraphRAG output contains parquet + embeddings that compress poorly.
-        # Switch to "w:" (no compression) if tar creation is a bottleneck.
-        with tarfile.open(graphrag_dir.path, "w:gz", compresslevel=1) as tar:
-            tar.add(tmp_graphrag, arcname=".")
-
-    finally:
-
-        shutil.rmtree(tmp_codebase, ignore_errors=True)
-        shutil.rmtree(tmp_graphrag, ignore_errors=True)
 
 
 ##############################################################################

@@ -24,18 +24,11 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
 
     import os
-    import shutil
-    import tarfile
-    import tempfile
 
     from pipelines.base.analysis import run_full_pipeline
+    from utils.kubeflow_utils import read_from_input_artifact
 
-    tmp_graphrag = tempfile.mkdtemp()
-
-    try:
-
-        with tarfile.open(graphrag_dir.path, "r:gz") as tar:
-            tar.extractall(tmp_graphrag)
+    with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
 
         migration_report = run_full_pipeline(tmp_graphrag)
 
@@ -44,10 +37,6 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
         with open(report.path, "w") as f:
 
             f.write(migration_report)
-
-    finally:
-
-        shutil.rmtree(tmp_graphrag, ignore_errors=True)
 
 
 ##############################################################################
