@@ -153,11 +153,15 @@ class MlFlowAssetLoader(AssetLoader):
         """Downloads a directory from the MLflow artifacts registry to a local directory."""
         try:
 
+            import shutil
+
             asset_uri = self._get_absolute_artifact_uri(asset_dir_path)
+
+            local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
             os.makedirs(download_dir, exist_ok=True)
 
-            mlflow.artifacts.download_artifacts(artifact_uri=asset_uri, dst_path=download_dir)
+            shutil.copytree(local_path, download_dir, dirs_exist_ok=True)
 
         except Exception as e:
 
