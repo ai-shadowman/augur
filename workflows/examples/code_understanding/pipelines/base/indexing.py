@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_slug: str = None, multi_repo: bool = False):
     """Generates a GraphRAG index from the provided codebase."""
-    import os, lancedb, shutil, traceback, subprocess, string, tracemalloc, nest_asyncio, logging
+    import json, os, lancedb, shutil, traceback, subprocess, string, tracemalloc, nest_asyncio, logging
     from loaders.default_asset_loader import DefaultAssetLoader
 
     tracemalloc.start()
@@ -29,6 +29,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         except KeyError as keyerr:
             raise ValueError(f"Required environment variable {keyerr} is not set")
+
+    status = "fail"
 
     try:
 
@@ -60,19 +62,21 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
 
-        result = subprocess.run(
+        proc = subprocess.run(
             ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
             capture_output=True, text=True, check=False,
         )
 
-        logging.info(f"\nSubprocess output: {result.stdout}")
+        logging.info(f"\nSubprocess output: {proc.stdout}")
 
-        if result.stderr:
-            raise Exception(f"Error processing GraphRAG command: {result.stderr}")
+        if proc.stderr:
+            raise Exception(f"Error processing GraphRAG command: {proc.stderr}")
 
         upload_dir = "datasets/repos/multi_repo" if multi_repo else f"datasets/repos/{git_slug}"
 
         DefaultAssetLoader().upload_dir(f"{graphrag_source_path}/output", upload_dir=upload_dir)
+
+        status = "success"
 
     except Exception as e:
 
@@ -82,13 +86,21 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         raise e
 
+    finally:
+
+        result = {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
+                  "status": status, "fail_message": "" if status == "success" else traceback.format_exc()}
+
+        result_file = "indexing_result_multi_repo.json" if multi_repo else f"indexing_result_{git_slug}.json"
+
+        DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
+                                         content=json.dumps(result))
+
 
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
                       git_slug: str = None, multi_repo: bool = False):
     """Generates a GraphRAG index and returns a status dict."""
-    import json, traceback, logging
-    from pathlib import Path
-    from loaders.default_asset_loader import DefaultAssetLoader
+    import traceback, logging
 
     logging.basicConfig(level=logging.INFO)
 
@@ -100,8 +112,8 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
 
         logging.info("GraphRAG index generation complete.")
 
-        result = {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
-                  "status": "success", "fail_message": ""}
+        return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
+                "status": "success", "fail_message": ""}
 
     except Exception as e:
 
@@ -111,15 +123,7 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
 
         logging.error(error_message)
 
-        result = {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
-                  "status": "fail", "fail_message": error_message}
-
-    result_file = f"indexing_result_multi_repo.json" if multi_repo else f"indexing_result_{git_slug}.json"
-
-    Path(result_file).write_text(json.dumps(result))
-
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines")
-
-    return result
+        return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
+                "status": "fail", "fail_message": error_message}
 
 

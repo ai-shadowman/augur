@@ -295,9 +295,13 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
                             source_path: str, target_path: str, config: bool = False,
                             multi_repo: bool = False):
     """Generates and saves code metadata for one language/config combination."""
-    import logging
+    import json, logging, traceback
+    from loaders.default_asset_loader import DefaultAssetLoader
 
     logging.basicConfig(level=logging.INFO)
+
+    result = {"git_slug": git_slug, "language": language, "config": config,
+              "status": "error", "fail_message": ""}
 
     try:
 
@@ -306,6 +310,9 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         if code_df is None:
             logging.info(f"No {language} files found (config={config}).")
+
+            result["status"] = "skipped"
+
             return
 
         code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
@@ -314,11 +321,24 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         logging.info(f"Successfully generated code metadata for '{git_repo}'.")
 
+        result["status"] = "complete"
+
     except Exception as e:
 
         logging.error(f"Error generating code and metadata: {e}")
 
+        result["fail_message"] = traceback.format_exc()
+
         raise e
+
+    finally:
+
+        suffix = f"_{language}_config" if config else f"_{language}"
+
+        result_file = f"data_generation_result_{git_slug}{suffix}.json"
+
+        DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
+                                         content=json.dumps(result))
 
 
 def generate_git_slug(git_repo: str, git_branch: str) -> str:
@@ -343,9 +363,7 @@ def detect_languages(source_path: str) -> list:
 def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_path: str,
                       git_slug: str = None, multi_repo: bool = False):
     """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
-    import json, traceback, logging
-    from pathlib import Path
-    from loaders.default_asset_loader import DefaultAssetLoader
+    import traceback, logging
 
     logging.basicConfig(level=logging.INFO)
 
@@ -380,12 +398,6 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
         logging.error(error_message)
 
         result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
-
-    result_file = f"data_generation_result_{git_slug}.json"
-
-    Path(result_file).write_text(json.dumps(result))
-
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines")
 
     return result
 

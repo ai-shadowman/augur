@@ -18,9 +18,7 @@ def run_full_pipeline(graphrag_source_path: str):
 
     result_file = f"migration_report_{Path(graphrag_source_path).name}.txt"
 
-    Path(result_file).write_text(report)
-
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines")
+    DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines", content=report)
 
     return report
 
@@ -33,7 +31,6 @@ def run_adhoc_query_pipeline(
 ):
     """Queries the GraphRAG index with an LLM and returns the result."""
     import asyncio, logging
-    from pathlib import Path
     from datetime import datetime
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.graphrag_utils import DependencyAnalyzer
@@ -47,9 +44,8 @@ def run_adhoc_query_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     result_file = f"adhoc_query_{timestamp}.txt"
 
-    Path(result_file).write_text(f"Question: {question}\n\nAnswer:\n{result}")
-
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/adhoc_queries")
+    DefaultAssetLoader().log_results(result_file, artifact_path="results/adhoc_queries",
+                                     content=f"Question: {question}\n\nAnswer:\n{result}")
 
     return result
 

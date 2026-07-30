@@ -27,13 +27,15 @@ class AssetLoader(ABC):
         """
 
     @abstractmethod
-    def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None):
+    def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
+                    content: str = None):
         """Logs pipeline output artifacts for the current run.
 
         Args:
             results_path: Local path to the file or directory to log.
             artifact_path: Optional subdirectory within the run's artifact store to organize results under.
             tags: Optional key-value tags to attach to the run.
+            content: Optional string content to write to results_path before logging.
         """
 
     @abstractmethod

@@ -192,9 +192,16 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
-    def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None):
+    def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
+                    content: str = None):
         """Logs pipeline output artifacts to a new MLflow run."""
         try:
+
+            if content is not None:
+
+                with open(results_path, "w") as f:
+
+                    f.write(content)
 
             client = MlflowClient()
 
