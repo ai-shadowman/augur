@@ -257,11 +257,6 @@ class MlFlowAssetLoader(AssetLoader):
     def upload_all_assets(self, assets_dir: str):
         """Uploads all assets from a directory to the static MLflow experiment in a single run.
 
-        Scans the top level of assets_dir: subdirectories are logged under their own name
-        as artifact_path, loose files are logged at the artifact root. On success the run
-        is marked FINISHED and tagged latest=true; all previous latest runs are flipped to
-        latest=false. On failure the run is marked FAILED.
-
         Args:
             assets_dir: Local path to the directory containing assets to upload.
         """
