@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from kfp import dsl
-from kfp.dsl import Markdown, Output
+from kfp.dsl import Dataset, Input, Markdown, Output
 from utils.pipeline_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_git_creds
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
@@ -21,19 +21,33 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_migration_report_op(graphrag_source_path: str, report: Output[Markdown]):
+def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
 
     import os
+    import shutil
+    import tarfile
+    import tempfile
 
     from pipelines.base.analysis import run_full_pipeline
 
-    migration_report = run_full_pipeline(graphrag_source_path)
+    tmp_graphrag = tempfile.mkdtemp()
 
-    os.makedirs(os.path.dirname(report.path), exist_ok=True)
+    try:
 
-    with open(report.path, "w") as f:
+        with tarfile.open(graphrag_dir.path, "r:gz") as tar:
+            tar.extractall(tmp_graphrag)
 
-        f.write(migration_report)
+        migration_report = run_full_pipeline(tmp_graphrag)
+
+        os.makedirs(os.path.dirname(report.path), exist_ok=True)
+
+        with open(report.path, "w") as f:
+
+            f.write(migration_report)
+
+    finally:
+
+        shutil.rmtree(tmp_graphrag, ignore_errors=True)
 
 
 ##############################################################################
@@ -42,7 +56,7 @@ def generate_migration_report_op(graphrag_source_path: str, report: Output[Markd
 
 @dsl.pipeline(name="graphrag-analysis-pipeline")
 def run_full_pipeline(
-    graphrag_source_path: str,
+    graphrag_dir: Input[Dataset],
 ):
 
-    generate_migration_report_op(graphrag_source_path=graphrag_source_path)
+    generate_migration_report_op(graphrag_dir=graphrag_dir)

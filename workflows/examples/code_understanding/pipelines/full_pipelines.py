@@ -11,21 +11,11 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from typing import NamedTuple
-
 from kfp import dsl
-from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, compile_all_and_exit, get_pip_installable_git_url, inject_git_creds
-
-_AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
-    git_username=os.getenv("GIT_USERNAME"),
-    git_token=os.getenv("GIT_TOKEN"),
-    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
-    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
-    subdirectory="workflows/examples/code_understanding",
-)
+from utils.pipeline_utils import compile_all_and_exit
 from loaders.default_asset_loader import DefaultAssetLoader
 
-from utils.pipeline_utils import uses_jupyter_runtime, uses_kfp
+from utils.pipeline_utils import uses_kfp
 
 if uses_kfp():
 
@@ -40,43 +30,10 @@ else:
     from pipelines.base.analysis import run_full_pipeline as graphrag_analysis_pipeline
 
 ##############################################################################
-# Shared defaults
-##############################################################################
-
-_DEFAULT_PARENT_SOURCE_PATH = os.getenv("SOURCE_PATH", "source")
-_DEFAULT_PARENT_TARGET_PATH = os.getenv("TARGET_PATH", "target")
-_DEFAULT_GRAPHRAG_BASE_PATH = "graph_rag_app/source"
-
-##############################################################################
 # Multi-repo pipeline repo list
 ##############################################################################
 
 _GIT_REPOS = DefaultAssetLoader().download("repos/repo_list.json")
-
-@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def inject_pipeline_params_op(
-    git_repo: str,
-    git_branch: str,
-    parent_source_path: str,
-    parent_target_path: str,
-    graphrag_base_path: str,
-) -> NamedTuple("Outputs", [("source_path", str), ("target_path", str), ("graphrag_source_path", str)]):
-
-    from collections import namedtuple
-
-    from utils import code_utils
-
-    repo_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
-
-    Outputs = namedtuple("Outputs", ["source_path", "target_path", "graphrag_source_path"])
-
-    return Outputs(
-        source_path=f"{parent_source_path}/{repo_slug}",
-        target_path=f"{parent_target_path}/{repo_slug}",
-        graphrag_source_path=f"{graphrag_base_path}/{repo_slug}",
-    )
-
 
 ##############################################################################
 # Pipeline definitions
@@ -86,41 +43,58 @@ def inject_pipeline_params_op(
 def single_repo_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
-    parent_source_path: str = _DEFAULT_PARENT_SOURCE_PATH,
-    parent_target_path: str = _DEFAULT_PARENT_TARGET_PATH,
-    graphrag_base_path: str = _DEFAULT_GRAPHRAG_BASE_PATH,
+    parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
+    parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
 ):
 
-    params = inject_pipeline_params_op(
-        git_repo=git_repo,
-        git_branch=git_branch,
-        parent_source_path=parent_source_path,
-        parent_target_path=parent_target_path,
-        graphrag_base_path=graphrag_base_path,
-    )
+    if uses_kfp():
 
-    dg = data_generation_pipeline(
-        git_repo=git_repo,
-        git_branch=git_branch,
-        source_path=params.outputs["source_path"],
-        target_path=params.outputs["target_path"],
-    )
+        dg = data_generation_pipeline(
+            git_repo=git_repo,
+            git_branch=git_branch,
+        )
 
-    idx = graphrag_indexing_pipeline(
-        codebase_path=dg.output,
-        graphrag_source_path=params.outputs["graphrag_source_path"],
-    )
+        idx = graphrag_indexing_pipeline(
+            codebase_dir=dg.output,
+        )
 
-    graphrag_analysis_pipeline(
-        graphrag_source_path=idx.output,
-    )
+        graphrag_analysis_pipeline(
+            graphrag_dir=idx.output,
+        )
+
+    else:
+
+        from pipelines.base.data_generation import generate_git_slug as _gen_slug
+
+        git_slug = _gen_slug(git_repo, git_branch)
+
+        source_path = f"{parent_source_path}/{git_slug}"
+        target_path = f"{parent_target_path}/{git_slug}"
+        graphrag_source_path = os.path.join(
+            os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), git_slug
+        )
+
+        data_generation_pipeline(
+            git_repo=git_repo,
+            git_branch=git_branch,
+            source_path=source_path,
+            target_path=target_path,
+        )
+
+        graphrag_indexing_pipeline(
+            codebase_path=target_path,
+            graphrag_source_path=graphrag_source_path,
+        )
+
+        graphrag_analysis_pipeline(
+            graphrag_source_path=graphrag_source_path,
+        )
 
 
 @dsl.pipeline(name="multi-repo-pipeline")
 def multi_repo_pipeline(
-    parent_source_path: str = _DEFAULT_PARENT_SOURCE_PATH,
-    parent_target_path: str = _DEFAULT_PARENT_TARGET_PATH,
-    graphrag_base_path: str = _DEFAULT_GRAPHRAG_BASE_PATH,
+    parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
+    parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
 ):
 
     with dsl.ParallelFor(items=_GIT_REPOS) as repo:
@@ -130,7 +104,6 @@ def multi_repo_pipeline(
             git_branch=repo.git_branch,
             parent_source_path=parent_source_path,
             parent_target_path=parent_target_path,
-            graphrag_base_path=graphrag_base_path,
         )
 
 

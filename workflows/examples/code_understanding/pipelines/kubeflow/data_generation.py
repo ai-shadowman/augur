@@ -2,9 +2,8 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
-from typing import List
-
 from kfp import dsl
+from kfp.dsl import Dataset, Input, Output
 from utils.pipeline_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_git_creds
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
@@ -22,55 +21,84 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def prepare_environment_op(git_repo: str, git_branch: str, source_path: str, target_path: str) -> str:
-    """Clones the repo to source_path and cleans target_path."""
+def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
+    """Clones the repository and archives it as a gzip tarball."""
+
+    import os
+    import shutil
+    import tarfile
+    import tempfile
 
     from pipelines.base.data_generation import prepare_environment
 
-    prepare_environment(source_path=source_path, target_path=target_path,
-                        git_repo=git_repo, git_branch=git_branch)
+    tmp_source = tempfile.mkdtemp()
+    tmp_target = tempfile.mkdtemp()
 
-    return source_path
+    try:
+
+        prepare_environment(
+            source_path=tmp_source,
+            target_path=tmp_target,
+            git_repo=git_repo,
+            git_branch=git_branch,
+        )
+
+        os.makedirs(os.path.dirname(source_dir.path), exist_ok=True)
+
+        # compresslevel=1: fastest gzip, ~3-5x quicker than default at ~5-10% size cost.
+        with tarfile.open(source_dir.path, "w:gz", compresslevel=1) as tar:
+            tar.add(tmp_source, arcname=".")
+
+    finally:
+
+        shutil.rmtree(tmp_source, ignore_errors=True)
+        shutil.rmtree(tmp_target, ignore_errors=True)
 
 
 @inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_git_slug_op(git_repo: str, git_branch: str) -> str:
+def generate_code_and_meta_op(git_repo: str, git_branch: str,
+                               source_dir: Input[Dataset], target_dir: Output[Dataset]):
+    """Detects languages and generates code metadata for all detected languages."""
 
-    from pipelines.base.data_generation import generate_git_slug
+    import os
+    import shutil
+    import tarfile
+    import tempfile
 
-    return generate_git_slug(git_repo, git_branch)
+    from pipelines.base.data_generation import detect_languages, generate_code_and_meta, generate_git_slug
 
+    tmp_source = tempfile.mkdtemp()
+    tmp_target = tempfile.mkdtemp()
 
-@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def detect_languages_op(source_path: str) -> List[str]:
+    try:
 
-    from pipelines.base.data_generation import detect_languages
+        with tarfile.open(source_dir.path, "r:gz") as tar:
+            tar.extractall(tmp_source)
 
-    return detect_languages(source_path)
+        git_slug = generate_git_slug(git_repo, git_branch)
 
+        languages = detect_languages(tmp_source)
 
-@inject_git_creds(secret_name="git-credentials", username_key="GIT_USERNAME", password_key="GIT_TOKEN")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_code_and_meta_op(git_repo: str, git_branch: str, git_slug: str,
-                               languages: List[str], source_path: str,
-                               target_path: str) -> str:
-    """Generates code metadata for all detected languages."""
+        for language in languages:
 
-    from pipelines.base.data_generation import generate_code_and_meta
+            for config in [False, True]:
 
-    for language in languages:
+                generate_code_and_meta(
+                    git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
+                    language=language, source_path=tmp_source, target_path=tmp_target,
+                    config=config,
+                )
 
-        for config in [False, True]:
+        os.makedirs(os.path.dirname(target_dir.path), exist_ok=True)
 
-            generate_code_and_meta(
-                git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
-                language=language, source_path=source_path, target_path=target_path,
-                config=config,
-            )
+        with tarfile.open(target_dir.path, "w:gz", compresslevel=1) as tar:
+            tar.add(tmp_target, arcname=".")
 
-    return target_path
+    finally:
+
+        shutil.rmtree(tmp_source, ignore_errors=True)
+        shutil.rmtree(tmp_target, ignore_errors=True)
 
 
 ##############################################################################
@@ -81,28 +109,17 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str, git_slug: str,
 def run_full_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
-    source_path: str = os.getenv("SOURCE_PATH", "source"),
-    target_path: str = os.getenv("TARGET_PATH", "target"),
-) -> str:
+) -> Dataset:
 
     prep = prepare_environment_op(
         git_repo=git_repo,
         git_branch=git_branch,
-        source_path=source_path,
-        target_path=target_path,
     )
-
-    slug = generate_git_slug_op(git_repo=git_repo, git_branch=git_branch)
-
-    languages = detect_languages_op(source_path=prep.output)
 
     gen = generate_code_and_meta_op(
         git_repo=git_repo,
         git_branch=git_branch,
-        git_slug=slug.output,
-        languages=languages.output,
-        source_path=prep.output,
-        target_path=target_path,
+        source_dir=prep.outputs["source_dir"],
     )
 
-    return gen.output
+    return gen.outputs["target_dir"]

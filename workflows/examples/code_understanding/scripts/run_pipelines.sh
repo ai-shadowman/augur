@@ -133,10 +133,10 @@ if [[ "$MODE" == "single" ]]; then
         exit 1
     fi
     trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
-        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"graphrag_base_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
+        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
 else
     trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}" \
-        "{\"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"graphrag_base_path\": \"$GRAPHRAG_SOURCE_PATH\"}"
+        "{\"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
 fi
 
 echo "All done."
