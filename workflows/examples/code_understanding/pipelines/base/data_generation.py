@@ -323,6 +323,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         result["status"] = "complete"
 
+        DefaultAssetLoader().upload_all_assets(target_path)
+
     except Exception as e:
 
         logging.error(f"Error generating code and metadata: {e}")
