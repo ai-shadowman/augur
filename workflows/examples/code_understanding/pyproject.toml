@@ -12,6 +12,7 @@ exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "*.egg-info*"]
 
 [tool.setuptools.package-data]
 "*" = [
+    "*.sh",
     "*.json",
     "*.jsonl",
     "*.yaml",

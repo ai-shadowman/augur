@@ -141,11 +141,10 @@ def get_parsed_code_metadata(df, language, config=False):
 
         flow_dir = "config_generation" if config else "code_generation"
 
-        import tempfile
-        flows_tmp = os.path.join(tempfile.mkdtemp(), flow_dir)
-        DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_tmp)
+        flows_dir = f"flows/{flow_dir}"
+        DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_dir)
 
-        flow = Flow.from_yaml(os.path.join(flows_tmp, "flow.yaml"))
+        flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
 
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",

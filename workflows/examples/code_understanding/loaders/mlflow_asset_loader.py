@@ -124,22 +124,25 @@ class MlFlowAssetLoader(AssetLoader):
         """
         try:
 
+            import shutil
+
             asset_uri = self._get_absolute_artifact_uri(asset_file_path)
 
-            if download_dir is not None:
+            local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
-                os.makedirs(download_dir, exist_ok=True)
-
-            asset_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri,
-                                                             dst_path=download_dir)
-
-            if not os.path.exists(asset_path):
+            if not os.path.exists(local_path):
 
                 logging.info(f"Asset {asset_uri} not found.")
 
                 return None
 
-            with open(asset_path, "r") as f:
+            if download_dir is not None:
+
+                os.makedirs(download_dir, exist_ok=True)
+
+                shutil.copy2(local_path, os.path.join(download_dir, os.path.basename(local_path)))
+
+            with open(local_path, "r") as f:
 
                 return json.load(f) if asset_uri.endswith(".json") else f.read()
 
