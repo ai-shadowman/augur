@@ -55,12 +55,12 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mlflow-default
+  name: mlflow-view-default
   namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: default
@@ -69,12 +69,12 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mlflow-pipeline-upload-job
+  name: mlflow-view-pipeline-upload-job
   namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: pipeline-upload-job
@@ -83,12 +83,12 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mlflow-pipeline-runner-dspa
+  name: mlflow-view-pipeline-runner-dspa
   namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: pipeline-runner-dspa
@@ -97,12 +97,12 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mlflow-notebook-data-generation
+  name: mlflow-view-notebook-data-generation
   namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow
+  name: mlflow-operator-mlflow-view
 subjects:
   - kind: ServiceAccount
     name: data-generation
@@ -111,12 +111,82 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mlflow-notebook-graphrag-indexing
+  name: mlflow-view-notebook-graphrag-indexing
   namespace: {{ .Values.mlflowNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mlflow
+  name: mlflow-operator-mlflow-view
+subjects:
+  - kind: ServiceAccount
+    name: graphrag-indexing
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-edit-default
+  namespace: {{ .Values.mlflowNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mlflow-operator-mlflow-edit
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-edit-pipeline-upload-job
+  namespace: {{ .Values.mlflowNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mlflow-operator-mlflow-edit
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-upload-job
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-edit-pipeline-runner-dspa
+  namespace: {{ .Values.mlflowNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mlflow-operator-mlflow-edit
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-dspa
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-edit-notebook-data-generation
+  namespace: {{ .Values.mlflowNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mlflow-operator-mlflow-edit
+subjects:
+  - kind: ServiceAccount
+    name: data-generation
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-edit-notebook-graphrag-indexing
+  namespace: {{ .Values.mlflowNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mlflow-operator-mlflow-edit
 subjects:
   - kind: ServiceAccount
     name: graphrag-indexing
