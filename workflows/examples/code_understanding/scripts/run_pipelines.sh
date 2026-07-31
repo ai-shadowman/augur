@@ -95,7 +95,8 @@ if not result.pipelines:
 
 pipeline_id = result.pipelines[0].pipeline_id
 
-versions = client.list_pipeline_versions(pipeline_id=pipeline_id)
+total = client.list_pipeline_versions(pipeline_id=pipeline_id, page_size=1).total_size or 1
+versions = client.list_pipeline_versions(pipeline_id=pipeline_id, page_size=total)
 if not versions.pipeline_versions:
     print(f"Error: pipeline '{pipeline_name}' has no versions in KFP.", file=sys.stderr)
     sys.exit(1)
