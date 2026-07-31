@@ -267,6 +267,11 @@ class DependencyAnalyzer:
 
         questions = [
             """
+            Provide a high-level summary of the code base, including its functionality, architecture, 
+            and any dependencies.
+            Include the fully qualified names of classes, packages, and components as possible in the summary.
+            """,
+            """
             What migration order would be recommended when refactoring to reduce breaking changes?
             Provide a comprehensive order that includes as many classes, packages, and components as possible.
             Include the fully qualified names.
