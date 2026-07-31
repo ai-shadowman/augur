@@ -297,6 +297,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
     """Generates and saves code metadata for one language/config combination."""
     import json, logging, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
+    import shutil
 
     logging.basicConfig(level=logging.INFO)
 
@@ -323,7 +324,11 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         result["status"] = "complete"
 
-        DefaultAssetLoader().upload_all_assets(target_path, subdirectory=f"{git_slug}_{language}{'_config' if config else ''}")
+        code_path = f"workflows/examples/code_understanding/assets/data/{git_slug}_{language}{'_config' if config else ''}_code"
+
+        shutil.copytree(target_path, code_path, dirs_exist_ok=True)
+
+        DefaultAssetLoader().upload_all_assets(code_path)
 
     except Exception as e:
 

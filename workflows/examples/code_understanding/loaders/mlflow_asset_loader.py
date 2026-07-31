@@ -254,12 +254,11 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
-    def upload_all_assets(self, assets_dir: str, subdirectory: str = None):
+    def upload_all_assets(self, assets_dir: str):
         """Uploads all assets from a directory to the static MLflow experiment in a single run.
 
         Args:
             assets_dir: Local path to the directory containing assets to upload.
-            subdirectory: Optional subdirectory in the artifact store to nest the upload under.
         """
         try:
 
@@ -279,19 +278,15 @@ class MlFlowAssetLoader(AssetLoader):
 
                     if entry.is_dir():
 
-                        artifact_path = f"{subdirectory}/{entry.name}" if subdirectory else entry.name
-
                         logging.info(f"Uploading {entry.name}/")
 
-                        client.log_artifacts(run_id, entry.path, artifact_path=artifact_path)
+                        client.log_artifacts(run_id, entry.path, artifact_path=entry.name)
 
                     elif entry.is_file():
 
-                        artifact_path = subdirectory if subdirectory else ""
-
                         logging.info(f"Uploading {entry.name}")
 
-                        client.log_artifact(run_id, entry.path, artifact_path=artifact_path)
+                        client.log_artifact(run_id, entry.path, artifact_path="")
 
                 client.set_terminated(run_id, status="FINISHED")
 
