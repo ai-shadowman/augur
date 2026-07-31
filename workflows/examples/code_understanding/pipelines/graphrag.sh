@@ -8,3 +8,9 @@ sleep 5
 
 echo "Populating GraphRAG index..."
 python -m graphrag index --root "$1" 2>&1
+
+GRAPHRAG_LOG=$(find "$1" -type f -name "indexing-engine.log" 2>/dev/null | xargs ls -t 2>/dev/null | head -n 1)
+if [ -n "$GRAPHRAG_LOG" ] && [ -f "$GRAPHRAG_LOG" ]; then
+    echo "Streaming logs from $GRAPHRAG_LOG..."
+    tail -f "$GRAPHRAG_LOG"
+fi

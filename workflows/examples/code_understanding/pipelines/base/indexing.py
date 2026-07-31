@@ -74,7 +74,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         upload_dir = "datasets/repos/multi_repo" if multi_repo else f"datasets/repos/{git_slug}"
 
-        DefaultAssetLoader().upload_dir(f"{graphrag_source_path}/output", upload_dir=upload_dir)
+        DefaultAssetLoader().log_results(upload_dir,
+                                         artifact_path="results/datasets",
+                                         tags={"git_slug": git_slug,
+                                               "category": "indexing"})
 
         status = "success"
 
