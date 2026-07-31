@@ -81,20 +81,12 @@ class LocalAssetLoader(AssetLoader):
 
             raise e
 
-    def upload_dir(self, local_dir_path: str, upload_dir: str):
-        """No-op. Local directories are already on disk and require no upload step."""
-        pass
-
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
                     content: str = None):
         """Writes content to results_path if provided. No remote logging step."""
-        if content is not None:
+        if content is not None and not os.path.isdir(results_path):
             with open(results_path, "w") as f:
                 f.write(content)
-
-    def upload(self, asset_file_path: str, upload_dir: str):
-        """No-op. Local assets are already on disk and require no upload step."""
-        pass
 
     def upload_all_assets(self, assets_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""

@@ -26,18 +26,10 @@ class DefaultAssetLoader(AssetLoader):
 
         return self._loader.download_dir(asset_dir_path, download_dir)
 
-    def upload_dir(self, local_dir_path: str, upload_dir: str):
-
-        return self._loader.upload_dir(local_dir_path, upload_dir)
-
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
                     content: str = None):
 
         return self._loader.log_results(results_path, artifact_path, tags, content)
-
-    def upload(self, asset_file_path: str, upload_dir: str):
-
-        return self._loader.upload(asset_file_path, upload_dir)
 
     def upload_all_assets(self, assets_dir: str):
 

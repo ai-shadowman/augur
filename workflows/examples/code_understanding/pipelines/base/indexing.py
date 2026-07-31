@@ -94,7 +94,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         result_file = "indexing_result_multi_repo.json" if multi_repo else f"indexing_result_{git_slug}.json"
 
         DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
-                                         content=json.dumps(result))
+                                         content=json.dumps(result),
+                                         tags={"git_slug": git_slug, "category":"indexing"})
 
 
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str,

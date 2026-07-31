@@ -39,24 +39,6 @@ class AssetLoader(ABC):
         """
 
     @abstractmethod
-    def upload_dir(self, local_dir_path: str, upload_dir: str):
-        """Uploads a local directory to the loader's backing store.
-
-        Args:
-            local_dir_path: Local path to the directory to upload.
-            upload_dir: Directory within the backing store to place the contents under.
-        """
-
-    @abstractmethod
-    def upload(self, asset_file_path: str, upload_dir: str):
-        """Uploads a local file to the loader's backing store.
-
-        Args:
-            asset_file_path: Path to the asset file.
-            upload_dir: Directory within the backing store to place the file.
-        """
-
-    @abstractmethod
     def upload_all_assets(self, assets_dir: str):
         """Uploads all assets from a directory to the loader's backing store in a single operation.
 

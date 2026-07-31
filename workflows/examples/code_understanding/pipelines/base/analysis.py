@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
-def run_full_pipeline(graphrag_source_path: str):
+def run_full_pipeline(graphrag_source_path: str, git_slug: str = None, multi_repo: bool = False):
     """Generates a migration report from the GraphRAG index and returns the result."""
     import asyncio, logging
     from pathlib import Path
@@ -18,7 +18,12 @@ def run_full_pipeline(graphrag_source_path: str):
 
     result_file = f"migration_report_{Path(graphrag_source_path).name}.txt"
 
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines", content=report)
+    DefaultAssetLoader().log_results(result_file,
+                                     artifact_path="results/pipelines",
+                                     content=report,
+                                     tags={"git_slug":git_slug,
+                                           "multi_repo":multi_repo,
+                                           "category":"analysis"})
 
     return report
 
@@ -45,7 +50,8 @@ def run_adhoc_query_pipeline(
     result_file = f"adhoc_query_{timestamp}.txt"
 
     DefaultAssetLoader().log_results(result_file, artifact_path="results/adhoc_queries",
-                                     content=f"Question: {question}\n\nAnswer:\n{result}")
+                                     content=f"Question: {question}\n\nAnswer:\n{result}",
+                                     tags={"category": "analysis"})
 
     return result
 

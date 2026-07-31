@@ -13,6 +13,7 @@ class MlFlowAssetLoader(AssetLoader):
     """Loads an asset from the MLflow artifacts registry."""
 
     _STATIC_ASSET_EXPERIMENT = f"/{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/static"
+    _RESULT_DIRECTORY_ASSET_EXPERIMENT = f"/{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/result-directories"
     _RESULT_ASSET_EXPERIMENT = f"/{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/results"
     _RUN_NAME = "code-understanding"
 
@@ -172,32 +173,13 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
-    def upload_dir(self, local_dir_path: str, upload_dir: str):
-        """Uploads a local directory to the MLflow artifacts registry."""
-        try:
-
-            client = MlflowClient()
-
-            experiment = self.get_or_create_experiment_by_name(client, self._STATIC_ASSET_EXPERIMENT)
-
-            run = client.create_run(experiment.experiment_id, run_name=self._RUN_NAME)
-
-            client.log_artifacts(run.info.run_id, local_dir_path, artifact_path=upload_dir)
-
-            self._mark_as_latest(client, experiment.experiment_id, run.info.run_id)
-
-        except Exception as e:
-
-            logging.error(f"Error uploading directory {local_dir_path}: {e}")
-
-            raise e
-
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
                     content: str = None):
         """Logs pipeline output artifacts to a new MLflow run."""
         try:
+            is_dir = os.path.isdir(results_path)
 
-            if content is not None:
+            if content is not None and not is_dir:
 
                 with open(results_path, "w") as f:
 
@@ -205,7 +187,9 @@ class MlFlowAssetLoader(AssetLoader):
 
             client = MlflowClient()
 
-            experiment = self.get_or_create_experiment_by_name(client, self._RESULT_ASSET_EXPERIMENT)
+            experiment_name = self._RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self._RESULT_ASSET_EXPERIMENT
+
+            experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 
             with mlflow.start_run(experiment_id=experiment.experiment_id) as run:
 
@@ -213,7 +197,7 @@ class MlFlowAssetLoader(AssetLoader):
 
                     mlflow.set_tags(tags)
 
-                if os.path.isdir(results_path):
+                if is_dir:
 
                     mlflow.log_artifacts(results_path, artifact_path=artifact_path)
 
@@ -226,31 +210,6 @@ class MlFlowAssetLoader(AssetLoader):
         except Exception as e:
 
             logging.error(f"Error logging results {results_path}: {e}")
-
-            raise e
-
-    def upload(self, asset_file_path: str, upload_dir: str):
-        """Uploads a local file to the MLflow artifacts registry.
-
-        Args:
-            asset_file_path: Local absolute path to the asset file.
-            upload_dir: Artifact path within the MLflow experiment to place the file.
-        """
-        try:
-
-            client = MlflowClient()
-
-            experiment = self.get_or_create_experiment_by_name(client, self._STATIC_ASSET_EXPERIMENT)
-
-            run = client.create_run(experiment.experiment_id, run_name=self._RUN_NAME)
-
-            client.log_artifact(run.info.run_id, asset_file_path, artifact_path=upload_dir)
-
-            self._mark_as_latest(client, experiment.experiment_id, run.info.run_id)
-
-        except Exception as e:
-
-            logging.error(f"Error uploading asset {asset_file_path}: {e}")
 
             raise e
 

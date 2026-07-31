@@ -84,6 +84,7 @@ def single_repo_pipeline(
         graphrag_indexing_pipeline(
             codebase_path=target_path,
             graphrag_source_path=graphrag_source_path,
+            git_slug=git_slug,
         )
 
         graphrag_analysis_pipeline(

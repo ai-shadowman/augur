@@ -1,13 +1,14 @@
 import asyncio
 import logging
 import os
+import tempfile
 
 import mlflow
 import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity
 
-from .custom_evaluator import CustomEvaluator
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
 from ..utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +94,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         return response.choices[0].message.content
 
-    def evaluate(self, input: str, graphrag_source_dir: str):
+    def evaluate(self, input: str, graphrag_source_dir: str, git_slug: str = None):
         """Evaluates a GraphRAG response using MLflow's genai evaluation API.
 
         Queries GraphRAG with the input, generates a reference answer via GROUND_TRUTH_LLM,
@@ -103,6 +104,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         Args:
             input: The question or prompt to evaluate.
             graphrag_source_dir: Root directory of the GraphRAG index (must contain output/*.parquet).
+            git_slug: Optional repository slug used to scope results.
 
         Returns:
             dict of MLflow evaluation metric scores for the single sample.
@@ -166,3 +168,71 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             logging.error(f"Error during MLflow evaluation: {e}")
 
             raise e
+
+    def evaluate_with_dataset(
+        self,
+        graphrag_source_dir: str,
+        eval_dataset_file: str = _DEFAULT_EVAL_DATASET,
+        git_slug: str = None,
+    ):
+        """Runs evaluate() for every row in a CSV dataset and uploads the results.
+
+        Args:
+            graphrag_source_dir: Root directory of the GraphRAG index
+                (must contain output/*.parquet files).
+            eval_dataset_file: Path to the evaluation CSV. Defaults to
+                assets/datasets/eval/code_understanding.csv.
+            git_slug: Optional repository slug used to scope results and artifact paths.
+
+        Returns:
+            The updated pandas DataFrame with "answer" and metric columns populated.
+        """
+        from ..loaders.default_asset_loader import DefaultAssetLoader
+
+        df = pd.read_csv(eval_dataset_file)
+
+        for idx, row in df.iterrows():
+
+            question = str(row["question"])
+
+            one_shot = row.get("one_shot_example", "")
+
+            if pd.notna(one_shot) and str(one_shot).strip():
+
+                input_text = f"{question}\n{one_shot}"
+
+            else:
+
+                input_text = question
+
+            try:
+
+                result = self.evaluate(input_text, graphrag_source_dir, git_slug=git_slug)
+
+                df.at[idx, "answer"] = result.get("actual_answer", "")
+
+                for key, value in result.items():
+
+                    if key not in ("question", "actual_answer"):
+
+                        df.at[idx, key] = value
+
+            except Exception as e:
+
+                logging.error(f"Error evaluating row {idx}: {e}")
+
+                df.at[idx, "answer"] = f"ERROR: {e}"
+
+        slug = git_slug or "multi_repo"
+
+        result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
+
+        df.to_csv(result_file, index=False)
+
+        DefaultAssetLoader().log_results(
+            result_file,
+            artifact_path=f"results/evaluations/{slug}",
+            tags={"category": "evaluation", **({"git_slug": git_slug} if git_slug else {})},
+        )
+
+        return df

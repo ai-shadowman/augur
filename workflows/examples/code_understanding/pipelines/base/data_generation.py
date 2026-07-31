@@ -324,11 +324,13 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         result["status"] = "complete"
 
-        code_path = f"workflows/examples/code_understanding/assets/data/{git_slug}_{language}{'_config' if config else ''}_code"
-
-        shutil.copytree(target_path, code_path, dirs_exist_ok=True)
-
-        DefaultAssetLoader().upload_all_assets(code_path)
+        DefaultAssetLoader().log_results(
+            target_path,
+            artifact_path="results/metadata",
+            tags={"git_slug":git_slug,
+                  "category":"data-generation",
+                  "code-metadata":True}
+        )
 
     except Exception as e:
 
@@ -345,7 +347,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
         result_file = f"data_generation_result_{git_slug}{suffix}.json"
 
         DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
-                                         content=json.dumps(result))
+                                         content=json.dumps(result),
+                                         tags={"git_slug": git_slug, "category":"data-generation"})
 
 
 def generate_git_slug(git_repo: str, git_branch: str) -> str:
