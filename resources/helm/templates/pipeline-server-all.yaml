@@ -23,7 +23,7 @@ spec:
     enableSamplePipeline: false
     caBundleFileMountPath: ''
     caBundleFileName: ''
-    cacheEnabled: true
+    cacheEnabled: false
     pipelineStore: database
   database:
     disableHealthCheck: false
