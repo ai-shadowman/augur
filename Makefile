@@ -55,6 +55,11 @@ deploy-notebooks:
 		GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_VERSION" && \
 		echo "  image: $$GRAPHRAG_IMAGE" && \
 		\
+		echo "==> Waiting for analysis ImageStream to import..." && \
+		until oc get imagestreamtag custom-graphrag:$$KFP_ANALYSIS_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
+		ANALYSIS_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_ANALYSIS_BASE_IMAGE_VERSION" && \
+		echo "  image: $$ANALYSIS_IMAGE" && \
+		\
 		echo "==> Waiting for DSPA to be fully reconciled..." && \
 		until oc get datasciencepipelinesapplication dspa -n $$KFP_NAMESPACE \
 			-o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do sleep 5; done && \
@@ -72,6 +77,10 @@ deploy-notebooks:
 			--set graphrag.image.name="$$KFP_INDEXING_BASE_IMAGE_NAME" \
 			--set graphrag.image.version="$$KFP_INDEXING_BASE_IMAGE_VERSION" \
 			--set graphrag.image.digestRef="$$GRAPHRAG_IMAGE" \
+			--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
+			--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
+			--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION" \
+			--set analysis.image.digestRef="$$ANALYSIS_IMAGE" \
 			--set deployNotebooks=true \
 			-s templates/workbench-notebooks.yaml | oc apply -f -; \
 	fi
@@ -109,7 +118,7 @@ build-images:
 	podman push "$$INDEX_IMG" && \
 	\
 	echo "==> Building analysis image..." && \
-	podman build -t "$$ANALYSIS_IMG" resources/images/data-generation && \
+	podman build -t "$$ANALYSIS_IMG" resources/images/data-indexing && \
 	echo "==> Pushing analysis image..." && \
 	podman push "$$ANALYSIS_IMG"
 

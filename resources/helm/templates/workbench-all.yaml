@@ -86,3 +86,33 @@ spec:
         importMode: Legacy
       referencePolicy:
         type: Source
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: custom-analysis
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/created-by: "byon"
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-name: "{{ .Values.analysis.image.title}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.version}}"
+    opendatahub.io/recommended-accelerators: '[]'
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: {{ .Values.analysis.image.version}}
+      annotations:
+        opendatahub.io/notebook-python-dependencies: '[]'
+        opendatahub.io/notebook-software: '[]'
+        opendatahub.io/imported-from: {{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.version}}
+      from:
+        kind: DockerImage
+        name: '{{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.version}}'
+      importPolicy:
+        importMode: Legacy
+      referencePolicy:
+        type: Source
