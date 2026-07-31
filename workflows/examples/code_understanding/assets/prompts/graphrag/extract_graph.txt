@@ -17,7 +17,6 @@ Given a text document describing a software artifact — which may be source cod
 - entity_type: One of the following types: [{entity_types}]
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors.
   For repositories, use the format: "Repository <git_slug>, hosted at <git_url>"
-Format each entity as ("entity"{tuple_delimiter}<entity_name>{tuple_delimiter}<entity_type>{tuple_delimiter}<entity_description>)
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:
@@ -26,7 +25,6 @@ For each pair of related entities, extract the following information:
 - relationship_description: explanation of how the source entity depends on or uses the target entity
 - relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
 For dependencies that cross repository boundaries, use CROSS_REPO_IMPORTS or CROSS_REPO_DEPENDS_ON as the relationship type in the description.
-Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
 
 3. For every package entity identified in step 1, emit a USES_LIBRARY relationship for each dependency entity (external library) used by modules within that package.
 - source_entity: the package entity
@@ -38,10 +36,6 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 4. For every non-repository entity identified in step 1, emit a BELONGS_TO relationship linking it to its repository entity, with the following exceptions:
 - Class and function entities are optional, since they are reachable through their parent module.
 - Dependency entities: emit BELONGS_TO only if the dependency is internal to the repository (i.e., defined within the same codebase). Omit BELONGS_TO for external third-party libraries and frameworks.
-
-5. Return output as a single list of all the entities and relationships identified in steps 1, 2, 3, and 4. Use **{record_delimiter}** as the list delimiter.
-
-6. When finished, output {completion_delimiter}
 
 ######################
 -Entity Types-
