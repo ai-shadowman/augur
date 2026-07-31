@@ -57,9 +57,10 @@ class AssetLoader(ABC):
         """
 
     @abstractmethod
-    def upload_all_assets(self, assets_dir: str):
+    def upload_all_assets(self, assets_dir: str, subdirectory: str = None):
         """Uploads all assets from a directory to the loader's backing store in a single operation.
 
         Args:
             assets_dir: Local path to the directory containing assets to upload.
+            subdirectory: Optional subdirectory in the backing store to nest the upload under.
         """
