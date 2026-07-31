@@ -179,6 +179,10 @@ class MlFlowAssetLoader(AssetLoader):
         try:
             is_dir = os.path.isdir(results_path)
 
+            if os.path.dirname(results_path):
+
+                os.makedirs(os.path.dirname(results_path), exist_ok=True)
+
             if content is not None and not is_dir:
 
                 with open(results_path, "w") as f:
