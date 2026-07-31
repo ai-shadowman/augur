@@ -72,10 +72,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         if proc.stderr:
             raise Exception(f"Error processing GraphRAG command: {proc.stderr}")
 
-        upload_dir = "datasets/repos/multi_repo" if multi_repo else f"datasets/repos/{git_slug}"
+        artifact_path = "results/datasets/repos/multi-repo" if multi_repo else f"results/datasets/repos/{git_slug}"
 
-        DefaultAssetLoader().log_results(upload_dir,
-                                         artifact_path="results/datasets",
+        DefaultAssetLoader().log_results(f"{graphrag_source_path}/output",
+                                         artifact_path=artifact_path,
                                          tags={"git_slug": git_slug,
                                                "category": "indexing"})
 
