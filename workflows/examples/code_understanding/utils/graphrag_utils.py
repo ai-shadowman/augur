@@ -275,22 +275,29 @@ class DependencyAnalyzer:
 
         system_prompt = loader.download_prompt("analysis/system-prompt/1")
 
-        questions = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
+        prompts = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
 
-        answers = ["N/A"] * len(questions)
+        answers = ["N/A"] * len(prompts)
 
         report = ""
 
-        for i, prompt_path in enumerate(questions):
+        for i, prompt_path in enumerate(prompts):
 
             question = loader.download_prompt(
+                prompt_path,
+                system_prompt="",
+                additional_context="",
+                answers=answers,
+            )
+
+            prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=system_prompt,
                 additional_context="",
                 answers=answers,
             )
 
-            result = await self.query_with_llm(question)
+            result = await self.query_with_llm(prompt)
 
             if result:
 
