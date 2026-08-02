@@ -1,0 +1,6 @@
+{{system_prompt}}
+
+Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
+
+If multiple repositories are present, summarize each one briefly.
+If any of the repositories are related, add a short description of the relationship.

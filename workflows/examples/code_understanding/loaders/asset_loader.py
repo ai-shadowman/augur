@@ -1,7 +1,12 @@
+import os
 from abc import ABC, abstractmethod
 
 
 class AssetLoader(ABC):
+
+    _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
+    _PROMPTS_DIR = os.path.join(_ASSETS_DIR, "prompts")
+
 
     @abstractmethod
     def download(self, asset_file_path: str, download_dir: str = None):
@@ -44,4 +49,24 @@ class AssetLoader(ABC):
 
         Args:
             assets_dir: Local path to the directory containing assets to upload.
+        """
+
+    @abstractmethod
+    def upload_prompt(self, prompt_path: str):
+        """Uploads or registers a prompt template from the assets directory.
+
+        Args:
+            prompt_path: Path to the prompt file relative to _ASSETS_DIR, without extension.
+        """
+
+    @abstractmethod
+    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+        """Downloads and renders a prompt template from the backing store.
+
+        Args:
+            prompt_path: Path to the prompt file relative to _ASSETS_DIR, without extension.
+            **kwargs: Variables to render into the prompt template.
+
+        Returns:
+            The rendered prompt string.
         """

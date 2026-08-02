@@ -35,7 +35,7 @@ install:
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
 		echo "==> Preloading MLflow assets..." && \
-		$(MAKE) preload-mlflow-assets; \
+		$(MAKE) upload-mlflow-assets; \
 	fi
 	$(MAKE) upload-pipelines
 	$(MAKE) deploy-notebooks
@@ -137,7 +137,7 @@ upload-pipelines:
 		--set repoUrl="$(GIT_REPO_URL)" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
-preload-mlflow-assets:
+upload-mlflow-assets:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Deleting existing upload-assets job..." && \

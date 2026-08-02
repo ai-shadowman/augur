@@ -34,3 +34,11 @@ class DefaultAssetLoader(AssetLoader):
     def upload_all_assets(self, assets_dir: str):
 
         return self._loader.upload_all_assets(assets_dir)
+
+    def upload_prompt(self, prompt_path: str):
+
+        return self._loader.upload_prompt(prompt_path)
+
+    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+
+        return self._loader.download_prompt(prompt_path, **kwargs)

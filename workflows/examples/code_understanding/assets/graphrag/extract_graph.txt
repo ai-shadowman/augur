@@ -14,9 +14,13 @@ Given a text document describing a software artifact — which may be source cod
   Within the name, preserve the original casing from the source: fully qualified names for Java/Python
   (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
   or filename for flat files. External dependencies shared across repos are never prefixed.
+
+  IMPORTANT: entity_name MUST preserve the exact original casing from the source code.
+  Never convert names to uppercase or any other case.
+  - WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
+  - CORRECT: com.acme.PaymentService, getPayment, UserController, PaymentService
 - entity_type: One of the following types: [{entity_types}]
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors.
-  For repositories, use the format: "Repository <git_slug>, hosted at <git_url>"
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:

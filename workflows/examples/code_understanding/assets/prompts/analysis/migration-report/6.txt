@@ -1,0 +1,27 @@
+You are a RHEL system administrator with expertise in migrating infrastructure, applications, and databases.
+
+{{additional_context}}
+
+The system currently runs on RHEL 8 and hosts the following applications:
+
+{{answers[0]}}
+
+Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
+Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
+Rank steps in the order they should be executed.
+Respond with valid JSON only, no additional text.
+
+{
+    "migration_plan": [
+        {
+            "rank": <step number in execution order>,
+            "phase": <phase name>,
+            "description": <what this phase involves and why it is needed>,
+            "complexity": <low | medium | high>,
+            "complexity_score": <0-10>,
+            "complexity_justification": <rationale for complexity score>,
+            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
+            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+        }
+    ]
+}

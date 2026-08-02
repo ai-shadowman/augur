@@ -6,6 +6,12 @@ import logging
 logging.basicConfig(level=logging.INFO)
 import pandas as pd
 
+_REPO_URL_INSTRUCTION = (
+    "IMPORTANT: When referring to any repository in your response, always identify it "
+    "by its git_url rather than its internal slug (e.g. jhani-user-app-main). "
+    "The git_url is recorded at the start of each repository entity's description.\n\n"
+)
+
 
 class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
@@ -216,7 +222,7 @@ class DependencyAnalyzer:
                     community_reports=self.community_reports_df,
                     community_level=2,
                     response_type="Multiple Paragraphs",
-                    query=question,
+                    query=_REPO_URL_INSTRUCTION + question,
                     dynamic_community_selection=True,
                 )
 
@@ -232,7 +238,7 @@ class DependencyAnalyzer:
                     covariates=None,
                     community_level=2,
                     response_type="Multiple Paragraphs",
-                    query=question,
+                    query=_REPO_URL_INSTRUCTION + question,
                 )
 
         except Exception as e:
@@ -263,38 +269,34 @@ class DependencyAnalyzer:
     async def generate_migration_report(self):
         """Generate a high-level migration report"""
 
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        loader = DefaultAssetLoader()
+
+        system_prompt = loader.download_prompt("analysis/system-prompt/1")
+
+        questions = [f"analysis/migration-report/{i}" for i in range(1, 7)]
+
+        answers = ["N/A"] * len(questions)
+
         report = ""
 
-        questions = [
-            """
-            Provide a high-level summary of the code base, including its functionality, architecture, 
-            and any dependencies.
-            Include the fully qualified names of classes, packages, and components as possible in the summary.
-            """,
-            """
-            What migration order would be recommended when refactoring to reduce breaking changes?
-            Provide a comprehensive order that includes as many classes, packages, and components as possible.
-            Include the fully qualified names.
-            """,
-            """
-            Are there any security vulnerabilities in the code or associated libraries?
-            Include the fully qualified names.
-            """,
-            """
-            Are there any dependencies that need to be upgraded and in what order?
-            Include the fully qualified names.
-            """
-            ]
+        for i, prompt_path in enumerate(questions):
 
-        for question in questions:
+            question = loader.download_prompt(
+                prompt_path,
+                system_prompt=system_prompt,
+                additional_context="",
+                answers=answers,
+            )
 
             result = await self.query_with_llm(question)
 
-            if not result:
+            if result:
 
-                raise Exception("Could not submit question at this time")
+                answers[i] = result
 
-            report += f"### Question: {question}\n\n###Answer: {result}\n\n"
+            report += f"### Issue: {prompt_path}\n\n### Answer: {answers[i]}\n\n"
 
         return report
     

@@ -217,6 +217,45 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
+    def upload_prompt(self, prompt_path: str):
+        """Registers a prompt template from the local assets directory to the MLflow prompt registry."""
+        try:
+
+            asset_uri = os.path.join(self._PROMPTS_DIR, prompt_path + ".txt")
+
+            with open(asset_uri, "r") as f:
+                content = f.read()
+
+            name = os.path.basename(prompt_path)
+            tags = {"category": os.path.dirname(prompt_path)}
+
+            mlflow.register_prompt(name=name, template=content, tags=tags)
+
+            logging.info(f"Registered prompt '{name}' with tags {tags}")
+
+        except Exception as e:
+
+            logging.error(f"Error registering prompt {prompt_path}: {e}")
+
+            raise e
+
+    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+        """Loads a prompt from the MLflow prompt registry and renders it with the provided variables."""
+        try:
+
+            name = os.path.basename(prompt_path)
+            tags = {"category": os.path.dirname(prompt_path)}
+
+            prompt = mlflow.load_prompt(f"prompts:/{name}/latest", tags=tags)
+
+            return prompt.format(**kwargs)
+
+        except Exception as e:
+
+            logging.error(f"Error loading prompt {prompt_path}: {e}")
+
+            raise e
+
     def upload_all_assets(self, assets_dir: str):
         """Uploads all assets from a directory to the static MLflow experiment in a single run.
 
@@ -250,6 +289,18 @@ class MlFlowAssetLoader(AssetLoader):
                         logging.info(f"Uploading {entry.name}")
 
                         client.log_artifact(run_id, entry.path, artifact_path="")
+
+                for root, _, files in os.walk(self._PROMPTS_DIR):
+
+                    for file in sorted(files):
+
+                        abs_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(abs_path, self._PROMPTS_DIR)
+                        prompt_path = os.path.splitext(rel_path)[0]
+
+                        logging.info(f"Registering prompt '{prompt_path}'")
+
+                        self.upload_prompt(prompt_path)
 
                 client.set_terminated(run_id, status="FINISHED")
 

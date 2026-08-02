@@ -9,8 +9,6 @@ from .asset_loader import AssetLoader
 class LocalAssetLoader(AssetLoader):
     """Loads an asset from the local assets directory."""
 
-    _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
-
     def __init__(self):
 
         self.asset_base_uri = self._ASSETS_DIR
@@ -91,3 +89,18 @@ class LocalAssetLoader(AssetLoader):
     def upload_all_assets(self, assets_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""
         pass
+
+    def upload_prompt(self, prompt_path: str):
+        """No-op. Local prompts are read directly from disk."""
+        pass
+
+    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+        """Reads a prompt template from the local assets directory and renders it with Jinja2."""
+        from jinja2 import Template
+
+        asset_uri = os.path.join(self._PROMPTS_DIR, prompt_path + ".txt")
+
+        with open(asset_uri, "r") as f:
+            content = f.read()
+
+        return Template(content).render(**kwargs)

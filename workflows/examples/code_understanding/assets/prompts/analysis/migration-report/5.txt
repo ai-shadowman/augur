@@ -1,0 +1,25 @@
+{{system_prompt}}
+
+{{additional_context}}
+
+Recommend a migration plan for the codebase targeting RHEL 10.
+Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.
+Respond with valid JSON only, no additional text.
+
+{
+    "migration_plan": [
+        {
+            "rank": <migration step number>,
+            "rank_justification": <rationale for migration rank>,
+            "name": <component name>,
+            "description": <component description>,
+            "git_url": <git url associated with the component>,
+            "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
+            "migration_complexity": <low | medium | high>,
+            "migration_complexity_score": <0-10>,
+            "migration_complexity_justification": <rationale for complexity>,
+            "rhel10_compatibility_issues": <known or likely compatibility issues with RHEL 10>,
+            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+        }
+    ]
+}

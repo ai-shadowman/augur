@@ -52,7 +52,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         logging.info("Copying source code to GraphRAG directory...")
 
-        DefaultAssetLoader().download("prompts/graphrag/extract_graph.txt", download_dir="prompts")
+        DefaultAssetLoader().download("graphrag/extract_graph.txt", download_dir="prompts")
 
         shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
 
