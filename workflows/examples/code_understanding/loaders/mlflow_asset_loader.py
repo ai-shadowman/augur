@@ -226,7 +226,7 @@ class MlFlowAssetLoader(AssetLoader):
             with open(asset_uri, "r") as f:
                 content = f.read()
 
-            name = prompt_path if prompt_path.startswith("/") else f"/{prompt_path}"
+            name = prompt_path.replace("/", "-")
 
             mlflow.register_prompt(name=name, template=content)
 
@@ -242,7 +242,7 @@ class MlFlowAssetLoader(AssetLoader):
         """Loads a prompt from the MLflow prompt registry and renders it with the provided variables."""
         try:
 
-            name = prompt_path if prompt_path.startswith("/") else f"/{prompt_path}"
+            name = prompt_path.replace("/", "-")
 
             prompt = mlflow.load_prompt(name)
 
@@ -251,6 +251,22 @@ class MlFlowAssetLoader(AssetLoader):
         except Exception as e:
 
             logging.error(f"Error loading prompt {prompt_path}: {e}")
+
+            raise e
+
+    def num_prompts(self, prompt_prefix: str) -> int:
+        """Returns the number of prompts in the MLflow registry matching the given prefix."""
+        try:
+
+            prefix = prompt_prefix.replace("/", "-")
+
+            prompts = mlflow.search_prompts(filter_string=f"name LIKE '{prefix}-%'")
+
+            return len(prompts)
+
+        except Exception as e:
+
+            logging.error(f"Error counting prompts with prefix {prompt_prefix}: {e}")
 
             raise e
 

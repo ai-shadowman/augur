@@ -70,3 +70,14 @@ class AssetLoader(ABC):
         Returns:
             The rendered prompt string.
         """
+
+    @abstractmethod
+    def num_prompts(self, prompt_prefix: str) -> int:
+        """Returns the number of prompts with the given prefix.
+
+        Args:
+            prompt_prefix: Path prefix relative to _PROMPTS_DIR to filter prompts by.
+
+        Returns:
+            The count of matching prompts.
+        """

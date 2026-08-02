@@ -104,3 +104,9 @@ class LocalAssetLoader(AssetLoader):
             content = f.read()
 
         return Template(content).render(**kwargs)
+
+    def num_prompts(self, prompt_prefix: str) -> int:
+        """Returns the number of .txt files directly under the prefixed prompts directory."""
+        prompt_dir = os.path.join(self._PROMPTS_DIR, prompt_prefix)
+
+        return sum(1 for f in os.listdir(prompt_dir) if f.endswith(".txt"))

@@ -42,3 +42,7 @@ class DefaultAssetLoader(AssetLoader):
     def download_prompt(self, prompt_path: str, **kwargs) -> str:
 
         return self._loader.download_prompt(prompt_path, **kwargs)
+
+    def num_prompts(self, prompt_prefix: str) -> int:
+
+        return self._loader.num_prompts(prompt_prefix)

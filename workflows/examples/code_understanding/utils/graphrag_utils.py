@@ -275,7 +275,7 @@ class DependencyAnalyzer:
 
         system_prompt = loader.download_prompt("analysis/system-prompt/1")
 
-        questions = [f"analysis/migration-report/{i}" for i in range(1, 7)]
+        questions = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
 
         answers = ["N/A"] * len(questions)
 
