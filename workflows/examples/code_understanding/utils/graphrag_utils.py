@@ -296,7 +296,7 @@ class DependencyAnalyzer:
 
                 answers[i] = result
 
-            report += f"### Issue: {prompt_path}\n\n### Answer: {answers[i]}\n\n"
+            report += f"### Issue: {question}\n\n### Answer: {answers[i]}\n\n"
 
         return report
     
