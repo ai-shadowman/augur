@@ -13,7 +13,7 @@ Respond with valid JSON only, no additional text.
             "rank_justification": <rationale for migration rank>,
             "name": <component name>,
             "description": <component description>,
-            "git_url": <git url associated with the component>,
+            "git_repo": <git repo url associated with the component>,
             "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
             "migration_complexity": <low | medium | high>,
             "migration_complexity_score": <0-10>,
