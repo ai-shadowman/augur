@@ -67,8 +67,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         logging.info(f"\nSubprocess output: {proc.stdout}")
 
-        if proc.stderr:
-            raise Exception(f"Error processing GraphRAG command: {proc.stderr}")
+        if proc.returncode != 0:
+            raise Exception(f"GraphRAG indexing failed (exit {proc.returncode}): {proc.stdout}")
 
         artifact_path = "results/datasets/repos/multi-repo" if multi_repo else f"results/datasets/repos/{git_slug}"
 
