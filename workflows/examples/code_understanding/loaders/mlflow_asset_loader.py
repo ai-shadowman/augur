@@ -268,7 +268,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             logging.error(f"Error counting prompts with prefix {prompt_prefix}: {e}")
 
-            raise e
+            return 0
 
     def upload_all_assets(self, assets_dir: str):
         """Uploads all assets from a directory to the static MLflow experiment in a single run.
