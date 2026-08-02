@@ -226,12 +226,11 @@ class MlFlowAssetLoader(AssetLoader):
             with open(asset_uri, "r") as f:
                 content = f.read()
 
-            name = os.path.basename(prompt_path)
-            tags = {"category": os.path.dirname(prompt_path)}
+            name = prompt_path if prompt_path.startswith("/") else f"/{prompt_path}"
 
-            mlflow.register_prompt(name=name, template=content, tags=tags)
+            mlflow.register_prompt(name=name, template=content)
 
-            logging.info(f"Registered prompt '{name}' with tags {tags}")
+            logging.info(f"Registered prompt '{name}'")
 
         except Exception as e:
 
@@ -243,10 +242,9 @@ class MlFlowAssetLoader(AssetLoader):
         """Loads a prompt from the MLflow prompt registry and renders it with the provided variables."""
         try:
 
-            name = os.path.basename(prompt_path)
-            tags = {"category": os.path.dirname(prompt_path)}
+            name = prompt_path if prompt_path.startswith("/") else f"/{prompt_path}"
 
-            prompt = mlflow.load_prompt(f"prompts:/{name}/latest", tags=tags)
+            prompt = mlflow.load_prompt(name)
 
             return prompt.format(**kwargs)
 
