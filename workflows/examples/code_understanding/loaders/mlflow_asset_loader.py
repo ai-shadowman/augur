@@ -37,7 +37,12 @@ class MlFlowAssetLoader(AssetLoader):
 
             def _send_with_forwarded_token(self, request, **kwargs):
                 request.headers["X-Forwarded-Access-Token"] = _token
-                return _orig_send(self, request, **kwargs)
+                response = _orig_send(self, request, **kwargs)
+                if ("/api/3.0/mlflow/server-info" in (request.url or "")
+                        and response.status_code == 200
+                        and not response.content):
+                    response._content = b'{"workspaces_enabled": true}'
+                return response
 
             requests.Session.send = _send_with_forwarded_token
 
