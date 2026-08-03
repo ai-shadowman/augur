@@ -24,7 +24,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
-                          git_slug: str = None, multi_repo: bool = False):
+                          git_slug: str = "", multi_repo: bool = False):
 
     from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
@@ -60,7 +60,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 @dsl.pipeline(name="graphrag-indexing-pipeline")
 def run_full_pipeline(
     codebase_dir: Input[Dataset],
-    git_slug: str = None,
+    git_slug: str = "",
     multi_repo: bool = False,
 ) -> Dataset:
 
