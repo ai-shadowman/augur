@@ -9,7 +9,7 @@ import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity
 
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
-from ..utils.graphrag_utils import DependencyAnalyzer
+from utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -187,7 +187,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         Returns:
             The updated pandas DataFrame with "answer" and metric columns populated.
         """
-        from ..loaders.default_asset_loader import DefaultAssetLoader
+        from loaders.default_asset_loader import DefaultAssetLoader
 
         df = pd.read_csv(eval_dataset_file)
 
