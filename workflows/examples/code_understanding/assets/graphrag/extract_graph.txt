@@ -45,7 +45,6 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 -Entity Types-
 ######################
 - repository: A git repository. entity_name = git_slug (e.g., jhani-user-app-main).
-  Description format: "Repository <git_slug>, hosted at <git_url>"
 - module: A single source file or compilation unit
 - class: A class definition
 - function: A function or method
@@ -72,7 +71,7 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 -Real Data-
 ######################
 git_slug: {git_slug}
-git_url: {git_url}
+git_repo: {git_repo}
 multi_repo: {multi_repo}
 Entity_types: {entity_types}
 Text: {input_text}

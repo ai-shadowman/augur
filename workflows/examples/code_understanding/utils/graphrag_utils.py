@@ -7,13 +7,6 @@ import logging
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 import pandas as pd
 
-_REPO_URL_INSTRUCTION = (
-    "IMPORTANT: When referring to any repository in your response, always identify it "
-    "by its git_url rather than its internal slug (e.g. jhani-user-app-main). "
-    "The git_url is recorded at the start of each repository entity's description.\n\n"
-)
-
-
 class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
 
