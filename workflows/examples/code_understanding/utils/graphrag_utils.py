@@ -5,8 +5,6 @@ from pathlib import Path
 import os
 import logging
 
-from ccdenver_poc.test import system_prompt
-
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 import pandas as pd
 
