@@ -45,7 +45,7 @@ def single_repo_pipeline(
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
-    git_slug: str = None,
+    git_slug: str = "",
     multi_repo: bool = False,
 ):
 
