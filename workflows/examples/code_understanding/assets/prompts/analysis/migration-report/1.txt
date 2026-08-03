@@ -2,5 +2,7 @@
 
 Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
 
-If multiple repositories are present, summarize each one briefly.
-If any of the repositories are related, add a short description of the relationship.
+Follow these rules based on the number of repositories present:
+
+1. If there is ONE repository: write a single brief summary covering its purpose, architecture, and key dependencies.
+2. If there are MULTIPLE repositories: write a brief summary for each repository individually, then add a short description of how the repositories relate to each other (if they are related).

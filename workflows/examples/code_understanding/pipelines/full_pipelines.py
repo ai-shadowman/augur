@@ -45,6 +45,8 @@ def single_repo_pipeline(
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
+    git_slug: str = None,
+    multi_repo: bool = False,
 ):
 
     if uses_kfp():
@@ -56,17 +58,21 @@ def single_repo_pipeline(
 
         idx = graphrag_indexing_pipeline(
             codebase_dir=dg.output,
+            git_slug=git_slug,
+            multi_repo=multi_repo,
         )
 
         graphrag_analysis_pipeline(
             graphrag_dir=idx.output,
+            git_slug=git_slug,
+            multi_repo=multi_repo,
         )
 
     else:
 
         from pipelines.base.data_generation import generate_git_slug as _gen_slug
 
-        git_slug = _gen_slug(git_repo, git_branch)
+        git_slug = git_slug or _gen_slug(git_repo, git_branch)
 
         source_path = f"{parent_source_path}/{git_slug}"
         target_path = f"{parent_target_path}/{git_slug}"
@@ -85,10 +91,13 @@ def single_repo_pipeline(
             codebase_path=target_path,
             graphrag_source_path=graphrag_source_path,
             git_slug=git_slug,
+            multi_repo=multi_repo,
         )
 
         graphrag_analysis_pipeline(
             graphrag_source_path=graphrag_source_path,
+            git_slug=git_slug,
+            multi_repo=multi_repo,
         )
 
 

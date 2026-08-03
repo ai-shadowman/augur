@@ -22,7 +22,8 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
+def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown],
+                                  git_slug: str = None, multi_repo: bool = False):
 
     import os
     from pipelines.base.analysis import run_full_pipeline
@@ -31,7 +32,7 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
 
-        migration_report = run_full_pipeline(tmp_graphrag)
+        migration_report = run_full_pipeline(tmp_graphrag, git_slug=git_slug, multi_repo=multi_repo)
 
     os.makedirs(os.path.dirname(report.path), exist_ok=True)
 
@@ -47,6 +48,8 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 @dsl.pipeline(name="graphrag-analysis-pipeline")
 def run_full_pipeline(
     graphrag_dir: Input[Dataset],
+    git_slug: str = None,
+    multi_repo: bool = False,
 ):
 
-    generate_migration_report_op(graphrag_dir=graphrag_dir)
+    generate_migration_report_op(graphrag_dir=graphrag_dir, git_slug=git_slug, multi_repo=multi_repo)
