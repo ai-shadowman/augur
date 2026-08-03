@@ -10,7 +10,7 @@ from litellm import completion
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
 from ..utils.graphrag_utils import DependencyAnalyzer
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 def _llm_kwargs(prefix: str) -> dict:

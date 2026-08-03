@@ -5,7 +5,8 @@ NOTE: This class has a dependency on the pyvis library:
 
 from graphrag.config.load_config import load_config
 import logging
-logging.basicConfig(level=logging.INFO)
+import os
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 import networkx as nx
 import matplotlib.pyplot as plt
 from pyvis.network import Network

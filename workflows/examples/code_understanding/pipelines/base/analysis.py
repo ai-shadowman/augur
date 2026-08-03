@@ -9,8 +9,9 @@ def run_full_pipeline(graphrag_source_path: str, git_slug: str = None, multi_rep
     from pathlib import Path
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.graphrag_utils import DependencyAnalyzer
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     analyzer = DependencyAnalyzer(graphrag_source_path)
 
@@ -39,8 +40,9 @@ def run_adhoc_query_pipeline(
     from datetime import datetime
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.graphrag_utils import DependencyAnalyzer
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     analyzer = DependencyAnalyzer(graphrag_source_path)
 

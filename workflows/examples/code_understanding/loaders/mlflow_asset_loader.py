@@ -4,7 +4,7 @@ import mlflow
 import requests
 from mlflow.tracking import MlflowClient
 import logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 from .asset_loader import AssetLoader
 

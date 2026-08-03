@@ -7,8 +7,9 @@ def clone_from_repo(repo_url, destination_path, branch="master"):
     """Clones the given git repo to the specified destination."""
     from git import Repo
     import logging
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -32,8 +33,9 @@ def prepare_environment(source_path: str, target_path: str, git_repo: str, git_b
     """Prepares the environment at the start of the pipeline."""
     import shutil
     import logging
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     logging.info("Preparing the environment for pipeline run...")
 
@@ -64,8 +66,9 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
     import pandas as pd
     from utils import code_utils
     import logging
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -131,7 +134,7 @@ def get_parsed_code_metadata(df, language, config=False):
     from loaders.default_asset_loader import DefaultAssetLoader
     import logging, os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -179,7 +182,7 @@ def generate_code_comment(metadata: dict, file_path: str, config=False):
     from utils import code_utils
     import logging
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -244,7 +247,7 @@ def save_code_and_metadata_files(df, target_path, config=False):
     from utils import json_utils
     from loaders.default_asset_loader import DefaultAssetLoader
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -298,8 +301,9 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
     import json, logging, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
     import shutil
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     result = {"git_slug": git_slug, "language": language, "config": config,
               "status": "error", "fail_message": ""}
@@ -374,8 +378,9 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
                       git_slug: str = None, multi_repo: bool = False):
     """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
     import traceback, logging
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     if git_slug is None:
         git_slug = generate_git_slug(git_repo, git_branch)
@@ -416,8 +421,9 @@ def run_full_pipeline_multi_repo(git_repos: list):
     """Runs run_full_pipeline for each repository in git_repos and returns a list of status dicts."""
     import logging
     from utils import code_utils
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     pipeline_results = []
 

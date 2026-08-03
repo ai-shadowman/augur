@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 from .asset_loader import AssetLoader
 

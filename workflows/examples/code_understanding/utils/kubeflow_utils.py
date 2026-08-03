@@ -2,7 +2,9 @@ import os
 import logging
 from contextlib import contextmanager
 
-logging.basicConfig(level=logging.INFO)
+import os
+
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 ##############################################################################
 # Base images
@@ -25,6 +27,23 @@ ANALYSIS_BASE_IMAGE = (
     f"/{os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME')}"
     f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_VERSION')}"
 )
+
+
+##############################################################################
+# Logging setup
+##############################################################################
+
+def setup_logging():
+    """Configures logging for KFP component pods.
+
+    ``logging.basicConfig`` is a no-op when handlers are already present
+    (KFP executor pre-configures them before the component body runs).
+    Calling ``setLevel`` on the root logger overrides the level regardless.
+    """
+    import logging
+    _level = os.environ.get('LOGLEVEL', 'INFO').upper()
+    logging.basicConfig(level=_level)
+    logging.getLogger().setLevel(_level)
 
 
 ##############################################################################

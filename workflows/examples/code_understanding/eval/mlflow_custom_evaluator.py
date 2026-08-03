@@ -11,7 +11,7 @@ from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similari
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
 from ..utils.graphrag_utils import DependencyAnalyzer
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 class MlFlowCustomEvaluator(CustomEvaluator):

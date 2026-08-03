@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Output
-from utils.kubeflow_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
+from utils.kubeflow_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env, setup_logging
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     git_username=os.getenv("GIT_USERNAME"),
@@ -24,6 +24,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
 
+    setup_logging()
     from pipelines.base.data_generation import prepare_environment
     from utils.kubeflow_utils import write_to_output_artifact, use_ephemeral_space
 
@@ -44,6 +45,7 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset]):
     """Detects languages and generates code metadata for all detected languages."""
 
+    setup_logging()
     from pipelines.base.data_generation import detect_languages, generate_code_and_meta, generate_git_slug
     from utils.kubeflow_utils import read_from_input_artifact, write_to_output_artifact
 

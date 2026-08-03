@@ -4,7 +4,8 @@ import json
 import re
 import yaml
 import logging
-logging.basicConfig(level=logging.INFO)
+import os
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 def _apply_defaults_to_json_keys(target: dict, schema: dict, handle_iterables: bool) -> None:

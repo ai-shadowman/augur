@@ -13,7 +13,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
     nest_asyncio.apply()
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     def prepare_settings(template_path: str, output_path: str):
 
@@ -109,8 +109,9 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
                       git_slug: str = None, multi_repo: bool = False):
     """Generates a GraphRAG index and returns a status dict."""
     import traceback, logging
+    import os
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 

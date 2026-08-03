@@ -2,8 +2,9 @@ import asyncio
 import graphrag.api as api
 from graphrag.config.load_config import load_config
 from pathlib import Path
+import os
 import logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 import pandas as pd
 
 _REPO_URL_INSTRUCTION = (
