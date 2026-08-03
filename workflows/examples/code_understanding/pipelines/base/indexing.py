@@ -54,15 +54,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         DefaultAssetLoader().download("graphrag/extract_graph.txt", download_dir="prompts")
 
-        # DefaultAssetLoader().download("graphrag/community_report.txt", download_dir="prompts")
-
-        # DefaultAssetLoader().download("graphrag/summarize_descriptions.txt", download_dir="prompts")
-
         shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
 
         shutil.copytree("prompts", f"{graphrag_source_path}/prompts", dirs_exist_ok=True)
 
-        logging.info("Running index...")
+        logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
 
         graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
 
@@ -106,6 +102,22 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                                          tags={"git_slug": git_slug, "category":"indexing"})
 
 
+def evaluate_graphrag_index(graphrag_source_path: str, git_slug: str = None, multi_repo: bool = False):
+    """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""
+    import logging
+    import os
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    from eval.default_custom_evaluator import DefaultCustomEvaluator
+
+    logging.info("Starting GraphRAG index evaluation...")
+
+    DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_slug=git_slug)
+
+    logging.info("GraphRAG index evaluation complete.")
+
+
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
                       git_slug: str = None, multi_repo: bool = False):
     """Generates a GraphRAG index and returns a status dict."""
@@ -122,9 +134,6 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
 
         logging.info("GraphRAG index generation complete.")
 
-        return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
-                "status": "success", "fail_message": ""}
-
     except Exception as e:
 
         logging.error(f"Error processing Sample Codebase Index: {e}")
@@ -135,5 +144,17 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str,
 
         return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
                 "status": "fail", "fail_message": error_message}
+
+    try:
+
+        evaluate_graphrag_index(graphrag_source_path=graphrag_source_path,
+                                git_slug=git_slug, multi_repo=multi_repo)
+
+    except Exception as e:
+
+        logging.warning(f"GraphRAG index evaluation failed: {e}")
+
+    return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
+            "status": "success", "fail_message": ""}
 
 

@@ -53,6 +53,25 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
             raise RuntimeError(f"GraphRAG indexing failed: {pipeline_result.get('fail_message')}")
 
 
+@inject_secret_as_env(secret_name="code-understanding-env")
+@inject_secret_as_env(secret_name="git-credentials")
+@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+def graphrag_evaluation_op(graphrag_dir: Input[Dataset],
+                            git_slug: str = "", multi_repo: bool = False):
+
+    from pipelines.base.indexing import evaluate_graphrag_index
+    from utils.kubeflow_utils import setup_logging, read_from_input_artifact
+    setup_logging()
+
+    with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
+
+        evaluate_graphrag_index(
+            graphrag_source_path=tmp_graphrag,
+            git_slug=git_slug,
+            multi_repo=multi_repo,
+        )
+
+
 ##############################################################################
 # Pipeline
 ##############################################################################
@@ -66,6 +85,12 @@ def run_full_pipeline(
 
     task = graphrag_indexing_op(
         codebase_dir=codebase_dir,
+        git_slug=git_slug,
+        multi_repo=multi_repo,
+    )
+
+    graphrag_evaluation_op(
+        graphrag_dir=task.outputs["graphrag_dir"],
         git_slug=git_slug,
         multi_repo=multi_repo,
     )
