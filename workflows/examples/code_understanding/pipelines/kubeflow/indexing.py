@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Metrics, Output
-from utils.kubeflow_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_secret_as_env, setup_logging
+from utils.kubeflow_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     git_username=os.getenv("GIT_USERNAME"),
@@ -26,9 +26,9 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
                           git_slug: str = None, multi_repo: bool = False):
 
-    setup_logging()
     from pipelines.base.indexing import run_full_pipeline as _run_full_pipeline
-    from utils.kubeflow_utils import read_from_input_artifact, write_to_output_artifact
+    from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
+    setup_logging()
 
     with read_from_input_artifact(codebase_dir) as tmp_codebase, \
          write_to_output_artifact(graphrag_dir) as tmp_graphrag:

@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Markdown, Output
-from utils.kubeflow_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env, setup_logging
+from utils.kubeflow_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     git_username=os.getenv("GIT_USERNAME"),
@@ -25,9 +25,9 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
 
     import os
-    setup_logging()
     from pipelines.base.analysis import run_full_pipeline
-    from utils.kubeflow_utils import read_from_input_artifact
+    from utils.kubeflow_utils import setup_logging, read_from_input_artifact
+    setup_logging()
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
 
