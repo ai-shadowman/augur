@@ -1,6 +1,11 @@
 -Target activity-
 You are an AI assistant that helps analyze software codebases and extract dependency information.
 
+-Casing Rule (enforced throughout)-
+1. Copy every entity_name EXACTLY as it appears in the source. Never uppercase,titlecase, or otherwise alter its casing.
+- WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
+- CORRECT: com.acme.PaymentService, getPayment, UserController, PaymentService
+
 -Goal-
 Given a text document describing a software artifact — which may be source code in any programming language, a configuration file, an infrastructure definition, or a build script — identify all software entities and the relationships between them.
 
@@ -14,11 +19,6 @@ Given a text document describing a software artifact — which may be source cod
   Within the name, preserve the original casing from the source: fully qualified names for Java/Python
   (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
   or filename for flat files. External dependencies shared across repos are never prefixed.
-
-  IMPORTANT: entity_name MUST preserve the exact original casing from the source code.
-  Never convert names to uppercase or any other case.
-  - WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
-  - CORRECT: com.acme.PaymentService, getPayment, UserController, PaymentService
 - entity_type: One of the following types: [{entity_types}]
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors.
 
@@ -68,6 +68,14 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 - CROSS_REPO_DEPENDS_ON: Module A in one repo depends on Module B from a different repo
 
 ######################
+-Output Format-
+######################
+One tuple per line. No other text. Two tuple types:
+
+("entity"<|><entity_name><|><entity_type><|><entity_description>)
+("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
+
+######################
 -Real Data-
 ######################
 git_slug: {git_slug}
@@ -76,6 +84,6 @@ multi_repo: {multi_repo}
 Entity_types: {entity_types}
 Text: {input_text}
 ######################
-Output:
+Output  (copy all identifiers character-for-character from the source — no case changes):
 
 

@@ -4,8 +4,12 @@ from graphrag.config.load_config import load_config
 from pathlib import Path
 import os
 import logging
+
+from ccdenver_poc.test import system_prompt
+
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 import pandas as pd
+
 
 class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
@@ -200,12 +204,17 @@ class DependencyAnalyzer:
             Defaults to True (recommended for many larger-scale code
             comprehension tasks).
         """
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        loader = DefaultAssetLoader()
 
         num_tries_left = retry_count
 
         try:
 
             config = load_config(Path(self.root_dir))
+
+            system_prompt = loader.download_prompt("analysis/system-prompt/1")
 
             if use_global:
 
@@ -216,7 +225,7 @@ class DependencyAnalyzer:
                     community_reports=self.community_reports_df,
                     community_level=2,
                     response_type="Multiple Paragraphs",
-                    query=_REPO_URL_INSTRUCTION + question,
+                    query=system_prompt + question,
                     dynamic_community_selection=True,
                 )
 
@@ -232,7 +241,7 @@ class DependencyAnalyzer:
                     covariates=None,
                     community_level=2,
                     response_type="Multiple Paragraphs",
-                    query=_REPO_URL_INSTRUCTION + question,
+                    query=system_prompt + question,
                 )
 
         except Exception as e:
