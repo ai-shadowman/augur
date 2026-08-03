@@ -242,11 +242,13 @@ class MlFlowAssetLoader(AssetLoader):
         """Loads a prompt from the MLflow prompt registry and renders it with the provided variables."""
         try:
 
+            from jinja2 import Template
+
             name = prompt_path.replace("/", "-")
 
             prompt = mlflow.load_prompt(name)
 
-            return prompt.format(**kwargs)
+            return Template(prompt.template).render(**kwargs)
 
         except Exception as e:
 
