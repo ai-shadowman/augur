@@ -284,6 +284,8 @@ class DependencyAnalyzer:
 
         for i, prompt_path in enumerate(prompts):
 
+            logging.info(f"Answers = {answers}")
+
             prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=system_prompt,
