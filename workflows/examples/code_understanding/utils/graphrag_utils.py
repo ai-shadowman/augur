@@ -283,13 +283,6 @@ class DependencyAnalyzer:
 
         for i, prompt_path in enumerate(prompts):
 
-            question = loader.download_prompt(
-                prompt_path,
-                system_prompt="",
-                additional_context="",
-                answers=answers,
-            )
-
             prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=system_prompt,
@@ -302,6 +295,13 @@ class DependencyAnalyzer:
             if result:
 
                 answers[i] = result
+
+            question = loader.download_prompt(
+                prompt_path,
+                system_prompt="",
+                additional_context="",
+                answers=answers,
+            )
 
             report += f"### Issue: {question}\n\n### Answer: {answers[i]}\n\n"
 
