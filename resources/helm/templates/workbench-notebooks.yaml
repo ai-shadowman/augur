@@ -111,11 +111,6 @@ spec:
               value: /etc/pki/tls/custom-certs/ca-bundle.crt
             - name: PIP_CERT
               value: /etc/pki/tls/custom-certs/ca-bundle.crt
-            - name: MLFLOW_TRACKING_URI
-              valueFrom:
-                secretKeyRef:
-                  name: code-understanding-env
-                  key: MLFLOW_TRACKING_URI
       volumes:
         - name: workspace-volume
           persistentVolumeClaim:
@@ -241,11 +236,6 @@ spec:
               value: /etc/pki/tls/custom-certs/ca-bundle.crt
             - name: PIP_CERT
               value: /etc/pki/tls/custom-certs/ca-bundle.crt
-            - name: MLFLOW_TRACKING_URI
-              valueFrom:
-                secretKeyRef:
-                  name: code-understanding-env
-                  key: MLFLOW_TRACKING_URI
       volumes:
         - name: workspace-volume
           persistentVolumeClaim:
