@@ -111,8 +111,8 @@ extract_claims:
 
 community_reports:
   model_id: default_chat_model
-  graph_prompt: "prompts/community_report.txt"
-  text_prompt: "prompts/community_report.txt"
+  graph_prompt: "prompts/community_report_graph.txt"
+  text_prompt: "prompts/community_report_text.txt"
   max_length: 2000
   max_input_length: 8000
 
