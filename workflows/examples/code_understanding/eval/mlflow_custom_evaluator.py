@@ -113,7 +113,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
 
-            actual_answer = asyncio.run(analyzer.query_with_llm(input))
+            actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
+
+            context_str = str(context_data) if context_data is not None else ""
 
             reference_answer = self._ground_truth_answer(input)
 
@@ -123,6 +125,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 "inputs": [input],
                 "targets": [reference_answer],
                 "predictions": [actual_answer],
+                "context": [context_str],
             })
 
             from mlflow.tracking import MlflowClient

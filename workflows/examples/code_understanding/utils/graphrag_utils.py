@@ -191,7 +191,8 @@ class DependencyAnalyzer:
     async def query_with_llm(self,
                              question: str,
                              retry_count: int = 3,
-                             use_global: bool = True):
+                             use_global: bool = True,
+                             include_context: bool = False):
         """
         Use GraphRAG's LLM search to answer dependency questions
 
@@ -201,6 +202,8 @@ class DependencyAnalyzer:
             use_global (bool, optional): Whether to use GraphRAG's global search.
             Defaults to True (recommended for many larger-scale code
             comprehension tasks).
+            include_context (bool, optional): If True, return (result, context_data) tuple
+            instead of just the result string. Defaults to False.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
@@ -216,7 +219,7 @@ class DependencyAnalyzer:
 
             if use_global:
 
-                result, _ = await api.global_search(
+                result, context_data = await api.global_search(
                     config=config,
                     entities=self.entity_df,
                     communities=self.communities_df,
@@ -229,7 +232,7 @@ class DependencyAnalyzer:
 
             else:
 
-                result, _ = await api.global_search(
+                result, context_data = await api.global_search(
                     config=config,
                     entities=self.entity_df,
                     communities=self.communities_df,
@@ -250,11 +253,15 @@ class DependencyAnalyzer:
 
                 logging.info(f"Retrying query ({num_tries_left} tries left): {e}")
 
-                return await self.query_with_llm(question, retry_count=num_tries_left, use_global=use_global)
+                return await self.query_with_llm(question, retry_count=num_tries_left,
+                                                 use_global=use_global, include_context=include_context)
 
             else:
 
                 raise e
+
+        if include_context:
+            return result, context_data
 
         return result
 
