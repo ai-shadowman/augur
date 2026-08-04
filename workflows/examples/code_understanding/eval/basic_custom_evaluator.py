@@ -149,6 +149,7 @@ Respond ONLY with valid JSON in this exact format:
         from loaders.default_asset_loader import DefaultAssetLoader
 
         df = pd.read_csv(eval_dataset_file)
+        df["answer"] = pd.Series(dtype=object, index=df.index)
 
         for idx, row in df.iterrows():
 
