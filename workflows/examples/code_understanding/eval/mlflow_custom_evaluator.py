@@ -142,12 +142,12 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                     data=eval_data,
                     predictions="predictions",
                     targets="targets",
-                    model_type="question-answering",
                     extra_metrics=[
                         faithfulness(model=judge_model),
                         answer_relevance(model=judge_model),
                         answer_similarity(model=judge_model),
                     ],
+                    evaluators=[],
                 )
 
             metrics = results.metrics
