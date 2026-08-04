@@ -22,6 +22,8 @@ from loaders.default_asset_loader import DefaultAssetLoader
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+_CODE_METADATA_DIR = ".code_metadata"
+
 
 def _load_mappings():
     """Loads language mappings from the language_mappings.json file."""
@@ -102,6 +104,7 @@ def process_large_code_file(abs_path: str, source_path: str):
 
 
 def get_exclude_dirs_for_language(language):
+
     mappings = _MAPPINGS["exclude_dirs"]
 
     language = language.strip().lower()
@@ -109,7 +112,7 @@ def get_exclude_dirs_for_language(language):
     if language not in mappings:
         raise ValueError(f"Language={language} has not been mapped")
 
-    return set(mappings[language])
+    return set(mappings[language]) | {_CODE_METADATA_DIR}
 
 
 def get_comment_delimiters_for_language(language):
