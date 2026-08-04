@@ -45,7 +45,6 @@ def single_repo_pipeline(
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
-    git_slug: str = "",
     multi_repo: bool = False,
 ):
 
@@ -54,17 +53,20 @@ def single_repo_pipeline(
         dg = data_generation_pipeline(
             git_repo=git_repo,
             git_branch=git_branch,
+            multi_repo=multi_repo,
         )
 
         idx = graphrag_indexing_pipeline(
             codebase_dir=dg.output,
-            git_slug=git_slug,
+            git_repo=git_repo,
+            git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
         graphrag_analysis_pipeline(
             graphrag_dir=idx.output,
-            git_slug=git_slug,
+            git_repo=git_repo,
+            git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
@@ -72,7 +74,7 @@ def single_repo_pipeline(
 
         from pipelines.base.data_generation import generate_git_slug as _gen_slug
 
-        git_slug = git_slug or _gen_slug(git_repo, git_branch)
+        git_slug = _gen_slug(git_repo, git_branch)
 
         source_path = f"{parent_source_path}/{git_slug}"
         target_path = f"{parent_target_path}/{git_slug}"
@@ -85,18 +87,21 @@ def single_repo_pipeline(
             git_branch=git_branch,
             source_path=source_path,
             target_path=target_path,
+            multi_repo=multi_repo,
         )
 
         graphrag_indexing_pipeline(
             codebase_path=target_path,
             graphrag_source_path=graphrag_source_path,
-            git_slug=git_slug,
+            git_repo=git_repo,
+            git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
         graphrag_analysis_pipeline(
             graphrag_source_path=graphrag_source_path,
-            git_slug=git_slug,
+            git_repo=git_repo,
+            git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
@@ -107,14 +112,31 @@ def multi_repo_pipeline(
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
 ):
 
-    with dsl.ParallelFor(items=_GIT_REPOS) as repo:
+    if uses_kfp():
 
-        single_repo_pipeline(
-            git_repo=repo.git_repo,
-            git_branch=repo.git_branch,
-            parent_source_path=parent_source_path,
+        from pipelines.kubeflow.data_generation import run_full_pipeline_multi_repo_op as run_data_generation_multi_repo_op
+        from pipelines.kubeflow.indexing import run_indexing_multi_repo_op
+        from pipelines.kubeflow.analysis import run_analysis_multi_repo_op
+
+        dg = run_data_generation_multi_repo_op()
+
+        idx = run_indexing_multi_repo_op(
             parent_target_path=parent_target_path,
-        )
+        ).after(dg)
+
+        run_analysis_multi_repo_op().after(idx)
+
+    else:
+
+        from pipelines.base.data_generation import run_full_pipeline_multi_repo
+        from pipelines.base.indexing import run_full_pipeline_multi_repo as run_indexing_multi_repo
+        from pipelines.base.analysis import run_full_pipeline_multi_repo as run_analysis_multi_repo
+
+        run_full_pipeline_multi_repo(_GIT_REPOS)
+
+        run_indexing_multi_repo(parent_target_path=parent_target_path)
+
+        run_analysis_multi_repo()
 
 
 ##############################################################################

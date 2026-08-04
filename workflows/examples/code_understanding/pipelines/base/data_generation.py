@@ -54,7 +54,7 @@ def prepare_environment(source_path: str, target_path: str, git_repo: str, git_b
         raise e
 
 
-def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_slug: str,
+def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_branch: str,
                          language: str = "python", split_sections=True, config=False,
                          multi_repo: bool = False):
     """Walks source_path and returns a DataFrame of source files for the given language."""
@@ -69,6 +69,8 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
     import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch) if git_repo else None
 
     try:
 
@@ -294,23 +296,26 @@ def save_code_and_metadata_files(df, target_path, config=False):
         raise e
 
 
-def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, language: str,
+def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                             source_path: str, target_path: str, config: bool = False,
                             multi_repo: bool = False):
     """Generates and saves code metadata for one language/config combination."""
     import json, logging, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
+    from utils import code_utils
     import shutil
     import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch) if git_repo else None
 
     result = {"git_slug": git_slug, "language": language, "config": config,
               "status": "error", "fail_message": ""}
 
     try:
 
-        code_df = generate_raw_dataset(source_path, target_path, git_repo, git_slug,
+        code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
                                        language=language, config=config, multi_repo=multi_repo)
 
         if code_df is None:
@@ -333,7 +338,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
             artifact_path="results/metadata",
             tags={"git_slug":git_slug,
                   "category":"data-generation",
-                  "code-metadata":True}
+                  "code-metadata":True,
+                  "multi_repo":multi_repo}
         )
 
     except Exception as e:
@@ -352,7 +358,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, git_slug: str, langua
 
         DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
                                          content=json.dumps(result),
-                                         tags={"git_slug": git_slug, "category":"data-generation"})
+                                         tags={"git_slug": git_slug, "category":"data-generation",
+                                               "multi_repo": multi_repo})
 
 
 def generate_git_slug(git_repo: str, git_branch: str) -> str:
@@ -375,15 +382,14 @@ def detect_languages(source_path: str) -> list:
 
 
 def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_path: str,
-                      git_slug: str = None, multi_repo: bool = False):
+                      multi_repo: bool = False):
     """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
     import traceback, logging
     import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-    if git_slug is None:
-        git_slug = generate_git_slug(git_repo, git_branch)
+    git_slug = generate_git_slug(git_repo, git_branch)
 
     try:
 
@@ -395,7 +401,7 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
             for config in [False, True]:
 
                 generate_code_and_meta(
-                    git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
+                    git_repo=git_repo, git_branch=git_branch,
                     language=language, source_path=source_path, target_path=target_path,
                     config=config, multi_repo=multi_repo,
                 )
@@ -425,6 +431,9 @@ def run_full_pipeline_multi_repo(git_repos: list):
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+    parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
+    parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
+
     pipeline_results = []
 
     for git_data in git_repos:
@@ -435,15 +444,15 @@ def run_full_pipeline_multi_repo(git_repos: list):
 
         repo_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-        source_path = f"{git_data['parent_source_path']}/{repo_slug}"
+        source_path = f"{parent_source_path}/{repo_slug}"
 
-        target_path = f"{git_data['parent_target_path']}/{repo_slug}"
+        target_path = f"{parent_target_path}/{repo_slug}"
 
         logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
 
         result = run_full_pipeline(git_repo=git_repo, git_branch=git_branch,
                                    source_path=source_path, target_path=target_path,
-                                   git_slug=repo_slug, multi_repo=True)
+                                   multi_repo=True)
 
         pipeline_results.append(result)
 

@@ -7,7 +7,7 @@ import tempfile
 import pandas as pd
 from litellm import completion
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, read_codebase_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -44,7 +44,8 @@ Rate the actual answer on each dimension from 0.0 to 1.0:
 Respond ONLY with valid JSON in this exact format:
 {{"faithfulness": <score>, "relevancy": <score>, "completeness": <score>, "reasoning": "<brief explanation>"}}"""
 
-    def evaluate(self, input: str, graphrag_source_dir: str, git_slug: str = None):
+    def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
+                 git_slug: str = None, multi_repo: bool = False):
         """Evaluates a GraphRAG response using LLM-as-judge with a generated reference answer.
 
         Queries GraphRAG with the input, generates a reference answer via GROUND_TRUTH_LLM,
@@ -53,6 +54,8 @@ Respond ONLY with valid JSON in this exact format:
         Args:
             input: The question or prompt to evaluate.
             graphrag_source_dir: Root directory of the GraphRAG index (must contain output/*.parquet).
+            git_repo: Repository URL used as context for the ground truth LLM.
+            git_branch: Branch name used as context for the ground truth LLM.
             git_slug: Optional repository slug used to scope results.
 
         Returns:
@@ -65,7 +68,7 @@ Respond ONLY with valid JSON in this exact format:
 
             actual_answer = asyncio.run(analyzer.query_with_llm(input))
 
-            codebase_context = read_codebase_context(graphrag_source_dir)
+            repo_context = build_repo_context(graphrag_source_dir)
 
             reference_response = completion(
                 **_llm_kwargs("GROUND_TRUTH"),
@@ -79,7 +82,7 @@ Respond ONLY with valid JSON in this exact format:
                     },
                     {
                         "role": "user",
-                        "content": f"{codebase_context}\n\n{input}" if codebase_context else input,
+                        "content": f"{repo_context}\n\n{input}" if repo_context else input,
                     },
                 ],
             )
@@ -123,14 +126,19 @@ Respond ONLY with valid JSON in this exact format:
     def evaluate_with_dataset(
         self,
         graphrag_source_dir: str,
+        git_repo: str,
+        git_branch: str,
         eval_dataset_file: str = _DEFAULT_EVAL_DATASET,
         git_slug: str = None,
+        multi_repo: bool = False,
     ):
         """Runs evaluate() for every row in a CSV dataset and uploads the results.
 
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
                 (must contain output/*.parquet files).
+            git_repo: Repository URL used as context for the ground truth LLM.
+            git_branch: Branch name used as context for the ground truth LLM.
             eval_dataset_file: Path to the evaluation CSV. Defaults to
                 assets/datasets/eval/code_understanding.csv.
             git_slug: Optional repository slug used to scope results and artifact paths.
@@ -158,7 +166,8 @@ Respond ONLY with valid JSON in this exact format:
 
             try:
 
-                result = self.evaluate(input_text, graphrag_source_dir, git_slug=git_slug)
+                result = self.evaluate(input_text, graphrag_source_dir, git_repo, git_branch,
+                                       git_slug=git_slug, multi_repo=multi_repo)
 
                 df.at[idx, "answer"] = result.get("actual_answer", "")
 
@@ -174,7 +183,15 @@ Respond ONLY with valid JSON in this exact format:
 
                 df.at[idx, "answer"] = f"ERROR: {e}"
 
-        slug = git_slug or "multi_repo"
+        from utils import code_utils
+        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+        artifact_path = (
+            f"results/evaluations/multi_repo/{slug}" if multi_repo
+            else f"results/evaluations/{slug}"
+        )
+
+        df["git_slug"] = slug
 
         result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
 
@@ -182,8 +199,8 @@ Respond ONLY with valid JSON in this exact format:
 
         DefaultAssetLoader().log_results(
             result_file,
-            artifact_path=f"results/evaluations/{slug}",
-            tags={"category": "evaluation", **({"git_slug": git_slug} if git_slug else {})},
+            artifact_path=artifact_path,
+            tags={"category": "evaluation", "git_slug": slug},
         )
 
         return df

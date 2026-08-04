@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, read_codebase_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -22,7 +22,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     and answer_similarity metrics.
     """
 
-    _EXPERIMENT_NAME = f"/{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/evaluations"
+    _EXPERIMENT_NAME = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/evaluations"
     _RUN_NAME = "code-understanding-eval"
     _SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
@@ -66,7 +66,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         """Generates a reference answer using GROUND_TRUTH_LLM via LiteLLM."""
         from litellm import completion
 
-        codebase_context = read_codebase_context(graphrag_source_dir) if graphrag_source_dir else ""
+        repo_context = build_repo_context(graphrag_source_dir)
 
         response = completion(
             model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
@@ -82,19 +82,22 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 },
                 {
                     "role": "user",
-                    "content": f"{codebase_context}\n\n{input}" if codebase_context else input,
+                    "content": f"{repo_context}\n\n{input}" if repo_context else input,
                 },
             ],
         )
 
         return response.choices[0].message.content
 
-    def evaluate(self, input: str, graphrag_source_dir: str, git_slug: str = None):
+    def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
+                 git_slug: str = None, multi_repo: bool = False):
         """Evaluates a GraphRAG response using MLflow's genai evaluation API.
 
         Args:
             input: The question or prompt to evaluate.
             graphrag_source_dir: Root directory of the GraphRAG index (must contain output/*.parquet).
+            git_repo: Repository URL used as context for the ground truth LLM.
+            git_branch: Branch name used as context for the ground truth LLM.
             git_slug: Optional repository slug used to scope results.
 
         Returns:
@@ -166,14 +169,19 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     def evaluate_with_dataset(
         self,
         graphrag_source_dir: str,
+        git_repo: str,
+        git_branch: str,
         eval_dataset_file: str = _DEFAULT_EVAL_DATASET,
         git_slug: str = None,
+        multi_repo: bool = False,
     ):
         """Runs evaluate() for every row in a CSV dataset and uploads the results.
 
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
                 (must contain output/*.parquet files).
+            git_repo: Repository URL used as context for the ground truth LLM.
+            git_branch: Branch name used as context for the ground truth LLM.
             eval_dataset_file: Path to the evaluation CSV. Defaults to
                 assets/datasets/eval/code_understanding.csv.
             git_slug: Optional repository slug used to scope results and artifact paths.
@@ -201,7 +209,8 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             try:
 
-                result = self.evaluate(input_text, graphrag_source_dir, git_slug=git_slug)
+                result = self.evaluate(input_text, graphrag_source_dir, git_repo, git_branch,
+                                       git_slug=git_slug, multi_repo=multi_repo)
 
                 df.at[idx, "answer"] = result.get("actual_answer", "")
 
@@ -217,7 +226,15 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
                 df.at[idx, "answer"] = f"ERROR: {e}"
 
-        slug = git_slug or "multi_repo"
+        from utils import code_utils
+        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+        artifact_path = (
+            f"results/evaluations/multi_repo/{slug}" if multi_repo
+            else f"results/evaluations/{slug}"
+        )
+
+        df["git_slug"] = slug
 
         result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
 
@@ -225,8 +242,8 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         DefaultAssetLoader().log_results(
             result_file,
-            artifact_path=f"results/evaluations/{slug}",
-            tags={"category": "evaluation", **({"git_slug": git_slug} if git_slug else {})},
+            artifact_path=artifact_path,
+            tags={"category": "evaluation", "git_slug": slug},
         )
 
         return df

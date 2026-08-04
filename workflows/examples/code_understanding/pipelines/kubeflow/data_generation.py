@@ -42,16 +42,15 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def generate_code_and_meta_op(git_repo: str, git_branch: str,
-                               source_dir: Input[Dataset], target_dir: Output[Dataset]):
+                               source_dir: Input[Dataset], target_dir: Output[Dataset],
+                               multi_repo: bool = False):
     """Detects languages and generates code metadata for all detected languages."""
 
-    from pipelines.base.data_generation import detect_languages, generate_code_and_meta, generate_git_slug
+    from pipelines.base.data_generation import detect_languages, generate_code_and_meta
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
-
-        git_slug = generate_git_slug(git_repo, git_branch)
 
         languages = detect_languages(tmp_source)
 
@@ -60,20 +59,33 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
             for config in [False, True]:
 
                 generate_code_and_meta(
-                    git_repo=git_repo, git_branch=git_branch, git_slug=git_slug,
+                    git_repo=git_repo, git_branch=git_branch,
                     language=language, source_path=tmp_source, target_path=tmp_target,
-                    config=config,
+                    config=config, multi_repo=multi_repo,
                 )
 
 
+@inject_secret_as_env(secret_name="code-understanding-env")
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+def get_repo_list_op() -> list:
+    """Downloads and returns the repo list from the asset loader."""
+
+    from loaders.default_asset_loader import DefaultAssetLoader
+    from utils.kubeflow_utils import setup_logging
+    setup_logging()
+
+    return DefaultAssetLoader().download("repos/repo_list.json")
+
+
 ##############################################################################
-# Pipeline
+# Pipelines
 ##############################################################################
 
 @dsl.pipeline(name="data-generation-pipeline")
 def run_full_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
+    multi_repo: bool = False,
 ) -> Dataset:
 
     prep = prepare_environment_op(
@@ -85,6 +97,22 @@ def run_full_pipeline(
         git_repo=git_repo,
         git_branch=git_branch,
         source_dir=prep.outputs["source_dir"],
+        multi_repo=multi_repo,
     )
 
     return gen.outputs["target_dir"]
+
+
+@dsl.pipeline(name="data-generation-multi-repo-pipeline")
+def run_full_pipeline_multi_repo_op():
+    """Generates code metadata for all repositories in the asset-loader repo list."""
+
+    repo_list_task = get_repo_list_op()
+
+    with dsl.ParallelFor(items=repo_list_task.output) as repo:
+
+        run_full_pipeline(
+            git_repo=repo.git_repo,
+            git_branch=repo.git_branch,
+            multi_repo=True,
+        )
