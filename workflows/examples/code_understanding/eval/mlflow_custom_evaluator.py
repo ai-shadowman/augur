@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, read_codebase_context
 from utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -20,14 +20,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     Uses GROUND_TRUTH_LLM to generate a reference answer and JUDGE_LLM as
     the evaluator model for MLflow's built-in faithfulness, answer_relevance,
     and answer_similarity metrics.
-
-    Reads model configuration from environment variables:
-      GROUND_TRUTH_LLM_PROVIDER, GROUND_TRUTH_LLM_ID, GROUND_TRUTH_LLM_API_BASE, GROUND_TRUTH_LLM_TOKEN
-      JUDGE_LLM_PROVIDER, JUDGE_LLM_ID, JUDGE_LLM_API_BASE, JUDGE_LLM_TOKEN
-
-    Authentication against MLflow tracking server follows the same pattern as
-    MlFlowAssetLoader: reads MLFLOW_TRACKING_TOKEN or falls back to the
-    Kubernetes service account token.
     """
 
     _EXPERIMENT_NAME = f"/{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/evaluations"
@@ -62,8 +54,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         judge_api_base = os.getenv("JUDGE_LLM_API_BASE")
         judge_token = os.getenv("JUDGE_LLM_TOKEN")
 
-        # MLflow genai metrics use the OpenAI client internally; point it at the
-        # configured judge endpoint so any OpenAI-compatible provider works.
         if judge_api_base:
             os.environ.setdefault("OPENAI_API_BASE", judge_api_base)
 
@@ -72,9 +62,11 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         return f"openai:/{judge_id}"
 
-    def _ground_truth_answer(self, input: str) -> str:
+    def _ground_truth_answer(self, input: str, graphrag_source_dir: str = "") -> str:
         """Generates a reference answer using GROUND_TRUTH_LLM via LiteLLM."""
         from litellm import completion
+
+        codebase_context = read_codebase_context(graphrag_source_dir) if graphrag_source_dir else ""
 
         response = completion(
             model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
@@ -88,7 +80,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                         "reference answers about code structure and dependencies."
                     ),
                 },
-                {"role": "user", "content": input},
+                {
+                    "role": "user",
+                    "content": f"{codebase_context}\n\n{input}" if codebase_context else input,
+                },
             ],
         )
 
@@ -96,10 +91,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_slug: str = None):
         """Evaluates a GraphRAG response using MLflow's genai evaluation API.
-
-        Queries GraphRAG with the input, generates a reference answer via GROUND_TRUTH_LLM,
-        then runs MLflow faithfulness, answer_relevance, and answer_similarity metrics
-        using JUDGE_LLM and logs the results to the MLflow tracking server.
 
         Args:
             input: The question or prompt to evaluate.
@@ -117,7 +108,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             context_str = str(context_data) if context_data is not None else ""
 
-            reference_answer = self._ground_truth_answer(input)
+            reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
 
             judge_model = self._judge_model_uri()
 

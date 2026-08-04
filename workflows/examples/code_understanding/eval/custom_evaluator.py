@@ -1,4 +1,6 @@
+import logging
 import os
+import pathlib
 from abc import ABC, abstractmethod
 
 _DEFAULT_EVAL_DATASET = os.path.normpath(
@@ -7,6 +9,42 @@ _DEFAULT_EVAL_DATASET = os.path.normpath(
         "..", "assets", "datasets", "eval", "code_understanding.csv",
     )
 )
+
+
+def read_codebase_context(graphrag_source_dir: str) -> str:
+
+    """Return the codebase source files as an LLM-ready string via gitingest."""
+
+    codebase_dir = pathlib.Path(graphrag_source_dir) / "input"
+
+    if not codebase_dir.is_dir():
+
+        logging.warning(
+            "Codebase directory %s not found; ground truth LLM will answer without source context.",
+            codebase_dir,
+        )
+
+        return ""
+
+    try:
+
+        from gitingest import ingest
+
+        _, _, content = ingest(str(codebase_dir))
+
+        return f"Source code of the codebase being analyzed:\n\n{content}"
+
+    except ImportError:
+
+        logging.warning("gitingest is not installed; ground truth LLM will answer without source context.")
+
+        return ""
+
+    except Exception as e:
+
+        logging.warning("Failed to ingest codebase with gitingest: %s", e)
+
+        return ""
 
 
 class CustomEvaluator(ABC):

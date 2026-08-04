@@ -7,7 +7,7 @@ import tempfile
 import pandas as pd
 from litellm import completion
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, read_codebase_context
 from utils.graphrag_utils import DependencyAnalyzer
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -65,6 +65,8 @@ Respond ONLY with valid JSON in this exact format:
 
             actual_answer = asyncio.run(analyzer.query_with_llm(input))
 
+            codebase_context = read_codebase_context(graphrag_source_dir)
+
             reference_response = completion(
                 **_llm_kwargs("GROUND_TRUTH"),
                 messages=[
@@ -75,7 +77,10 @@ Respond ONLY with valid JSON in this exact format:
                             "reference answers about code structure and dependencies."
                         ),
                     },
-                    {"role": "user", "content": input},
+                    {
+                        "role": "user",
+                        "content": f"{codebase_context}\n\n{input}" if codebase_context else input,
+                    },
                 ],
             )
 
