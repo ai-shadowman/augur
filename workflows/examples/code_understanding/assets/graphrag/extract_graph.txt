@@ -75,6 +75,12 @@ One tuple per line. No other text. Two tuple types:
 ("entity"<|><entity_name><|><entity_type><|><entity_description>)
 ("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
 
+CRITICAL casing rule — applies to every entity_name in every tuple:
+Preserve the exact original casing from the source. Do NOT uppercase, titlecase, or alter the case of any identifier.
+WRONG:  ("entity"<|>GETPAYMENT<|>function<|>...)
+WRONG:  ("entity"<|>GetPayment<|>function<|>...)   ← only if source says getPayment
+CORRECT:("entity"<|>getPayment<|>function<|>...)
+
 ######################
 -Real Data-
 ######################
@@ -84,6 +90,6 @@ multi_repo: {multi_repo}
 Entity_types: {entity_types}
 Text: {input_text}
 ######################
-Output  (copy all identifiers character-for-character from the source — no case changes):
+Output:
 
 
