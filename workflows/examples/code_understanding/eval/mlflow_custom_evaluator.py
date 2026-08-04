@@ -175,7 +175,12 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         git_slug: str = None,
         multi_repo: bool = False,
     ):
-        """Runs evaluate() for every row in a CSV dataset and uploads the results.
+        """Evaluates all rows in a CSV dataset in a single MLflow run.
+
+        Builds inputs from the question and one_shot_example columns, generates
+        reference answers via the ground truth LLM, then calls mlflow.evaluate()
+        once using a GraphRAG model callable. Per-row metric scores are mapped
+        back from results.tables["eval_results_table"].
 
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
@@ -185,49 +190,91 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             eval_dataset_file: Path to the evaluation CSV. Defaults to
                 assets/datasets/eval/code_understanding.csv.
             git_slug: Optional repository slug used to scope results and artifact paths.
+            multi_repo: Whether the index spans multiple repositories.
 
         Returns:
             The updated pandas DataFrame with "answer" and metric columns populated.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
-        df = pd.read_csv(eval_dataset_file)
-        df["answer"] = pd.Series(dtype=object, index=df.index)
-
-        for idx, row in df.iterrows():
-
-            question = str(row["question"])
-
-            one_shot = row.get("one_shot_example", "")
-
-            if pd.notna(one_shot) and str(one_shot).strip():
-
-                input_text = f"{question}\n{one_shot}"
-
-            else:
-
-                input_text = question
-
-            try:
-
-                result = self.evaluate(input_text, graphrag_source_dir, git_repo, git_branch,
-                                       git_slug=git_slug, multi_repo=multi_repo)
-
-                df.at[idx, "answer"] = result.get("actual_answer", "")
-
-                for key, value in result.items():
-
-                    if key not in ("question", "actual_answer"):
-
-                        df.at[idx, key] = value
-
-            except Exception as e:
-
-                logging.error(f"Error evaluating row {idx}: {e}")
-
-                df.at[idx, "answer"] = f"ERROR: {e}"
+        from mlflow.tracking import MlflowClient
 
         from utils import code_utils
+
+        df = pd.read_csv(eval_dataset_file)
+
+        df["inputs"] = df["question"].astype(str) + "\n" + df["one_shot_example"].astype(str)
+
+        df["targets"] = df["inputs"].apply(
+            lambda t: self._ground_truth_answer(t, graphrag_source_dir)
+        )
+
+        eval_data = df[["inputs", "targets"]]
+
+        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+
+        def graphrag_model(inputs_df):
+
+            predictions = []
+
+            for input_text in inputs_df["inputs"]:
+
+                try:
+
+                    answer, _ = asyncio.run(analyzer.query_with_llm(input_text, include_context=False))
+
+                except Exception as e:
+
+                    logging.error(f"GraphRAG query failed: {e}")
+
+                    answer = f"ERROR: {e}"
+
+                predictions.append(answer)
+
+            return predictions
+
+        judge_model = self._judge_model_uri()
+
+        client = MlflowClient()
+
+        experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
+
+        if not experiment:
+
+            experiment = client.get_experiment(
+                client.create_experiment(name=self._EXPERIMENT_NAME)
+            )
+
+        with mlflow.start_run(experiment_id=experiment.experiment_id, run_name=self._RUN_NAME):
+
+            results = mlflow.evaluate(
+                model=graphrag_model,
+                data=eval_data,
+                targets="targets",
+                extra_metrics=[
+                    faithfulness(model=judge_model),
+                    answer_relevance(model=judge_model),
+                    answer_similarity(model=judge_model),
+                ],
+                evaluators=[],
+            )
+
+        logging.info(f"MLflow batch evaluation complete: {results.metrics}")
+
+        per_row = results.tables.get("eval_results_table")
+
+        if per_row is not None:
+
+            for col in per_row.columns:
+
+                if col not in ("inputs", "targets"):
+
+                    df[col] = per_row[col].values
+
+        df["answer"] = df.get("outputs", pd.Series(dtype=object, index=df.index))
+
+        df["reference_answer"] = df["targets"]
+
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
         artifact_path = (
