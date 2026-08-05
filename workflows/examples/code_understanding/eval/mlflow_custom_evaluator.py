@@ -203,35 +203,31 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         df = pd.read_csv(eval_dataset_file)
 
+        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+
         df["inputs"] = df["question"].astype(str) + "\n" + df["one_shot_example"].astype(str)
 
         df["targets"] = df["inputs"].apply(
             lambda t: self._ground_truth_answer(t, graphrag_source_dir)
         )
 
-        eval_data = df[["inputs", "targets"]]
+        def _query(input_text):
 
-        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+            try:
 
-        def graphrag_model(inputs_df):
+                answer, _ = asyncio.run(analyzer.query_with_llm(input_text, include_context=False))
 
-            predictions = []
+            except Exception as e:
 
-            for input_text in inputs_df["inputs"]:
+                logging.error(f"GraphRAG query failed: {e}")
 
-                try:
+                answer = f"ERROR: {e}"
 
-                    answer, _ = asyncio.run(analyzer.query_with_llm(input_text, include_context=False))
+            return answer
 
-                except Exception as e:
+        df["predictions"] = df["inputs"].apply(_query)
 
-                    logging.error(f"GraphRAG query failed: {e}")
-
-                    answer = f"ERROR: {e}"
-
-                predictions.append(answer)
-
-            return predictions
+        eval_data = df[["inputs", "targets", "predictions"]]
 
         judge_model = self._judge_model_uri()
 
@@ -248,8 +244,8 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         with mlflow.start_run(experiment_id=experiment.experiment_id, run_name=self._RUN_NAME):
 
             results = mlflow.evaluate(
-                model=graphrag_model,
                 data=eval_data,
+                predictions="predictions",
                 targets="targets",
                 extra_metrics=[
                     faithfulness(model=judge_model),
@@ -267,11 +263,11 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             for col in per_row.columns:
 
-                if col not in ("inputs", "targets"):
+                if col not in ("inputs", "targets", "predictions"):
 
                     df[col] = per_row[col].values
 
-        df["answer"] = df.get("outputs", pd.Series(dtype=object, index=df.index))
+        df["answer"] = df["predictions"]
 
         df["reference_answer"] = df["targets"]
 
