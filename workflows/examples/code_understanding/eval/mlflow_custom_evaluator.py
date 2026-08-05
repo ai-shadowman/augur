@@ -147,7 +147,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                         answer_relevance(model=judge_model),
                         answer_similarity(model=judge_model),
                     ],
-                    evaluators=[],
                 )
 
             metrics = results.metrics
@@ -253,7 +252,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                     answer_similarity(model=judge_model),
                     answer_correctness(model=judge_model),
                 ],
-                evaluators=[],
             )
 
         logging.info(f"MLflow batch evaluation complete: {results.metrics}")
