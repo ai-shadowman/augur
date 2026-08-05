@@ -6,7 +6,7 @@ import tempfile
 import mlflow
 import pandas as pd
 import requests
-from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity
+from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity, answer_correctness
 
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
@@ -251,6 +251,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                     faithfulness(model=judge_model),
                     answer_relevance(model=judge_model),
                     answer_similarity(model=judge_model),
+                    answer_correctness(model=judge_model),
                 ],
                 evaluators=[],
             )
