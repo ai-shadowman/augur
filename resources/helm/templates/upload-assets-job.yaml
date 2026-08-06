@@ -22,6 +22,7 @@ spec:
             - |
               pip install --quiet "mlflow[kubernetes]>=3.11"
               git config --global --add safe.directory /opt/app-root/src
+              git config --global credential.helper '!f() { echo "username=${GIT_USERNAME}"; echo "password=${GIT_TOKEN}"; }; f'
               git -C /opt/app-root/src init
               git -C /opt/app-root/src remote add origin "${REPO_URL}" 2>/dev/null || true
               git -C /opt/app-root/src fetch origin "${REPO_REF}"

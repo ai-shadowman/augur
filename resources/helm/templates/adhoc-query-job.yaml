@@ -19,6 +19,7 @@ spec:
             - -c
             - |
               git config --global --add safe.directory /opt/app-root/src >/dev/null 2>&1
+              git config --global credential.helper '!f() { echo "username=${GIT_USERNAME}"; echo "password=${GIT_TOKEN}"; }; f' >/dev/null 2>&1
               git -C /opt/app-root/src init -q >/dev/null 2>&1
               git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" >/dev/null 2>&1 || true
               git -C /opt/app-root/src fetch origin "{{ .Values.repoRef }}" -q >/dev/null 2>&1
