@@ -334,7 +334,7 @@ class DependencyAnalyzer:
             question = loader.download_prompt(
                 prompt_path,
                 system_prompt="",
-                additional_context=additional_context,
+                additional_context="",
                 answers=answers,
             )
 
