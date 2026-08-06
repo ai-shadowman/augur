@@ -18,9 +18,6 @@ Contents
 <a id="overview"></a>
 ## 🧭 Overview
 
-[![Watch the demo](https://drive.google.com/thumbnail?id=18FxSpwKBPPgzQnP1Q9ToPC_kLskrnni3&sz=w1280)](https://youtu.be/swRB1iAyGr0)
-*▶ Click to watch the demo*
-
 This demonstrates the **Code Understanding** phase of the Agent Mesh for Software Engineering, a framework pattern 
 for continuous legacy code which uses a federated, multi-harness, multi-agent 
 system (MAS) to support iterative agent-driven development for brownfield applications.
@@ -162,7 +159,7 @@ representation of the codebase that can be used for querying.
 
 #### 3. Data Analysis
 
-The **Data Analysis** workbench is used to query the generated GraphRAG index using the GraphRAG SDK.
+The **Data Analysis** sub-workflow is used to query the generated GraphRAG index using the GraphRAG SDK.
 It includes both canned and adhoc queries that can be used to explore the 
 code and generate assets for the refactoring catalog, including a migration plan.
 
