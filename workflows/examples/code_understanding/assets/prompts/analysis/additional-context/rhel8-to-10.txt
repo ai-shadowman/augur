@@ -1,0 +1,190 @@
+CONTEXT: Migrating from Red Hat Enterprise Linux 8 to Red Hat Enterprise Linux 10
+Source: Red Hat official upgrade guides (July 2026)
+
+=== UPGRADE PATH OVERVIEW ===
+
+There is no direct in-place upgrade path from RHEL 8 to RHEL 10. Migration requires two
+sequential in-place upgrades using the Leapp utility:
+
+  Hop 1: RHEL 8.10 → RHEL 9.6 (EUS) or RHEL 9.8
+  Hop 2: RHEL 9.6 (EUS) → RHEL 10.0 (EUS)  OR  RHEL 9.8 → RHEL 10.2
+
+Each hop must be completed and fully post-upgrade-verified before starting the next.
+
+=== SUPPORTED UPGRADE PATHS (both hops) ===
+
+RHEL 8 → RHEL 9:
+  - RHEL 8.10 → RHEL 9.6 (EUS) or RHEL 9.8
+  - RHEL 8.10 with SAP NetWeaver → RHEL 9.6 (E4S/EUS) or RHEL 9.8 (E4S/EUS)
+  - RHEL 8.10 with SAP HANA → RHEL 9.6 (E4S only)
+
+RHEL 9 → RHEL 10:
+  - RHEL 9.6 (EUS) → RHEL 10.0 (EUS)
+  - RHEL 9.8 → RHEL 10.2
+  - RHEL 9.6 with SAP NetWeaver → RHEL 10.0 (E4S/EUS)
+  - RHEL 9.8 with SAP NetWeaver → RHEL 10.2 (E4S/EUS)
+  - RHEL 9.6 with SAP HANA → RHEL 10.0 (E4S only)
+
+RHSM (Red Hat Subscription Manager) is required for guaranteed upgrade path support.
+For PAYG (Pay-As-You-Go) systems using RHUI, only the latest available path is supported.
+
+=== SUPPORTED ARCHITECTURES ===
+
+Both upgrade hops support:
+  - AMD/Intel 64-bit (x86-64-v3)
+  - 64-bit IBM Z (IBM z14 or IBM LinuxONE II or later)
+  - IBM POWER: RHEL 8→9 requires POWER9+; RHEL 9→10 requires POWER9 (little endian)
+
+ARM:
+  - RHEL 8→9: ARMv8.0-A supported
+  - RHEL 9→10: ARMv8.0-A supported ONLY with 4k page size kernel (64k kernel NOT supported)
+
+=== BREAKING CHANGES AND INCOMPATIBILITIES ===
+
+-- Cryptography (SHA-1) --
+SHA-1 has been deprecated since RHEL 9. Any packages or applications signed with
+RSA/SHA-1 signatures will INHIBIT the upgrade. Before upgrading, either remove those
+packages or obtain versions with RSA/SHA-256 signatures.
+Applications using SHA-1 for internal cryptography (TLS, code signing, checksums) will
+need updates to use SHA-256 or stronger.
+
+-- Network Configuration --
+The legacy network-scripts package was deprecated in RHEL 8 and is NOT available in
+RHEL 9 or RHEL 10. Applications or system configurations relying on network-scripts
+must be migrated to NetworkManager dispatcher scripts before the RHEL 8→9 upgrade.
+
+-- JBoss Enterprise Application Platform (EAP) --
+- RHEL 8→9: JBoss EAP versions 7.4 and 8.1 are supported.
+- RHEL 9→10: JBoss EAP is NOT supported for the in-place upgrade. JBoss EAP must be
+  manually installed and configured on RHEL 10 after the OS upgrade completes.
+  Applications depending on JBoss EAP should plan for a manual reinstallation step.
+
+-- Stratis Filesystem --
+Stratis filesystem is NOT supported for the RHEL 9→10 in-place upgrade. Systems using
+Stratis must migrate data off Stratis volumes before upgrading to RHEL 10.
+
+-- Ansible Automation Platform --
+In-place upgrade is NOT supported on systems with Ansible Automation Platform installed
+(both hops). AAP must be migrated separately (see Red Hat KB for migration instructions).
+
+-- Boot Loader --
+Switching from BIOS to UEFI is NOT supported during an in-place upgrade on either hop.
+If BIOS→UEFI conversion is required, a fresh install of the target OS is needed instead.
+
+-- Network Storage --
+Network-based multipath and network storage using Ethernet or Infiniband (FCoE, booting
+from SAN via Fibre Channel) are NOT supported for either upgrade hop.
+SAN using standard Fibre Channel (FC) is supported.
+
+=== SECURITY CHANGES ===
+
+SELinux:
+  - Leapp sets SELinux to permissive mode during the upgrade process.
+  - After each upgrade hop, SELinux must be manually set back to enforcing mode
+    and security policies must be re-evaluated and re-applied.
+
+FIPS Mode:
+  - RHEL 8→9: FIPS mode is preserved for systems running RHEL 8.8 or later.
+  - RHEL 9→10: FIPS mode is preserved for systems running RHEL 9.6 or later.
+  - FIPS stays enabled throughout the complete upgrade process.
+
+NSS Databases (RHEL 8→9 hop):
+  - If NSS databases were created on RHEL 7 or earlier (DBM format), they must be
+    migrated from DBM to SQLite format before upgrading to RHEL 9.
+
+Cyrus SASL (RHEL 8→9 hop):
+  - Cyrus SASL databases must be migrated from Berkeley DB format to GDBM.
+
+Cryptographic Policies:
+  - RHEL 9 and RHEL 10 enforce stricter system-wide cryptographic policies.
+  - Applications relying on weak ciphers or algorithms (SHA-1, DES, RC4) will fail.
+  - Re-evaluate and update TLS configurations, certificate handling, and crypto usage.
+
+Post-upgrade security tasks include:
+  - Restore SELinux to enforcing mode
+  - Update fapolicyd databases
+  - Verify USBGuard policies
+  - Harden system to applicable security baselines (CIS, DISA STIG, etc.)
+
+=== RUNTIME AND MIDDLEWARE CONSIDERATIONS ===
+
+Java:
+  - RHEL 9 ships OpenJDK 11, 17, and 21. RHEL 8 applications using older JDK versions
+    (e.g., JDK 8) should be assessed for compatibility.
+  - RHEL 10 deprecates older Java runtimes; target OpenJDK 21 for long-term support.
+
+Python:
+  - RHEL 8: Python 3.6 default. RHEL 9: Python 3.9+. RHEL 10: Python 3.12+.
+  - Applications and scripts using Python must be assessed for version compatibility.
+
+Node.js / Ruby / Perl:
+  - Stream versions change across RHEL major versions. Verify AppStream module versions
+    for all runtime dependencies.
+
+systemd and service management:
+  - systemd unit files and service configurations carry over, but unit behavior may
+    differ. Verify all critical services start correctly post-upgrade.
+
+=== UPGRADE TOOLING ===
+
+Both hops use the Leapp utility:
+  - For RHEL 8→9: leapp >= 0.21.0, leapp-repository >= 0.24.0, leapp-upgrade-el8toel9
+  - For RHEL 9→10: leapp >= 0.19.0 (RHEL 9.6) or >= 0.21.0 (RHEL 9.8),
+    leapp-repository >= 0.22.0 / 0.24.0, leapp-upgrade-el9toel10
+
+Key Leapp commands:
+  - leapp preupgrade   — generates a pre-upgrade report with inhibitors and warnings
+  - leapp upgrade      — performs the upgrade (triggers reboot)
+
+Pre-upgrade report categories:
+  - Inhibitors: MUST be resolved before upgrade can proceed
+  - High/medium/low findings: Should be addressed but do not block the upgrade
+
+Ansible Roles:
+  - Both hops support Ansible-based automation for large deployments
+    (via infra.leapp collection), but Ansible must not run playbooks DURING the
+    upgrade window. Disable Ansible playbook execution during each upgrade hop.
+
+LiveMode (Technology Preview):
+  - Available for RHEL 8→9 and for the RHEL 9.8→10.2 hop.
+  - Uses standard boot process; requires ~700 MB additional disk space.
+  - Not supported with Red Hat production SLAs; not recommended for production.
+
+Satellite:
+  - Red Hat Satellite 6.16+ supports managing multi-host upgrades for both hops.
+  - Both source and target OS repositories must be available in the content view.
+
+=== PRE-UPGRADE CHECKLIST (apply to each hop) ===
+
+1. Back up the system (ReaR utility, LVM snapshots, or VM snapshot before each hop).
+2. Ensure system is registered with RHSM and required repositories are enabled.
+3. Set system release version: subscription-manager release --set <source_version>
+4. Run: dnf update && reboot  (fully update all packages before upgrading)
+5. Clear dnf versionlock: dnf versionlock clear
+6. Temporarily disable antivirus software.
+7. Temporarily disable health checks and IPMI watchdogs.
+8. Disable configuration management agents (Puppet, Salt, Chef) before leapp preupgrade.
+9. Resolve all inhibitors found in the leapp preupgrade report.
+10. Unmount non-essential file systems listed in /etc/fstab (optional but recommended).
+
+=== IMPLICATIONS FOR CODE ANALYSIS ===
+
+When analyzing a codebase for RHEL 8 to RHEL 10 migration readiness, flag the following:
+
+- SHA-1 usage: Any cryptographic code, certificate handling, or package signatures using
+  SHA-1 must be updated to SHA-256 or stronger.
+- network-scripts dependencies: Shell scripts, init scripts, or ifcfg-style network
+  configuration files must be migrated to NetworkManager (nmcli/NetworkManager dispatcher).
+- JBoss EAP: If the application deploys on or depends on JBoss EAP, note that it must be
+  manually reinstalled after the RHEL 9→10 hop.
+- Stratis filesystem: Any code or configuration referencing Stratis volumes must be assessed
+  for migration to supported file systems (XFS, ext4, LVM) before the RHEL 9→10 hop.
+- Python version: Applications using Python 2 or Python <3.9 features require updates.
+  Python 3.12+ is the RHEL 10 default; test for compatibility.
+- Java version: Applications targeting JDK 8 or older should plan migration to JDK 17 or 21.
+- DBM/Berkeley DB: NSS or Cyrus SASL code using legacy DBM-format databases needs migration.
+- Hard-coded OS version checks: Any code checking for RHEL 8 version strings
+  (e.g., /etc/redhat-release, os.release checks) must be updated.
+- Weak cryptographic policies: TLS configurations, certificate validation, and cipher
+  selection using deprecated algorithms (RC4, DES, SHA-1, MD5) will fail under
+  RHEL 9/10 cryptographic policies.
