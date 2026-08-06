@@ -40,6 +40,12 @@ class DependencyAnalyzer:
 
         self.community_reports_df = community_reports_df
 
+        self.community_level = (
+            int(community_reports_df["level"].max())
+            if not community_reports_df.empty and "level" in community_reports_df.columns
+            else 0
+        )
+
     def _find_dependencies(self, module_name):
         """Find all dependencies for a given module"""
 
@@ -224,7 +230,7 @@ class DependencyAnalyzer:
                     entities=self.entity_df,
                     communities=self.communities_df,
                     community_reports=self.community_reports_df,
-                    community_level=2,
+                    community_level=self.community_level,
                     response_type="Multiple Paragraphs",
                     query=system_prompt + question,
                     dynamic_community_selection=True,
@@ -240,7 +246,7 @@ class DependencyAnalyzer:
                     text_units=self.text_unit_df,
                     relationships=self.relationship_df,
                     covariates=None,
-                    community_level=2,
+                    community_level=self.community_level,
                     response_type="Multiple Paragraphs",
                     query=system_prompt + question,
                 )
