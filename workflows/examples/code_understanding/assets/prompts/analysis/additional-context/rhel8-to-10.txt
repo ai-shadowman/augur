@@ -188,3 +188,13 @@ When analyzing a codebase for RHEL 8 to RHEL 10 migration readiness, flag the fo
 - Weak cryptographic policies: TLS configurations, certificate validation, and cipher
   selection using deprecated algorithms (RC4, DES, SHA-1, MD5) will fail under
   RHEL 9/10 cryptographic policies.
+
+IMPORTANT: There is no direct upgrade path from RHEL 8 to RHEL 10. Any migration plan
+MUST include two sequential in-place upgrade hops using the Leapp utility:
+  Hop 1: RHEL 8.10 → RHEL 9.6 (EUS) or RHEL 9.8
+  Hop 2: RHEL 9.6 (EUS) → RHEL 10.0 (EUS)  OR  RHEL 9.8 → RHEL 10.2
+Each hop requires its own pre-upgrade assessment (leapp preupgrade), execution
+(leapp upgrade), and post-upgrade validation phase before the next hop begins.
+For each phase of the plan, explicitly address any blocking issues from the
+"BREAKING CHANGES AND INCOMPATIBILITIES" and "IMPLICATIONS FOR CODE ANALYSIS"
+sections above that are relevant to that phase.

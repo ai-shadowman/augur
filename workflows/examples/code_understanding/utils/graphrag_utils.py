@@ -306,6 +306,8 @@ class DependencyAnalyzer:
 
         system_prompt = loader.download_prompt("analysis/system-prompt/1")
 
+        additional_context = loader.download_prompt("analysis/additional-context/rhel8-to-10")
+
         prompts = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
 
         answers = ["N/A"] * len(prompts)
@@ -319,7 +321,7 @@ class DependencyAnalyzer:
             prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=system_prompt,
-                additional_context="",
+                additional_context=additional_context,
                 answers=answers,
             )
 
@@ -332,7 +334,7 @@ class DependencyAnalyzer:
             question = loader.download_prompt(
                 prompt_path,
                 system_prompt="",
-                additional_context="",
+                additional_context=additional_context,
                 answers=answers,
             )
 
