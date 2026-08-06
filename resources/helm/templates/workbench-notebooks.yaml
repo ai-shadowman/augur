@@ -33,10 +33,14 @@ spec:
               REPO_NAME=$(basename "{{ .Values.repoUrl }}" .git)
               TARGET="/opt/app-root/src/$REPO_NAME"
               git config --global --add safe.directory "$TARGET"
+              git config --global credential.helper '!f() { echo "username=${GIT_USERNAME}"; echo "password=${GIT_TOKEN}"; }; f'
               git init "$TARGET"
               git -C "$TARGET" remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
               git -C "$TARGET" fetch origin "{{ .Values.repoRef }}"
               git -C "$TARGET" reset --hard FETCH_HEAD
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
           volumeMounts:
             - name: workspace-volume
               mountPath: /opt/app-root/src
@@ -158,10 +162,14 @@ spec:
               REPO_NAME=$(basename "{{ .Values.repoUrl }}" .git)
               TARGET="/opt/app-root/src/$REPO_NAME"
               git config --global --add safe.directory "$TARGET"
+              git config --global credential.helper '!f() { echo "username=${GIT_USERNAME}"; echo "password=${GIT_TOKEN}"; }; f'
               git init "$TARGET"
               git -C "$TARGET" remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
               git -C "$TARGET" fetch origin "{{ .Values.repoRef }}"
               git -C "$TARGET" reset --hard FETCH_HEAD
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
           volumeMounts:
             - name: workspace-volume
               mountPath: /opt/app-root/src
