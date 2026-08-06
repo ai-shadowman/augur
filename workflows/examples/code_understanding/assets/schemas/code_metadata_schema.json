@@ -28,7 +28,8 @@
       "deprecated": "",
       "vulnerabilities": [],
       "supported_on_rhel10": "",
-      "supported_on_rhel10_reason": ""
+      "supported_on_rhel10_reason": "",
+      "opensource": ""
     }
   ],
   "repo_packages": [
