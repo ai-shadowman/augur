@@ -109,7 +109,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
 
-            context_str = str(context_data) if context_data is not None else ""
+            context_str = DependencyAnalyzer.extract_context_content(context_data)
 
             reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
 
@@ -214,7 +214,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             try:
 
-                answer, _ = asyncio.run(analyzer.query_with_llm(input_text, include_context=False))
+                answer, context_data = asyncio.run(analyzer.query_with_llm(input_text, include_context=True))
+
+                context_str = DependencyAnalyzer.extract_context_content(context_data)
 
             except Exception as e:
 
@@ -222,11 +224,17 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
                 answer = f"ERROR: {e}"
 
-            return answer
+                context_str = ""
 
-        df["predictions"] = df["inputs"].apply(_query)
+            return pd.Series({"predictions": answer, "context": context_str})
 
-        eval_data = df[["inputs", "targets", "predictions"]]
+        results = df["inputs"].apply(_query)
+
+        df["predictions"] = results["predictions"]
+
+        df["context"] = results["context"]
+
+        eval_data = df[["inputs", "targets", "predictions", "context"]]
 
         judge_model = self._judge_model_uri()
 

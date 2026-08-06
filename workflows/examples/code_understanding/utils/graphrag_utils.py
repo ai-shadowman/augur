@@ -265,6 +265,29 @@ class DependencyAnalyzer:
 
         return result
 
+    @staticmethod
+    def extract_context_content(context_data) -> str:
+        """Extracts and concatenates the full_content column from GraphRAG context_data.
+
+        Args:
+            context_data: The context_data dict returned by query_with_llm when
+                include_context=True. Current version expects a "reports"
+                key holding a DataFrame with a "full_content" column.
+
+        Returns:
+            A single string of all report full_content values joined by a separator,
+            or an empty string if context_data is missing or contains no reports.
+        """
+        if not isinstance(context_data, dict):
+            return ""
+
+        reports = context_data.get("reports", pd.DataFrame())
+
+        if reports.empty or "full_content" not in reports.columns:
+            return ""
+
+        return "\n\n---\n\n".join(reports["full_content"].dropna().astype(str).tolist())
+
     def raw_data(self):
         """Return the raw dataframes used for analysis"""
         return {"entities": self.entity_df,
