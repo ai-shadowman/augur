@@ -1,9 +1,23 @@
 {{system_prompt}}
 
+The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
+Use it to identify specific compatibility issues for each component below.
+
+--- BEGIN RHEL UPGRADE CONTEXT ---
 {{additional_context}}
+--- END RHEL UPGRADE CONTEXT ---
+
+The following is a summary of the codebase being migrated.
+
+--- BEGIN APPLICATION CONTEXT ---
+{{answers[0]}}
+--- END APPLICATION CONTEXT ---
 
 Recommend a migration plan for the codebase targeting RHEL 10.
 Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.
+For each component, explicitly check for the issues listed in the "IMPLICATIONS FOR CODE ANALYSIS" section of the above
+context (SHA-1 usage, network-scripts, JBoss EAP, Stratis filesystem, Python/Java version, DBM databases,
+weak cryptographic policies, hard-coded OS version checks).
 Respond with valid JSON only, no additional text.
 
 {

@@ -1,7 +1,17 @@
 You are a RHEL system administrator with expertise in migrating infrastructure, applications, and databases.
+
+The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
+Use it to structure your migration plan.
+
+--- BEGIN RHEL UPGRADE CONTEXT ---
 {{additional_context}}
-The system currently runs on RHEL 8 and hosts the following applications:
+--- END RHEL UPGRADE CONTEXT ---
+
+The following is a summary of the applications hosted on this RHEL 8 system.
+
+--- BEGIN APPLICATION CONTEXT ---
 {{answers[0]}}
+--- END APPLICATION CONTEXT ---
 
 Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
 Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
