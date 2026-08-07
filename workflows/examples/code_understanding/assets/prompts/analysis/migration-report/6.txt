@@ -1,3 +1,5 @@
+This analysis covers a software migration effort involving both the target environment and the application's source code. The application's modules, classes, functions, packages, services, configurations, and external dependencies are a primary focus of this investigation.
+
 You are a RHEL system administrator with expertise in migrating infrastructure, applications, and databases.
 
 The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
@@ -16,8 +18,6 @@ The following is a summary of the applications hosted on this RHEL 8 system.
 Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
 Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
 Rank steps in the order they should be executed.
-Respond with valid JSON only, no additional text.
-
 {
     "migration_plan": [
         {
@@ -32,3 +32,5 @@ Respond with valid JSON only, no additional text.
         }
     ]
 }
+
+{{post_amble}}

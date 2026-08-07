@@ -1,0 +1,1 @@
+Respond with valid JSON only. Do not include markdown code fences (```json or ```), backticks, or any additional text before or after the JSON object. The response must be valid, parseable JSON as-is.

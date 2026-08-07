@@ -1,5 +1,7 @@
 {{system_prompt}}
 
+This analysis covers a software migration effort involving both the target environment and the application's source code. The application's modules, classes, functions, packages, services, configurations, and external dependencies are a primary focus of this investigation.
+
 The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
 Use it to identify specific compatibility issues for each component below.
 
@@ -18,8 +20,6 @@ Rank components so that those with the fewest dependencies come first (leaf-firs
 For each component, explicitly check for the issues listed in the "IMPLICATIONS FOR CODE ANALYSIS" section of the above
 context (SHA-1 usage, network-scripts, JBoss EAP, Stratis filesystem, Python/Java version, DBM databases,
 weak cryptographic policies, hard-coded OS version checks).
-Respond with valid JSON only, no additional text.
-
 {
     "migration_plan": [
         {
@@ -37,3 +37,5 @@ Respond with valid JSON only, no additional text.
         }
     ]
 }
+
+{{post_amble}}

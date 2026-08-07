@@ -1,4 +1,3 @@
-import asyncio
 import graphrag.api as api
 from graphrag.config.load_config import load_config
 from pathlib import Path
@@ -16,7 +15,16 @@ class DependencyAnalyzer:
 
         self.root_dir = root_dir
 
+        self._setup_configuration()
+
         self._setup_search()
+
+        self._setup_prompts()
+
+    def _setup_configuration(self):
+        """Initialize instance configuration."""
+
+        self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM = 10
 
     def _setup_search(self):
         """Initialize GraphRAG search"""
@@ -45,6 +53,33 @@ class DependencyAnalyzer:
             if not community_reports_df.empty and "level" in community_reports_df.columns
             else 0
         )
+
+
+
+    def _setup_prompts(self):
+        """Pre-load static prompt assets."""
+
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        loader = DefaultAssetLoader()
+
+        def _load(path):
+
+            try:
+
+                return loader.download_prompt(path)
+
+            except Exception as e:
+
+                logging.warning(f"Could not preload prompt '{path}': {e}")
+
+                return ""
+
+        self.SYSTEM_PROMPT = _load("analysis/system-prompt/1")
+
+        self.POST_AMBLE = _load("analysis/post-amble/json-format")
+
+        self.RHEL_8to10_CONTEXT = _load("analysis/additional-context/rhel8-to-10")
 
     def _find_dependencies(self, module_name):
         """Find all dependencies for a given module"""
@@ -194,6 +229,28 @@ class DependencyAnalyzer:
             'top_modules': [k for k, v in sorted_entities[-5:]]
         }
 
+    def detect_response_type(self, prompt: str) -> str:
+        """Derive the GraphRAG response_type from a rendered prompt.
+        """
+
+        if not self.POST_AMBLE:
+
+            logging.warning("JSON post-amble not loaded; defaulting response_type to 'Multiple Paragraphs'")
+
+            return "Multiple Paragraphs"
+
+        return "JSON" if self.POST_AMBLE.strip() in prompt else "Multiple Paragraphs"
+
+    def detect_dynamic_community_selection(self) -> bool:
+        """Determine whether to use dynamic community selection.
+        """
+        num_communities = len(self.communities_df)
+
+        # Lower threshold to disable dynamic selection for more index sizes.
+        logging.info(f"Community count: {num_communities} (minimum for dynamic community selection: {self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM})")
+
+        return num_communities > self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM
+
     async def query_with_llm(self,
                              question: str,
                              retry_count: int = 3,
@@ -211,17 +268,15 @@ class DependencyAnalyzer:
             include_context (bool, optional): If True, return (result, context_data) tuple
             instead of just the result string. Defaults to False.
         """
-        from loaders.default_asset_loader import DefaultAssetLoader
-
-        loader = DefaultAssetLoader()
-
         num_tries_left = retry_count
 
         try:
 
             config = load_config(Path(self.root_dir))
 
-            system_prompt = loader.download_prompt("analysis/system-prompt/1")
+            response_type = self.detect_response_type(question)
+
+            dynamic_community_selection = self.detect_dynamic_community_selection()
 
             if use_global:
 
@@ -231,24 +286,23 @@ class DependencyAnalyzer:
                     communities=self.communities_df,
                     community_reports=self.community_reports_df,
                     community_level=self.community_level,
-                    response_type="Multiple Paragraphs",
-                    query=system_prompt + question,
-                    dynamic_community_selection=True,
+                    response_type=response_type,
+                    query=self.SYSTEM_PROMPT + question,
+                    dynamic_community_selection=dynamic_community_selection,
                 )
 
             else:
 
-                result, context_data = await api.global_search(
+                result, context_data = await api.local_search(
                     config=config,
                     entities=self.entity_df,
-                    communities=self.communities_df,
                     community_reports=self.community_reports_df,
                     text_units=self.text_unit_df,
                     relationships=self.relationship_df,
                     covariates=None,
                     community_level=self.community_level,
-                    response_type="Multiple Paragraphs",
-                    query=system_prompt + question,
+                    response_type=response_type,
+                    query=self.SYSTEM_PROMPT + question,
                 )
 
         except Exception as e:
@@ -310,10 +364,6 @@ class DependencyAnalyzer:
 
         loader = DefaultAssetLoader()
 
-        system_prompt = loader.download_prompt("analysis/system-prompt/1")
-
-        additional_context = loader.download_prompt("analysis/additional-context/rhel8-to-10")
-
         prompts = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
 
         answers = ["N/A"] * len(prompts)
@@ -326,9 +376,10 @@ class DependencyAnalyzer:
 
             prompt = loader.download_prompt(
                 prompt_path,
-                system_prompt=system_prompt,
-                additional_context=additional_context,
+                system_prompt=self.SYSTEM_PROMPT,
+                additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
+                post_amble=self.POST_AMBLE,
             )
 
             result = await self.query_with_llm(prompt)
@@ -342,6 +393,7 @@ class DependencyAnalyzer:
                 system_prompt="",
                 additional_context="",
                 answers=answers,
+                post_amble="",
             )
 
             report += f"### Issue: {question}\n\n### Answer: {answers[i]}\n\n"
