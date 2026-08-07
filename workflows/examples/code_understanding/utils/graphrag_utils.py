@@ -287,7 +287,7 @@ class DependencyAnalyzer:
                     community_reports=self.community_reports_df,
                     community_level=self.community_level,
                     response_type=response_type,
-                    query=self.SYSTEM_PROMPT + question,
+                    query=question,
                     dynamic_community_selection=dynamic_community_selection,
                 )
 
@@ -302,7 +302,7 @@ class DependencyAnalyzer:
                     covariates=None,
                     community_level=self.community_level,
                     response_type=response_type,
-                    query=self.SYSTEM_PROMPT + question,
+                    query=question,
                 )
 
         except Exception as e:
@@ -377,7 +377,7 @@ class DependencyAnalyzer:
             prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=self.SYSTEM_PROMPT,
-                additional_context=self.RHEL_8to10_CONTEXT,
+                additional_context="",
                 answers=answers,
                 post_amble=self.POST_AMBLE,
             )
