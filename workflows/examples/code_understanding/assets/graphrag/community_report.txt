@@ -135,6 +135,6 @@ corrupt the output.
 
 IMPORTANT: Output ONLY the raw JSON object. Do not wrap it in markdown code fences
 (```json ... ```), do not include any preamble, explanation, or trailing text. The very
-first character of your response must be { and the very last must be }.
+first character of your response must be {{ and the very last must be }}.
 
 Output:
