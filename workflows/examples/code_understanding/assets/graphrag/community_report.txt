@@ -29,7 +29,7 @@ The report should include the following sections:
 - SUMMARY: An executive summary of the community's overall structure, the responsibilities of its key entities, and how they relate to each other. If a repository entity is present, the summary MUST begin with "Repository: <git_url>" as described above.
 - DEPENDENCY COUPLING SCORE: a float score between 0-10 that represents the degree of dependency coupling within this community. A higher score means the community is more tightly coupled and harder to change independently.
 - RATING EXPLANATION: Give a single sentence explanation of the dependency coupling score.
-- DETAILED FINDINGS: A list of 5-10 key insights about the community. Each insight should have a short summary followed by multiple paragraphs of explanatory text grounded according to the grounding rules below. Focus on responsibilities, interfaces, dependencies, and anything relevant to understanding or migrating the code. Be comprehensive.
+- DETAILED FINDINGS: A list of key insights about the community — include as many as are genuinely supported by the data, but no more than 5. Each insight should have a short summary followed by a single concise paragraph of explanatory text grounded according to the grounding rules below. Focus on responsibilities, interfaces, dependencies, and anything relevant to understanding or migrating the code. Do not pad with speculative or unsupported findings.
 
 Return output as a well-formed JSON-formatted string with the following format:
     {{
@@ -126,5 +126,15 @@ Never convert names to uppercase or any other case.
 
 IMPORTANT: If any entity in the community is of type "repository", include its full git URL
 at the start of the summary in the form "Repository: <git_url>".
+
+IMPORTANT: All JSON string values must be plain text only. Do not use markdown formatting
+(**, *, __, ~~, etc.) or HTML tags (<strong>, <em>, <br>, etc.) inside any JSON string value.
+If an entity name appears in the input with markdown wrapping (e.g. **GAME.PY**), write it
+as plain text in the output (e.g. GAME.PY). Markdown or HTML inside a JSON string will
+corrupt the output.
+
+IMPORTANT: Output ONLY the raw JSON object. Do not wrap it in markdown code fences
+(```json ... ```), do not include any preamble, explanation, or trailing text. The very
+first character of your response must be { and the very last must be }.
 
 Output:

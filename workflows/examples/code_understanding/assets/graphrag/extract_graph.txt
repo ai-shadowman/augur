@@ -20,7 +20,7 @@ Given a text document describing a software artifact — which may be source cod
   (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
   or filename for flat files. External dependencies shared across repos are never prefixed.
 - entity_type: One of the following types: [{entity_types}]
-- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors.
+- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:
@@ -70,7 +70,8 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 ######################
 -Output Format-
 ######################
-One tuple per line. No other text. Two tuple types:
+One tuple per line. No preamble, no explanation, no markdown fences — tuples only.
+Two tuple types:
 
 ("entity"<|><entity_name><|><entity_type><|><entity_description>)
 ("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)

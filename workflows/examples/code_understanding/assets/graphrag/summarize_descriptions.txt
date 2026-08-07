@@ -5,6 +5,15 @@ If the provided descriptions are contradictory, please resolve the contradiction
 Make sure it is written in third person, and include the entity names so we have the full context.
 Limit the final description length to {max_length} words.
 
+IMPORTANT: Write the output in plain text only. Do not use markdown formatting (**, *, __, ~~, etc.)
+or HTML tags (<strong>, <em>, etc.) anywhere in the output. Entity names must appear as plain text,
+not wrapped in any markup.
+
+IMPORTANT: The entity name supplied in the "Entities:" field may have been normalised to uppercase
+by the system (e.g. GAME.PY, NEW_BOARD). Always use the original casing of the entity name as it
+appears in the provided description list, not the normalised form. For example, if the descriptions
+reference the entity as "game.py" or "new_board", use that exact casing throughout the summary.
+
 IMPORTANT: Preserve the exact original casing of all entity names from the source code.
 Never convert names to uppercase or any other case.
 - WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
@@ -19,4 +28,5 @@ and must not be omitted or paraphrased during summarization.
 Entities: {entity_name}
 Description List: {description_list}
 #######
+Output the summary as plain prose only — no preamble, no markdown, no code fences.
 Output:
