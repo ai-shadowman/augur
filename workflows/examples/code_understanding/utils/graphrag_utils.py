@@ -278,6 +278,8 @@ class DependencyAnalyzer:
 
             dynamic_community_selection = self.detect_dynamic_community_selection()
 
+            safe_graphrag_query = question.replace(self.POST_AMBLE, "")
+
             if use_global:
 
                 result, context_data = await api.global_search(
@@ -287,7 +289,7 @@ class DependencyAnalyzer:
                     community_reports=self.community_reports_df,
                     community_level=self.community_level,
                     response_type=response_type,
-                    query=question,
+                    query=safe_graphrag_query,
                     dynamic_community_selection=dynamic_community_selection,
                 )
 
@@ -302,7 +304,7 @@ class DependencyAnalyzer:
                     covariates=None,
                     community_level=self.community_level,
                     response_type=response_type,
-                    query=question,
+                    query=safe_graphrag_query,
                 )
 
         except Exception as e:
