@@ -278,7 +278,7 @@ class DependencyAnalyzer:
 
             dynamic_community_selection = self.detect_dynamic_community_selection()
 
-            safe_graphrag_query = question.replace(self.POST_AMBLE, "")
+            safe_graphrag_query = question.replace(self.POST_AMBLE.strip(), "")
 
             if use_global:
 
