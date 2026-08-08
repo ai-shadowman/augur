@@ -392,11 +392,11 @@ class DependencyAnalyzer:
                 prompt_path,
                 system_prompt="",
                 additional_context="",
-                answers=answers,
+                answers="",
                 post_amble="",
             )
 
-            report += f"### Issue: {question}\n\n### Answer: {answers[i]}\n\n"
+            report += f"### Issue: {question}\n\n### Answer:\n {answers[i]}\n\n"
 
         return report
     
