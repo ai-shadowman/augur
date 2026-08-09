@@ -12,7 +12,7 @@ Use it to structure your migration plan.
 The following is a generic migration plan for the applications hosted on this system.
 
 --- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
-{{answers[5]}}
+{{answers[4]}}
 --- END GENERIC RECOMMENDED MIGRATION PLAN ---
 
 Revise the high-level migration plan provided above by enhancing it to take

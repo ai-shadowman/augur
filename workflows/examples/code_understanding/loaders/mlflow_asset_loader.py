@@ -217,6 +217,12 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
+    def get_prompt_name(self, prompt_path: str) -> str:
+        """Derives the MLflow prompt registry name by replacing path separators with dashes and using a double-dash to delimit the directory from the filename."""
+        prompt_name = "--".join(prompt_path.rsplit("/",1))
+        prompt_name = prompt_name.replace("/", "-")
+        return prompt_name
+
     def upload_prompt(self, prompt_path: str):
         """Registers a prompt template from the local assets directory to the MLflow prompt registry."""
         try:
@@ -226,7 +232,7 @@ class MlFlowAssetLoader(AssetLoader):
             with open(asset_uri, "r") as f:
                 content = f.read()
 
-            name = prompt_path.replace("/", "-")
+            name = self.get_prompt_name(prompt_path)
 
             mlflow.register_prompt(name=name, template=content)
 
@@ -244,7 +250,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             from jinja2 import Template
 
-            name = prompt_path.replace("/", "-")
+            name = self.get_prompt_name(prompt_path)
 
             prompt = mlflow.load_prompt(name)
 
@@ -262,7 +268,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             prefix = prompt_prefix.replace("/", "-")
 
-            prompts = mlflow.search_prompts(filter_string=f"name LIKE '{prefix}-%'")
+            prompts = mlflow.search_prompts(filter_string=f"name LIKE '{prefix}--%'")
 
             return len(prompts)
 
