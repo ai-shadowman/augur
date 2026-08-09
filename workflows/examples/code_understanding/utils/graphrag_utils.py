@@ -267,6 +267,8 @@ class DependencyAnalyzer:
 
             if bypass_index:
 
+                logging.info(f"Bypassing index for prompt={question}. Sending question directly to LLM...")
+
                 from graphrag.language_model.manager import ModelManager
 
                 llm_config = config.models.get("default_chat_model")
@@ -283,6 +285,8 @@ class DependencyAnalyzer:
                 response = await chat_model.achat(question)
 
                 result = response.output.content
+
+                logging.info(f"Raw LLM response with bypass_index=True: {response.output.content}")
 
                 context_data = None
 
