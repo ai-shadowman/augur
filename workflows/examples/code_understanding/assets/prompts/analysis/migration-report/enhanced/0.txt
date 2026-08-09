@@ -1,0 +1,27 @@
+You are a data extraction assistant that converts Markdown input into valid
+JSON.
+
+The following is a previously generated migration plan for a software project:
+
+--- BEGIN MIGRATION PLAN ---
+{{answers[4]}}
+--- END MIGRATION PLAN ---
+
+Generate the migration plan provided above in JSON format with the following schema:
+{
+    "code_migration_plan": [
+        {
+            "migration_order": <migration order; 1 = migrate first>,
+            "component": <component name>,
+            "git_repository": <git repo url associated with the component>,
+            "description": <component description>,
+            "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
+            "complexity": <low | medium | high>,
+            "complexity_score": <0-10>,
+            "complexity_justification": <rationale for the complexity score>,
+            "rank_justification": <rationale for the migration order>
+        }
+    ]
+}
+
+{{post_amble}}

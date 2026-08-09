@@ -1,3 +1,5 @@
 {{system_prompt}}
 
-Are there any security vulnerabilities in the code or associated libraries?
+Are there any dependencies that need to be upgraded and in what order?
+
+### Known Dependencies Requiring Upgrade:

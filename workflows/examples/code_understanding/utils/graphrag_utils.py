@@ -229,18 +229,6 @@ class DependencyAnalyzer:
             'top_modules': [k for k, v in sorted_entities[-5:]]
         }
 
-    def detect_response_type(self, prompt: str) -> str:
-        """Derive the GraphRAG response_type from a rendered prompt.
-        """
-
-        if not self.POST_AMBLE:
-
-            logging.warning("JSON post-amble not loaded; defaulting response_type to 'Multiple Paragraphs'")
-
-            return "Multiple Paragraphs"
-
-        return "JSON" if self.POST_AMBLE.strip() in prompt else "Multiple Paragraphs"
-
     def detect_dynamic_community_selection(self) -> bool:
         """Determine whether to use dynamic community selection.
         """
@@ -255,18 +243,21 @@ class DependencyAnalyzer:
                              question: str,
                              retry_count: int = 3,
                              use_global: bool = True,
-                             include_context: bool = False):
+                             include_context: bool = False,
+                             bypass_index: bool = False):
         """
-        Use GraphRAG's LLM search to answer dependency questions
+        Use LLM to answer a question.
 
         Args:
             question (str): The question to ask
             retry_count (int, optional): Number of times to retry the query. Defaults to 3.
             use_global (bool, optional): Whether to use GraphRAG's global search.
             Defaults to True (recommended for many larger-scale code
-            comprehension tasks).
+            comprehension tasks). Ignored when bypass_index is True.
             include_context (bool, optional): If True, return (result, context_data) tuple
             instead of just the result string. Defaults to False.
+            bypass_index (bool, optional): If True, send the question directly to the
+            configured LLM without using the GraphRAG index. Defaults to False.
         """
         num_tries_left = retry_count
 
@@ -274,38 +265,61 @@ class DependencyAnalyzer:
 
             config = load_config(Path(self.root_dir))
 
-            response_type = self.detect_response_type(question)
+            if bypass_index:
 
-            dynamic_community_selection = self.detect_dynamic_community_selection()
+                from graphrag.language_model.manager import ModelManager
 
-            safe_graphrag_query = question.replace(self.POST_AMBLE.strip(), "")
+                llm_config = config.models.get("default_chat_model")
 
-            if use_global:
+                if llm_config is None:
+                    raise KeyError("No model named 'default_chat_model' found in config.models")
 
-                result, context_data = await api.global_search(
-                    config=config,
-                    entities=self.entity_df,
-                    communities=self.communities_df,
-                    community_reports=self.community_reports_df,
-                    community_level=self.community_level,
-                    response_type=response_type,
-                    query=safe_graphrag_query,
-                    dynamic_community_selection=dynamic_community_selection,
+                chat_model = ModelManager().get_or_create_chat_model(
+                    name="default_chat_model",
+                    model_type=llm_config.type.value,
+                    config=llm_config,
                 )
+
+                response = await chat_model.achat(question)
+
+                result = response.output.content
+
+                context_data = None
 
             else:
 
-                result, context_data = await api.local_search(
-                    config=config,
-                    entities=self.entity_df,
-                    community_reports=self.community_reports_df,
-                    text_units=self.text_unit_df,
-                    relationships=self.relationship_df,
-                    covariates=None,
-                    community_level=self.community_level,
-                    response_type=response_type,
-                    query=safe_graphrag_query,
-                )
+                response_type = "Multiple Paragraphs"
+
+                dynamic_community_selection = self.detect_dynamic_community_selection()
+
+                safe_graphrag_query = question.replace(self.POST_AMBLE.strip(), "")
+
+                if use_global:
+
+                    result, context_data = await api.global_search(
+                        config=config,
+                        entities=self.entity_df,
+                        communities=self.communities_df,
+                        community_reports=self.community_reports_df,
+                        community_level=self.community_level,
+                        response_type=response_type,
+                        query=safe_graphrag_query,
+                        dynamic_community_selection=dynamic_community_selection,
+                    )
+
+                else:
+
+                    result, context_data = await api.local_search(
+                        config=config,
+                        entities=self.entity_df,
+                        community_reports=self.community_reports_df,
+                        text_units=self.text_unit_df,
+                        relationships=self.relationship_df,
+                        covariates=None,
+                        community_level=self.community_level,
+                        response_type=response_type,
+                        query=safe_graphrag_query,
+                    )
 
         except Exception as e:
 
@@ -315,8 +329,11 @@ class DependencyAnalyzer:
 
                 logging.info(f"Retrying query ({num_tries_left} tries left): {e}")
 
-                return await self.query_with_llm(question, retry_count=num_tries_left,
-                                                 use_global=use_global, include_context=include_context)
+                return await self.query_with_llm(question,
+                                                 retry_count=num_tries_left,
+                                                 use_global=use_global,
+                                                 include_context=include_context,
+                                                 bypass_index=bypass_index)
 
             else:
 
@@ -366,7 +383,11 @@ class DependencyAnalyzer:
 
         loader = DefaultAssetLoader()
 
-        prompts = [f"analysis/migration-report/{i}" for i in range(1, loader.num_prompts("analysis/migration-report") + 1)]
+        graphrag_prompts = [f"analysis/migration-report/{i}" for i in range(loader.num_prompts("analysis/migration-report"))]
+
+        enhanced_prompts = [f"analysis/migration-report/enhanced/{i}" for i in range(loader.num_prompts("analysis/migration-report/enhanced"))]
+
+        prompts = graphrag_prompts + enhanced_prompts
 
         answers = ["N/A"] * len(prompts)
 
@@ -374,31 +395,25 @@ class DependencyAnalyzer:
 
         for i, prompt_path in enumerate(prompts):
 
-            logging.info(f"Answers = {answers}")
+            is_enhanced = prompt_path.startswith("analysis/migration-report/enhanced")
+
+            logging.debug(f"answers = {answers}")
+
+            logging.info(f"Generating report for prompt {prompt_path}...")
 
             prompt = loader.download_prompt(
                 prompt_path,
                 system_prompt=self.SYSTEM_PROMPT,
-                additional_context="",
+                additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
                 post_amble=self.POST_AMBLE,
             )
 
-            result = await self.query_with_llm(prompt)
+            result = await self.query_with_llm(prompt, bypass_index=is_enhanced)
 
-            if result:
+            answers[i] = result
 
-                answers[i] = result
-
-            question = loader.download_prompt(
-                prompt_path,
-                system_prompt="",
-                additional_context="",
-                answers="",
-                post_amble="",
-            )
-
-            report += f"### Issue: {question}\n\n### Answer:\n {answers[i]}\n\n"
+            report += f"{result}\n\n"
 
         return report
     

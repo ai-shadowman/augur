@@ -1,0 +1,39 @@
+This analysis covers a software migration effort involving both the target environment and the application's source code. The application's modules, classes, functions, packages, services, configurations, and external dependencies are a primary focus of this investigation.
+
+You are a RHEL system administrator with expertise in migrating infrastructure, applications, and databases.
+
+The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
+Use it to structure your migration plan.
+
+--- BEGIN RHEL UPGRADE MATERIAL ---
+{{additional_context}}
+--- END RHEL UPGRADE MATERIAL ---
+
+The following is a generic migration plan for the applications hosted on this system.
+
+--- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
+{{answers[5]}}
+--- END GENERIC RECOMMENDED MIGRATION PLAN ---
+
+Revise the high-level migration plan provided above by enhancing it to take
+into account any relevant information from the provided RHEL upgrade reference material.
+Generate the migration plan in JSON format using the following schema:
+{
+    "rhel_enhanced_code_migration_plan": [
+        {
+            "migration_order": <migration order; 1 = migrate first>,
+            "component": <component name>,
+            "git_repository": <git repo url associated with the component>,
+            "description": <component description>,
+            "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
+            "complexity": <low | medium | high>,
+            "complexity_score": <0-10>,
+            "complexity_justification": <rationale for the complexity score>,
+            "rank_justification": <rationale for the migration order>,
+            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
+            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+        }
+    ]
+}
+
+{{post_amble}}
