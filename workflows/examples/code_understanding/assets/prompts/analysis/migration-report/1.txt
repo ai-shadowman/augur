@@ -1,5 +1,9 @@
 ---
-title: "### Recommended Migration Order"
+title: "### High-Level Summary"
 ---
-What migration order would be recommended when refactoring to reduce breaking changes?
-Provide a comprehensive order that includes as many classes, packages, and components as possible.
+Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
+
+Follow these rules based on the number of repositories present:
+
+1. If there is ONE repository: write a single brief summary covering its purpose, architecture, and key dependencies.
+2. If there are MULTIPLE repositories: write a brief summary for each repository individually, then add a short description of how the repositories relate to each other (if they are related).

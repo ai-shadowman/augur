@@ -1,4 +1,4 @@
 ---
-title: "### Known Dependencies Requiring Upgrade"
+title: "### Known Vulnerabilities"
 ---
-Are there any dependencies that need to be upgraded and in what order?
+Are there any security vulnerabilities in the code or associated libraries?

@@ -11,9 +11,13 @@ import pandas as pd
 class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
 
-    def __init__(self, root_dir="."):
+    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False):
 
         self.root_dir = root_dir
+
+        self.git_slug = git_slug
+
+        self.multi_repo = multi_repo
 
         self._setup_configuration()
 

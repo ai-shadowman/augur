@@ -105,7 +105,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         """
         try:
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
             actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
 
@@ -202,7 +202,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         df = pd.read_csv(eval_dataset_file)
 
-        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
         df["inputs"] = df["question"].astype(str) + "\n" + df["one_shot_example"].astype(str)
 

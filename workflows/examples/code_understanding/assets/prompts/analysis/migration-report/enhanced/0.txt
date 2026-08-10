@@ -6,7 +6,7 @@ title: "### Code Migration Plan (JSON)"
 The following is a previously generated migration plan for a software project:
 
 --- BEGIN MIGRATION PLAN ---
-{{answers[4]}}
+{{answers[5]}}
 --- END MIGRATION PLAN ---
 
 Generate the migration plan in JSON format using the following schema:

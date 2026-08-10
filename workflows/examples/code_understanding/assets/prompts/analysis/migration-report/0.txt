@@ -1,9 +1,27 @@
 ---
-title: "### High-Level Summary"
+title: "### Dependency Graph"
 ---
-Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
+Generate a Mermaid dependency diagram representing the key architectural components and their relationships in this codebase.
 
-Follow these rules based on the number of repositories present:
-
-1. If there is ONE repository: write a single brief summary covering its purpose, architecture, and key dependencies.
-2. If there are MULTIPLE repositories: write a brief summary for each repository individually, then add a short description of how the repositories relate to each other (if they are related).
+Requirements:
+1. Use `graph TD` (top-down) layout
+2. Select entity types using this priority order: `package` → `module` → `class` → `function`.
+   Step 1: Start with the highest level present in the data.
+   Step 2: Keep adding the next level down as long as the running total remains ≤ 20. Stop when adding the next level would exceed 20.
+   CORRECT: 5 packages + 8 modules + 6 classes = 19 ≤ 20 → include package, module, and class entities
+   CORRECT: 5 packages + 8 modules = 13 ≤ 20, but 13 + 9 classes = 22 > 20 → include only package and module entities
+   CORRECT: 18 packages ≤ 20, but 18 + 5 modules = 23 > 20 → include only package entities
+   WRONG: 5 packages + 8 modules + 6 classes = 19 ≤ 20 → include only package and module entities
+3. Include only import and dependency relationships
+4. Limit to the most architecturally significant components (maximum 20 nodes)
+5. Use short, readable node labels derived from the component names
+6. Output the Mermaid code block only — no explanation or preamble
+   WRONG: Here is the dependency diagram:
+          ```mermaid
+          graph TD
+              ComponentA --> ComponentB
+          ```
+   CORRECT: ```mermaid
+            graph TD
+                ComponentA --> ComponentB
+            ```

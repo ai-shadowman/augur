@@ -64,7 +64,7 @@ Respond ONLY with valid JSON in this exact format:
         """
         try:
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir)
+            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
             actual_answer = asyncio.run(analyzer.query_with_llm(input))
 

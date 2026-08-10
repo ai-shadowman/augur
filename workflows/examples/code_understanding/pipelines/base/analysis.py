@@ -16,7 +16,7 @@ def run_full_pipeline(graphrag_source_path: str, git_repo: str = "", git_branch:
 
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-    analyzer = DependencyAnalyzer(graphrag_source_path)
+    analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
 
     report = asyncio.run(analyzer.generate_migration_report())
 
@@ -46,6 +46,8 @@ def run_adhoc_query_pipeline(
     question: str,
     retry_count: int = 3,
     use_global: bool = True,
+    git_slug: str = "",
+    multi_repo: bool = False,
 ):
     """Queries the GraphRAG index with an LLM and returns the result."""
     import asyncio, logging
@@ -56,7 +58,7 @@ def run_adhoc_query_pipeline(
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-    analyzer = DependencyAnalyzer(graphrag_source_path)
+    analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
 
     result = asyncio.run(analyzer.query_with_llm(question, retry_count=retry_count, use_global=use_global))
 

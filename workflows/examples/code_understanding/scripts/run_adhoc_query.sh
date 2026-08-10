@@ -23,6 +23,8 @@ GRAPHRAG_DIR="${GRAPHRAG_DIR:-graph_rag_app/source}"
 [[ "$GRAPHRAG_DIR" != /* ]] && GRAPHRAG_DIR="$CODE_UNDERSTANDING_DIR/$GRAPHRAG_DIR"
 USE_GLOBAL="${USE_GLOBAL:-1}"
 RETRY_COUNT="${RETRY_COUNT:-3}"
+GIT_SLUG="${GIT_SLUG:-}"
+MULTI_REPO="${MULTI_REPO:-false}"
 
 if [ ! -d "$GRAPHRAG_DIR" ]; then
   echo "Error: GRAPHRAG_DIR '$GRAPHRAG_DIR' does not exist. Run the indexing pipeline first." >&2
@@ -34,7 +36,7 @@ if [ ! -d "$GRAPHRAG_DIR/output" ] || [ -z "$(ls "$GRAPHRAG_DIR/output"/*.parque
   exit 1
 fi
 
-RESULT=$(CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" QUESTION="$QUESTION" GRAPHRAG_DIR="$GRAPHRAG_DIR" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" \
+RESULT=$(CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" QUESTION="$QUESTION" GRAPHRAG_DIR="$GRAPHRAG_DIR" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" GIT_SLUG="$GIT_SLUG" MULTI_REPO="$MULTI_REPO" \
   python3 - << 'PYEOF'
 import os, sys
 sys.path.insert(0, os.environ["CODE_UNDERSTANDING_DIR"])
@@ -44,6 +46,8 @@ result = run_adhoc_query_pipeline(
     question=os.environ["QUESTION"],
     retry_count=int(os.environ["RETRY_COUNT"]),
     use_global=os.environ["USE_GLOBAL"] == "1",
+    git_slug=os.environ.get("GIT_SLUG", ""),
+    multi_repo=os.environ.get("MULTI_REPO", "false").lower() == "true",
 )
 print(result)
 PYEOF
