@@ -22,3 +22,4 @@ tree-sitter-python==0.25.0
 pyvis==0.3.2
 mlflow[kubernetes]==3.14.0
 kfp==2.17.0
+PyYAML==6.0.2

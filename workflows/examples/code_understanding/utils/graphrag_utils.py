@@ -65,7 +65,9 @@ class DependencyAnalyzer:
 
             try:
 
-                return loader.download_prompt(path)
+                prompt, _ = loader.download_prompt(path)
+
+                return prompt
 
             except Exception as e:
 
@@ -398,7 +400,7 @@ class DependencyAnalyzer:
 
             logging.info(f"Generating report for prompt {prompt_path}...")
 
-            prompt = loader.download_prompt(
+            prompt, meta = loader.download_prompt(
                 prompt_path,
                 system_prompt_graphrag=self.SYSTEM_PROMPT_GRAPHRAG,
                 system_prompt_data_extraction=self.SYSTEM_PROMPT_DATA_EXTRACTION,
@@ -409,6 +411,8 @@ class DependencyAnalyzer:
             )
 
             result = await self.query_with_llm(prompt, bypass_index=is_enhanced)
+
+            result = f"{meta.get('title')}\n\n{result}"
 
             answers[i] = result
 

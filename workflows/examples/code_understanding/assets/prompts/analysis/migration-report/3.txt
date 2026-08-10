@@ -1,5 +1,6 @@
+---
+title: "### Known Dependencies Requiring Upgrade"
+---
 {{system_prompt_graphrag}}
 
 Are there any dependencies that need to be upgraded and in what order?
-
-### Known Dependencies Requiring Upgrade:

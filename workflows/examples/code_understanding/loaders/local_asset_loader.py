@@ -94,16 +94,17 @@ class LocalAssetLoader(AssetLoader):
         """No-op. Local prompts are read directly from disk."""
         pass
 
-    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+    def download_prompt(self, prompt_path: str, **kwargs) -> tuple[str, dict]:
         """Reads a prompt template from the local assets directory and renders it with Jinja2."""
         from jinja2 import Template
 
         asset_uri = os.path.join(self._PROMPTS_DIR, prompt_path + ".txt")
 
         with open(asset_uri, "r") as f:
-            content = f.read()
+            raw = f.read()
 
-        return Template(content).render(**kwargs)
+        body, meta = self._get_prompt_body_and_metadata(raw)
+        return Template(body).render(**kwargs), meta
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of .txt files directly under the prefixed prompts directory."""

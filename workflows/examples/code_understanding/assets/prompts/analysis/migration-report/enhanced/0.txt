@@ -1,3 +1,6 @@
+---
+title: "### Code Migration Plan (JSON)"
+---
 {{system_prompt_data_extraction}}
 
 The following is a previously generated migration plan for a software project:
@@ -6,7 +9,7 @@ The following is a previously generated migration plan for a software project:
 {{answers[4]}}
 --- END MIGRATION PLAN ---
 
-Generate the migration plan provided above in JSON format with the following schema:
+Generate the migration plan in JSON format using the following schema:
 {
     "code_migration_plan": [
         {

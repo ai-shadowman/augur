@@ -246,7 +246,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
-    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+    def download_prompt(self, prompt_path: str, **kwargs) -> tuple[str, dict]:
         """Loads a prompt from the MLflow prompt registry and renders it with the provided variables."""
         try:
 
@@ -256,7 +256,9 @@ class MlFlowAssetLoader(AssetLoader):
 
             prompt = mlflow.load_prompt(name)
 
-            return Template(prompt.template).render(**kwargs)
+            body, meta = self._get_prompt_body_and_metadata(prompt.template)
+
+            return Template(body).render(**kwargs), meta
 
         except Exception as e:
 

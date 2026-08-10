@@ -1,4 +1,5 @@
 import os
+import yaml
 from abc import ABC, abstractmethod
 
 
@@ -6,6 +7,14 @@ class AssetLoader(ABC):
 
     _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
     _PROMPTS_DIR = os.path.join(_ASSETS_DIR, "prompts")
+
+    @staticmethod
+    def _get_prompt_body_and_metadata(raw: str) -> tuple[str, dict]:
+        """Parses YAML frontmatter from a prompt string, returning (body, metadata)."""
+        p = raw.split('---', 2)
+        if not raw.startswith('---') or len(p) < 3:
+            return raw, {}
+        return p[2].lstrip('\n'), yaml.safe_load(p[1]) or {}
 
 
     @abstractmethod
@@ -60,7 +69,7 @@ class AssetLoader(ABC):
         """
 
     @abstractmethod
-    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+    def download_prompt(self, prompt_path: str, **kwargs) -> tuple[str, dict]:
         """Downloads and renders a prompt template from the backing store.
 
         Args:
@@ -68,7 +77,7 @@ class AssetLoader(ABC):
             **kwargs: Variables to render into the prompt template.
 
         Returns:
-            The rendered prompt string.
+            Tuple of (rendered prompt string, frontmatter metadata dict).
         """
 
     @abstractmethod

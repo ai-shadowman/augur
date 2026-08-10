@@ -39,7 +39,7 @@ class DefaultAssetLoader(AssetLoader):
 
         return self._loader.upload_prompt(prompt_path)
 
-    def download_prompt(self, prompt_path: str, **kwargs) -> str:
+    def download_prompt(self, prompt_path: str, **kwargs) -> tuple[str, dict]:
 
         return self._loader.download_prompt(prompt_path, **kwargs)
 

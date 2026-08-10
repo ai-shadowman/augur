@@ -1,3 +1,6 @@
+---
+title: "### Detailed Migration Plan"
+---
 {{system_prompt_graphrag}}
 
 Recommend a migration plan for the codebase.
@@ -13,5 +16,3 @@ Render the migration plan as a Markdown table titled "Migration Plan" with one r
 - **Complexity Score**: 0–10
 - **Complexity Justification**: rationale for the complexity score
 - **Rank Justification**: rationale for the migration order
-
-### Detailed Migration Plan:
