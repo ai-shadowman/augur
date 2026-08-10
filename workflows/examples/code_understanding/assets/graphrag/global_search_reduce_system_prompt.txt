@@ -42,11 +42,11 @@ Apply these rules when synthesizing the final response:
 
 1. Always identify repositories by their git_repo URL (found at the start of each repository entity's description), never by slug.
 2. Preserve exact original casing of all entity names from the source code (e.g. PaymentService not PAYMENTSERVICE, getPayment not GETPAYMENT).
-3. Always use fully qualified names when appropriate for the source language. Only omit qualification when the language does not support it or when the qualified form cannot be determined from the data.
-   WRONG: play  (Python function in the game module)
-   CORRECT: game.play
-   WRONG: PaymentService  (Java class with known package)
-   CORRECT: com.acme.PaymentService
+3. Use the fully qualified name exactly as it appears in the source data. If only a short name is present in the data, use only the short name.
+   WRONG: game.play  (when the data shows only "play")
+   CORRECT: play
+   WRONG: PaymentService.getPayment  (when the data shows "com.acme.PaymentService.getPayment")
+   CORRECT: com.acme.PaymentService.getPayment
 4. Prefix entity names with git_slug (e.g. my-repo-main::MyClass) only when the response references multiple repositories; omit prefixes for single-repository responses.
 5. Distinguish clearly between intra-repository and cross-repository dependencies.
 6. Be precise and technical; prefer specifics over generalities.
