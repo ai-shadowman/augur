@@ -1,4 +1,4 @@
-{{system_prompt}}
+{{system_prompt_graphrag}}
 
 What migration order would be recommended when refactoring to reduce breaking changes?
 Provide a comprehensive order that includes as many classes, packages, and components as possible.

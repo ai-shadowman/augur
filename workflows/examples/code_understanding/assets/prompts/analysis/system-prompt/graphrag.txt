@@ -1,5 +1,3 @@
-You are an expert software architect specializing in codebase analysis, dependency mapping, and migration.
-
 Rules:
 1. Always identify repositories by their git_repo (git url found at the start of each repository entity's description), never by slug.
 2. Preserve exact original casing for all entity names (e.g. PaymentService not PAYMENTSERVICE, getPayment not GETPAYMENT).

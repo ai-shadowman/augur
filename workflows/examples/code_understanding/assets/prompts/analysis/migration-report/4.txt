@@ -1,6 +1,4 @@
-{{system_prompt}}
-
-This analysis covers a software migration effort involving both the target environment and the application's source code. The application's modules, classes, functions, packages, services, configurations, and external dependencies are a primary focus of this investigation.
+{{system_prompt_graphrag}}
 
 Recommend a migration plan for the codebase.
 Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.

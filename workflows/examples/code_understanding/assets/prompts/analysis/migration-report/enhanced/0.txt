@@ -1,5 +1,4 @@
-You are a data extraction assistant that converts Markdown input into valid
-JSON.
+{{system_prompt_data_extraction}}
 
 The following is a previously generated migration plan for a software project:
 

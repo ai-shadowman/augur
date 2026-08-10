@@ -1,4 +1,4 @@
-{{system_prompt}}
+{{system_prompt_graphrag}}
 
 Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
 

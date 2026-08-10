@@ -75,11 +75,20 @@ class DependencyAnalyzer:
 
                 return ""
 
-        self.SYSTEM_PROMPT = _load("analysis/system-prompt/1")
+        self.SYSTEM_PROMPT_GRAPHRAG = _load(
+            "analysis/system-prompt/graphrag")
 
-        self.POST_AMBLE = _load("analysis/post-amble/json-format")
+        self.SYSTEM_PROMPT_DATA_EXTRACTION = _load(
+            "analysis/system-prompt/data-extraction")
 
-        self.RHEL_8to10_CONTEXT = _load("analysis/additional-context/rhel8-to-10")
+        self.SYSTEM_PROMPT_RHEL_ADMIN = _load(
+            "analysis/system-prompt/rhel-admin")
+
+        self.POST_AMBLE = _load(
+            "analysis/post-amble/json-format")
+
+        self.RHEL_8to10_CONTEXT = _load(
+            "analysis/additional-context/rhel8-to-10")
 
     def _find_dependencies(self, module_name):
         """Find all dependencies for a given module"""
@@ -278,7 +287,7 @@ class DependencyAnalyzer:
 
                 chat_model = ModelManager().get_or_create_chat_model(
                     name="default_chat_model",
-                    model_type=llm_config.type.value,
+                    model_type=llm_config.type,
                     config=llm_config,
                 )
 
@@ -296,8 +305,6 @@ class DependencyAnalyzer:
 
                 dynamic_community_selection = self.detect_dynamic_community_selection()
 
-                safe_graphrag_query = question.replace(self.POST_AMBLE.strip(), "")
-
                 if use_global:
 
                     result, context_data = await api.global_search(
@@ -307,7 +314,7 @@ class DependencyAnalyzer:
                         community_reports=self.community_reports_df,
                         community_level=self.community_level,
                         response_type=response_type,
-                        query=safe_graphrag_query,
+                        query=question,
                         dynamic_community_selection=dynamic_community_selection,
                     )
 
@@ -322,7 +329,7 @@ class DependencyAnalyzer:
                         covariates=None,
                         community_level=self.community_level,
                         response_type=response_type,
-                        query=safe_graphrag_query,
+                        query=question,
                     )
 
         except Exception as e:
@@ -407,7 +414,9 @@ class DependencyAnalyzer:
 
             prompt = loader.download_prompt(
                 prompt_path,
-                system_prompt=self.SYSTEM_PROMPT,
+                system_prompt_graphrag=self.SYSTEM_PROMPT_GRAPHRAG,
+                system_prompt_data_extraction=self.SYSTEM_PROMPT_DATA_EXTRACTION,
+                system_prompt_rhel_admin=self.SYSTEM_PROMPT_RHEL_ADMIN,
                 additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
                 post_amble=self.POST_AMBLE,

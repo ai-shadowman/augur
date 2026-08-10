@@ -220,7 +220,9 @@ class MlFlowAssetLoader(AssetLoader):
     def get_prompt_name(self, prompt_path: str) -> str:
         """Derives the MLflow prompt registry name by replacing path separators with dashes and using a double-dash to delimit the directory from the filename."""
         prompt_name = "--".join(prompt_path.rsplit("/",1))
+
         prompt_name = prompt_name.replace("/", "-")
+
         return prompt_name
 
     def upload_prompt(self, prompt_path: str):
