@@ -418,6 +418,10 @@ class DependencyAnalyzer:
 
             report += f"{result}\n\n"
 
+        from utils.visualization_utils import log_interactive_dependency_graph
+
+        log_interactive_dependency_graph(self)
+
         return report
     
     async def generate_report(self, service_name: str):
