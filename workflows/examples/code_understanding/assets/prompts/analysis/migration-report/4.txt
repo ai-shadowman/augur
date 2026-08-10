@@ -6,7 +6,7 @@ Render the migration plan as a Markdown table titled "Migration Plan" with one r
 
 - **#**: migration order (1 = migrate first)
 - **Component**: component name
-- **Git Repository**: git repository URL associated with the component
+- **Git Repo**: git_repo URL associated with the component
 - **Description**: what the component does
 - **Relevant Files**: file paths explicitly present in the graph data only; do not infer
 - **Complexity**: low | medium | high

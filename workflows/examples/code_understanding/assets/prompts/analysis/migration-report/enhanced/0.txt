@@ -12,7 +12,7 @@ Generate the migration plan provided above in JSON format with the following sch
         {
             "migration_order": <migration order; 1 = migrate first>,
             "component": <component name>,
-            "git_repository": <git repo url associated with the component>,
+            "git_repo": <git repo url associated with the component>,
             "description": <component description>,
             "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
             "complexity": <low | medium | high>,

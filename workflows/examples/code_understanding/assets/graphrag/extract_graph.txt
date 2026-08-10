@@ -2,9 +2,22 @@
 You are an AI assistant that helps analyze software codebases and extract dependency information.
 
 -Casing Rule (enforced throughout)-
-1. Copy every entity_name EXACTLY as it appears in the source. Never uppercase,titlecase, or otherwise alter its casing.
+1. Copy every entity_name EXACTLY as it appears in the source. Never uppercase, titlecase, or otherwise alter its casing.
 - WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
 - CORRECT: com.acme.PaymentService, getPayment, UserController, PaymentService
+
+-Repository Entity Rule (enforced throughout)-
+This document belongs to the repository identified by:
+  git_slug: {git_slug}
+  git_repo: {git_repo}
+
+You MUST emit exactly ONE repository entity. Use the values above verbatim — do NOT invent, paraphrase, or alter the case of the entity_name:
+- entity_name MUST be exactly: {git_slug}
+- entity_type: repository
+- entity_description MUST begin with: "Repository hosted at {git_repo}." followed by a brief description of the codebase.
+
+WRONG:  ("entity"<|>TIC TAC TOE SAMPLE MAIN<|>repository<|>...)   ← invented title, not the git_slug
+CORRECT:("entity"<|>{git_slug}<|>repository<|>Repository hosted at {git_repo}. ...)
 
 -Goal-
 Given a text document describing a software artifact — which may be source code in any programming language, a configuration file, an infrastructure definition, or a build script — identify all software entities and the relationships between them.
@@ -20,7 +33,7 @@ Given a text document describing a software artifact — which may be source cod
   (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
   or filename for flat files. External dependencies shared across repos are never prefixed.
 - entity_type: One of the following types: [{entity_types}]
-- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
+- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py). For repository entities, the description MUST begin with "Repository hosted at <git_repo url>."
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:
@@ -83,6 +96,28 @@ WRONG:  ("entity"<|>GetPayment<|>function<|>...)   ← only if source says getPa
 CORRECT:("entity"<|>getPayment<|>function<|>...)
 
 ######################
+-Example-
+######################
+git_slug: my-app-main
+git_repo: https://github.com/acme/my-app
+multi_repo: false
+Text:
+# my_service.py
+import requests
+
+def fetch_data(url):
+    return requests.get(url).json()
+
+Output:
+("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Contains the my-app service implementation.)
+("entity"<|>my_service.py<|>module<|>Module that provides data fetching functionality via the fetch_data function.)
+("entity"<|>fetch_data<|>function<|>Function that fetches JSON data from a given URL using the requests library.)
+("entity"<|>requests<|>dependency<|>External HTTP library used by my_service.py to perform HTTP GET requests.)
+("relationship"<|>my_service.py<|>my-app-main<|>my_service.py BELONGS_TO the my-app-main repository<|>10)
+("relationship"<|>fetch_data<|>my_service.py<|>fetch_data is defined in my_service.py<|>10)
+("relationship"<|>my_service.py<|>requests<|>my_service.py IMPORTS the requests library<|>8)
+
+######################
 -Real Data-
 ######################
 git_slug: {git_slug}
@@ -91,6 +126,8 @@ multi_repo: {multi_repo}
 Entity_types: {entity_types}
 Text: {input_text}
 ######################
+MANDATORY: Your very first output tuple MUST be the repository entity. Begin your output with this line, completing the description:
+("entity"<|>{git_slug}<|>repository<|>Repository hosted at {git_repo}. [brief description of what this repository contains])
 Output:
 
 
