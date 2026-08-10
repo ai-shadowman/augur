@@ -53,19 +53,18 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         prepare_settings(settings_config_path, settings_config_path_updated)
 
+        from utils.prompt_utils import prepare_indexing_config
+
+        logging.info("Preparing GraphRAG config files...")
+
+        prepare_indexing_config(graphrag_source_path,
+                                git_slug=git_slug or "",
+                                git_repo=git_repo or "",
+                                multi_repo=multi_repo)
+
         logging.info("Copying source code to GraphRAG directory...")
 
-        DefaultAssetLoader().download("graphrag/extract_graph.txt", download_dir="prompts")
-
-        DefaultAssetLoader().download("graphrag/community_report.txt", download_dir="prompts")
-
-        DefaultAssetLoader().download("graphrag/summarize_descriptions.txt", download_dir="prompts")
-
-        DefaultAssetLoader().download("graphrag/global_search_reduce_system_prompt.txt", download_dir="prompts")
-
         shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-
-        shutil.copytree("prompts", f"{graphrag_source_path}/prompts", dirs_exist_ok=True)
 
         logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
 
