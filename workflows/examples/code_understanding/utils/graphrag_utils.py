@@ -24,8 +24,6 @@ class DependencyAnalyzer:
     def _setup_configuration(self):
         """Initialize instance configuration."""
 
-        self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM = 10
-
     def _setup_search(self):
         """Initialize GraphRAG search"""
         entity_df = pd.read_parquet(f"{self.root_dir}/output/entities.parquet")
@@ -238,16 +236,6 @@ class DependencyAnalyzer:
             'top_modules': [k for k, v in sorted_entities[-5:]]
         }
 
-    def detect_dynamic_community_selection(self) -> bool:
-        """Determine whether to use dynamic community selection.
-        """
-        num_communities = len(self.communities_df)
-
-        # Lower threshold to disable dynamic selection for more index sizes.
-        logging.info(f"Community count: {num_communities} (minimum for dynamic community selection: {self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM})")
-
-        return num_communities > self.DYNAMIC_COMMUNITY_SELECTION_MINIMUM
-
     async def query_with_llm(self,
                              question: str,
                              retry_count: int = 3,
@@ -303,8 +291,6 @@ class DependencyAnalyzer:
 
                 response_type = "Multiple Paragraphs"
 
-                dynamic_community_selection = self.detect_dynamic_community_selection()
-
                 if use_global:
 
                     result, context_data = await api.global_search(
@@ -315,7 +301,7 @@ class DependencyAnalyzer:
                         community_level=self.community_level,
                         response_type=response_type,
                         query=question,
-                        dynamic_community_selection=dynamic_community_selection,
+                        dynamic_community_selection=False,
                     )
 
                 else:
