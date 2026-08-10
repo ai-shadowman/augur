@@ -176,11 +176,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     ):
         """Evaluates all rows in a CSV dataset in a single MLflow run.
 
-        Builds inputs from the question and one_shot_example columns, generates
-        reference answers via the ground truth LLM, then calls mlflow.evaluate()
-        once using a GraphRAG model callable. Per-row metric scores are mapped
-        back from results.tables["eval_results_table"].
-
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
                 (must contain output/*.parquet files).
@@ -204,7 +199,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-        df["inputs"] = df["question"].astype(str) + "\n" + df["one_shot_example"].astype(str)
+        df["inputs"] = df["question"].astype(str) + "\n\n**Example format:**\n" + df["one_shot_example"].astype(str)
 
         df["targets"] = df["inputs"].apply(
             lambda t: self._ground_truth_answer(t, graphrag_source_dir)

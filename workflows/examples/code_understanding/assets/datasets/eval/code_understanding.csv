@@ -1,127 +1,39 @@
 question,one_shot_example,evaluation_metric_names,answer,multi_repo_only
-What are the packages in this codebase? Include their direct dependencies. Include fully qualified names. Output the result in strict JSON format (no backticks or fences).,"{
-  ""packages"": [
-    {
-      ""package_name"": ""string"",
-      ""version"": ""string"",
-      ""depends_on"": [""string""],
-      ""dependency_type"": ""internal | external | system""
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What are the circular dependencies in the codebase? Identify all that you can find and rate their severity. Output the result in strict JSON format (no backticks or fences).,"{
-  ""circular_dependencies"": [
-    {
-      ""cycle"": [""moduleA"", ""moduleB"", ""moduleA""],
-      ""severity"": ""low | medium | high | critical"",
-      ""break_point_recommendation"": ""string""
-    }
-  ],
-  ""total_cycles"": 0
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What are the orphaned modules in the codebase (code with no inbound references)? Identify all that you can find. Output the result in strict JSON format (no backticks or fences).,"{
-  ""orphaned_modules"": [
-    {
-      ""path"": ""string"",
-      ""last_modified"": ""YYYY-MM-DD"",
-      ""lines_of_code"": 0,
-      ""safe_to_remove"": true,
-      ""justification"": ""string""
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What are the known CVEs in the codebase? Output the result in strict JSON format (no backticks or fences).,"{
-  ""vulnerabilities"": [
-    {
-      ""cve_id"": ""string"",
-      ""affected_component"": ""string"",
-      ""cvss_score"": 0.0,
-      ""severity"": ""low | medium | high | critical"",
-      ""exploit_available"": true,
-      ""remediation"": ""string""
-    }
-  ],
-  ""scan_date"": ""YYYY-MM-DD""
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-"Are there any deprecated cryptographic algorithms in use (e.g., MD5, SHA-1, TLS 1.0)? Output the result in strict JSON format (no backticks or fences).","{
-  ""weak_crypto"": [
-    {
-      ""algorithm"": ""string"",
-      ""location"": ""string"",
-      ""usage_context"": ""string"",
-      ""recommended_replacement"": ""string""
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-Are there any outdated authentication or authorization mechanisms used in the code? Output the result in strict JSON format (no backticks or fences).,"{
-  ""auth_audit"": [
-    {
-      ""mechanism"": ""string"",
-      ""location"": ""string"",
-      ""compliant_with_current_standards"": false,
-      ""issues"": [""string""],
-      ""recommended_standard"": ""OAuth2 | OIDC | SAML | mTLS | other""
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What are the modules in the codebase with the greatest level of complexity? Output the result in strict JSON format (no backticks or fences).,"{
-  ""highest_complexity_report"": [
-    {
-      ""module_name"": ""string"",
-      ""file_path"": ""string"",
-      ""complexity_score"": 0,
-      ""complexity_reason"": true
-    }
-  ],
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What are the modules in the codebase with the least level of complexity? Output the result in strict JSON format (no backticks or fences).,"{
-  ""lowest_complexity_report"": [
-    {
-      ""module_name"": ""string"",
-      ""file_path"": ""string"",
-      ""complexity_score"": 0,
-      ""complexity_reason"": true
-    }
-  ],
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-"Are there any ""god classes"" in the codebase (classes with excessive responsibilities, >500 LOC or >20 methods)? Output the result in strict JSON format (no backticks or fences).","{
-  ""god_classes"": [
-    {
-      ""class_name"": ""string"",
-      ""file_path"": ""string"",
-      ""lines_of_code"": 0,
-      ""method_count"": 0,
-      ""responsibility_count"": 0,
-      ""decomposition_suggestion"": [""string""]
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What is the recommended migration order for the modules in this codebase from least risky to most risky? Output the result in strict JSON format (no backticks or fences).,"{
-  ""risk_assessment"": [
-    {
-      ""module"": ""string"",
-      ""risk_level"": ""low | medium | high | critical"",
-      ""risk_factors"": [""string""],
-      ""mitigation_actions"": [""string""]
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,FALSE
-What is the recommended migration order for the git repositories in this index from least risky to most risky? Include all the git repos you can find and their repository links. Output the result in strict JSON format (no backticks or fences).,"{
-  ""multi_repo_risk_assessment"": [
-    {
-      ""repo"": ""string"",
-      ""risk_level"": ""low | medium | high | critical"",
-      ""risk_factors"": [""string""],
-      ""mitigation_actions"": [""string""]
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,TRUE
-What categories of applications are available in this index? Include all the git repos you can find and their repository links. Output the result in strict JSON format (no backticks or fences).,"{
-  ""multi_repo_app_categories"": [
-    {
-      ""category"": ""string"",
-      ""repos"": [""string""],
-      ""description"": ""string""
-    }
-  ]
-}","answer_correctness, failtfulness, answer_relevance, token_count, latency",,TRUE
+What are the packages in this codebase? Include their direct dependencies. Include fully qualified names.,"| Package | Version | Depends On | Dependency Type |
+|---------|---------|------------|-----------------|
+| com.example.service | 1.2.3 | com.example.core, org.springframework | internal, external |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the circular dependencies in the codebase? Identify all that you can find and rate their severity.,"| Cycle | Severity | Break Point Recommendation |
+|-------|----------|--------------------------|
+| moduleA → moduleB → moduleA | medium | Extract interface from moduleA |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the orphaned modules in the codebase (code with no inbound references)? Identify all that you can find.,"| Path | Safe to Remove | Justification |
+|------|---------------|---------------|
+| src/utils/legacy.py | Yes | No inbound references found in the codebase |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the known CVEs in the codebase?,"| CVE ID | Affected Component | CVSS Score | Severity | Exploit Available | Remediation |
+|--------|-------------------|------------|----------|-------------------|-------------|
+| CVE-2023-1234 | org.example:lib:1.0.0 | 7.5 | high | Yes | Upgrade to version 2.1.0 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+"Are there any deprecated cryptographic algorithms in use (e.g., MD5, SHA-1, TLS 1.0)?","| Algorithm | Location | Usage Context | Recommended Replacement |
+|-----------|----------|---------------|------------------------|
+| MD5 | src/auth/HashUtil.java:42 | Password hashing | SHA-256 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+Are there any outdated authentication or authorization mechanisms used in the code?,"| Mechanism | Location | Standards Compliant | Issues | Recommended Standard |
+|-----------|----------|---------------------|--------|---------------------|
+| Basic Auth | src/api/AuthFilter.java | No | Credentials transmitted without encryption | OAuth2 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the modules in the codebase with the greatest level of complexity?,"| Module | File Path | Complexity Score | Reason |
+|--------|-----------|-----------------|--------|
+| PaymentService | src/payment/PaymentService.java | 8 | High cyclomatic complexity with 30+ conditional branches |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the modules in the codebase with the least level of complexity?,"| Module | File Path | Complexity Score | Reason |
+|--------|-----------|-----------------|--------|
+| StringUtil | src/utils/StringUtil.java | 1 | Single-purpose utility with no branching logic |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+"Are there any ""god classes"" in the codebase (classes with excessive responsibilities, >500 LOC or >20 methods)?","| Class | File Path | LOC | Methods | Responsibilities | Decomposition Suggestion |
+|-------|-----------|-----|---------|-----------------|------------------------|
+| OrderManager | src/OrderManager.java | 650 | 25 | 5 | Split into OrderCreator, OrderValidator, and OrderFulfiller |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What is the recommended migration order for the modules in this codebase from least risky to most risky?,"| # | Module | Risk Level | Risk Factors | Mitigation Actions |
+|---|--------|------------|--------------|-------------------|
+| 1 | com.example.utils | low | No dependents | Migrate independently |
+| 2 | com.example.core | high | Depended on by 12 modules | Migrate last; coordinate with dependents |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What is the recommended migration order for the git repositories in this index from least risky to most risky? Include all the git repos you can find and their repository links.,"| # | Repository | Risk Level | Risk Factors | Mitigation Actions |
+|---|------------|------------|--------------|-------------------|
+| 1 | https://github.com/org/repo-a | low | Standalone service with no cross-repo dependents | Migrate first |
+| 2 | https://github.com/org/repo-b | high | Shared library used by 5 other repositories | Migrate last |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
+What categories of applications are available in this index? Include all the git repos you can find and their repository links.,"| Category | Repositories | Description |
+|----------|-------------|-------------|
+| Backend Services | https://github.com/org/api, https://github.com/org/worker | REST APIs and background job processors |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE

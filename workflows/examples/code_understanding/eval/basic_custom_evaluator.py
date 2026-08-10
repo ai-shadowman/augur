@@ -159,7 +159,7 @@ Respond ONLY with valid JSON in this exact format:
 
             if pd.notna(one_shot) and str(one_shot).strip():
 
-                input_text = f"{question}\n{one_shot}"
+                input_text = f"{question}\n\n**Example format:**\n{one_shot}"
 
             else:
 
