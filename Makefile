@@ -1,6 +1,8 @@
-ENV_FILE      ?= ./.env
-GIT_REPO_URL  := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
-CLUSTER_DOMAIN := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+ENV_FILE           ?= ./.env
+GIT_REPO_URL       := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+CLUSTER_DOMAIN     := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+PIPELINE_GIT_REPO  ?=
+PIPELINE_GIT_BRANCH ?=
 
 install:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -182,6 +184,11 @@ run-adhoc-query:
 
 run-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \
+	\
+	[ -n "$(PIPELINE_GIT_REPO)" ]   && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
+		--type=merge -p '{"stringData":{"GIT_REPO":"$(PIPELINE_GIT_REPO)"}}' || true && \
+	[ -n "$(PIPELINE_GIT_BRANCH)" ] && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
+		--type=merge -p '{"stringData":{"GIT_BRANCH":"$(PIPELINE_GIT_BRANCH)"}}' || true && \
 	\
 	echo "==> Submitting run-pipelines job..." && \
 	oc delete job run-pipelines -n $$KFP_NAMESPACE --ignore-not-found=true && \

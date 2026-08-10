@@ -75,9 +75,6 @@ class DependencyAnalyzer:
 
                 return ""
 
-        self.SYSTEM_PROMPT_GRAPHRAG = _load(
-            "analysis/system-prompt/graphrag")
-
         self.SYSTEM_PROMPT_DATA_EXTRACTION = _load(
             "analysis/system-prompt/data-extraction")
 
@@ -402,7 +399,6 @@ class DependencyAnalyzer:
 
             prompt, meta = loader.download_prompt(
                 prompt_path,
-                system_prompt_graphrag=self.SYSTEM_PROMPT_GRAPHRAG,
                 system_prompt_data_extraction=self.SYSTEM_PROMPT_DATA_EXTRACTION,
                 system_prompt_rhel_admin=self.SYSTEM_PROMPT_RHEL_ADMIN,
                 additional_context=self.RHEL_8to10_CONTEXT,

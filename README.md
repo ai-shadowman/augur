@@ -117,9 +117,16 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 1. To run the **Code Understanding** pipeline for a single repository, run:
 ```make run-pipelines ARGS="--single-repo"```
 
-2. To run the **Code Understanding** pipeline for multiple repositories, 
-   perform the following steps:
-    - Update `assets/repos/repo_list.json` with the list of repositories to 
+   To specify the target repository or branch:
+    - Update `GIT_REPO` and `GIT_BRANCH` in `.env` to the desired repository and branch.
+    - Run the following command to update the environment variables: `make apply-secrets`
+    - Run the following command: `make run-pipelines ARGS="--single-repo"`
+
+   Or without modifying `.env`:
+```make run-pipelines ARGS="--single-repo" PIPELINE_GIT_REPO=https://github.com/org/repo PIPELINE_GIT_BRANCH=main```
+
+2. To run the **Code Understanding** pipeline for multiple repositories:
+    - Update `assets/repos/repo_list.json` with the list of repositories to
       be processed.
     - Run the following command:
    ```make run-pipelines ARGS="--multi-repo"```

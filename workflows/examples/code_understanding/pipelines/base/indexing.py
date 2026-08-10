@@ -61,6 +61,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         DefaultAssetLoader().download("graphrag/summarize_descriptions.txt", download_dir="prompts")
 
+        DefaultAssetLoader().download("graphrag/global_search_reduce_system_prompt.txt", download_dir="prompts")
+
         shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
 
         shutil.copytree("prompts", f"{graphrag_source_path}/prompts", dirs_exist_ok=True)

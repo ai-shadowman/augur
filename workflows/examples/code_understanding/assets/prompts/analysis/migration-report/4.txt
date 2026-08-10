@@ -1,8 +1,6 @@
 ---
 title: "### Detailed Migration Plan"
 ---
-{{system_prompt_graphrag}}
-
 Recommend a migration plan for the codebase.
 Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.
 Render the migration plan as a Markdown table titled "Migration Plan" with one row per component and the following columns:

@@ -1,6 +1,4 @@
 ---
 title: "### Known Vulnerabilities"
 ---
-{{system_prompt_graphrag}}
-
 Are there any security vulnerabilities in the code or associated libraries?
