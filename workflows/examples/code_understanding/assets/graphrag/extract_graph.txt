@@ -1,13 +1,6 @@
 -Target activity-
 You are an AI assistant that helps analyze software codebases and extract dependency information.
 
--Casing Rule (enforced throughout)-
-1. Copy every entity_name EXACTLY as it appears in the source. Never uppercase, titlecase, or otherwise alter its casing.
-- WRONG: COM.ACME.PAYMENTSERVICE, GETPAYMENT, USERCONTROLLER, PAYMENTSERVICE
-- CORRECT: com.acme.PaymentService, getPayment, UserController, PaymentService
-2. Apply the naming conventions of the source language (e.g., Python: snake_case; Java/Kotlin: PascalCase for classes, camelCase for methods). These examples are illustrative — the same principle applies to any language.
-3. NEVER output entity names in ALL CAPS unless the source explicitly defines them as constants (e.g., MAX_SIZE). When source casing is unclear, default to lowercase.
-
 -Repository Entity Rule (enforced throughout)-
 This document belongs to the repository identified by:
   git_slug: {git_slug}
@@ -35,7 +28,8 @@ Given a text document describing a software artifact — which may be source cod
   (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
   or filename for flat files. External dependencies shared across repos are never prefixed.
 - entity_type: One of the following types: [{entity_types}]
-- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py). For repository entities, the description MUST begin with "Repository hosted at <git_repo url>."
+- entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
+  - For all entity types except repository and dependency, the description MUST begin with: "Defined in the repository at {git_repo}."
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:
@@ -91,11 +85,14 @@ Two tuple types:
 ("entity"<|><entity_name><|><entity_type><|><entity_description>)
 ("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
 
-CRITICAL casing rule — applies to every entity_name in every tuple:
-Preserve the exact original casing from the source. Do NOT uppercase, titlecase, or alter the case of any identifier.
-WRONG:  ("entity"<|>GETPAYMENT<|>function<|>...)
-WRONG:  ("entity"<|>GetPayment<|>function<|>...)   ← only if source says getPayment
-CORRECT:("entity"<|>getPayment<|>function<|>...)
+CRITICAL — Emit exact source casing. ALL CAPS only if the source identifier is ALL CAPS (e.g. `MAX_SIZE = 100`). Never introduce ALL CAPS not present in the source:
+
+WRONG:  ("entity"<|>PLAY<|>function<|>...)              ← source says `def play()`
+WRONG:  ("entity"<|>USERCONTROLLER<|>class<|>...)      ← source says `class UserController`
+WRONG:  ("entity"<|>FETCHDATA<|>function<|>...)        ← source says `func fetchData()`
+CORRECT:("entity"<|>play<|>function<|>...)
+CORRECT:("entity"<|>UserController<|>class<|>...)
+CORRECT:("entity"<|>fetchData<|>function<|>...)
 
 ######################
 -Example-
@@ -112,8 +109,8 @@ def fetch_data(url):
 
 Output:
 ("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Contains the my-app service implementation.)
-("entity"<|>my_service.py<|>module<|>Module that provides data fetching functionality via the fetch_data function.)
-("entity"<|>fetch_data<|>function<|>Function that fetches JSON data from a given URL using the requests library.)
+("entity"<|>my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
+("entity"<|>fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
 ("entity"<|>requests<|>dependency<|>External HTTP library used by my_service.py to perform HTTP GET requests.)
 ("relationship"<|>my_service.py<|>my-app-main<|>my_service.py BELONGS_TO the my-app-main repository<|>10)
 ("relationship"<|>fetch_data<|>my_service.py<|>fetch_data is defined in my_service.py<|>10)
