@@ -8,14 +8,36 @@ class AssetLoader(ABC):
     _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
     _PROMPTS_DIR = os.path.join(_ASSETS_DIR, "prompts")
 
+    RESULTS_PATH_PREFIX_EVAL = "results/evaluations"
+    RESULTS_PATH_PREFIX_PIPELINES = "results/pipelines"
+    RESULTS_PATH_PREFIX_ADHOC_QUERIES = "results/adhoc_queries"
+    RESULTS_PATH_PREFIX_METADATA = "results/metadata"
+    RESULTS_PATH_PREFIX_VISUALIZATIONS = "results/visualizations"
+    RESULTS_PATH_PREFIX_REPO_DATASETS = "results/datasets/repos"
+
+
     @staticmethod
     def _get_prompt_body_and_metadata(raw: str) -> tuple[str, dict]:
         """Parses YAML frontmatter from a prompt string, returning (body, metadata)."""
-        p = raw.split('---', 2)
-        if not raw.startswith('---') or len(p) < 3:
+        parts = raw.split('---', 2)
+        if not raw.startswith('---') or len(parts) < 3:
             return raw, {}
-        return p[2].lstrip('\n'), yaml.safe_load(p[1]) or {}
+        return parts[2].lstrip('\n'), yaml.safe_load(parts[1]) or {}
 
+    @staticmethod
+    def get_log_results_artifact_path(results_path: str,
+                                      git_slug: str = None,
+                                      multi_repo: bool = False) -> str:
+        """Returns the path to a log results artifact within the run's artifact store."""
+        if not multi_repo and not git_slug:
+            raise ValueError("git_slug is required when multi_repo=False")
+
+        artifact_path = (
+            f"{results_path}/multi-repo/{git_slug or ''}" if multi_repo
+            else f"{results_path}/{git_slug}"
+        ).strip("/")
+
+        return artifact_path
 
     @abstractmethod
     def download(self, asset_file_path: str, download_dir: str = None):

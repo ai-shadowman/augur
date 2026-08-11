@@ -275,9 +275,14 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-        artifact_path = (
-            f"results/evaluations/multi_repo/{slug}" if multi_repo
-            else f"results/evaluations/{slug}"
+        artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+
+            DefaultAssetLoader.RESULTS_PATH_PREFIX_EVAL,
+
+            git_slug=slug,
+
+            multi_repo=multi_repo,
+
         )
 
         df["git_slug"] = slug

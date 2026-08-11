@@ -1,5 +1,6 @@
 ---
 title: "### Dependency Graph"
+search_mode: "local"
 ---
 Generate a Mermaid dependency diagram representing the key architectural components and their relationships in this codebase.
 

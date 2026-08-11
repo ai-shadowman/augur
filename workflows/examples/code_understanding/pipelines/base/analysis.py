@@ -22,12 +22,25 @@ def run_full_pipeline(graphrag_source_path: str, git_repo: str = "", git_branch:
 
     result_file = f"migration_report_{git_slug}.txt" if git_slug else "migration_report.txt"
 
-    DefaultAssetLoader().log_results(result_file,
-                                     artifact_path="results/pipelines",
-                                     content=report,
-                                     tags={"git_slug":git_slug,
-                                           "multi_repo":multi_repo,
-                                           "category":"analysis"})
+    DefaultAssetLoader().log_results(
+
+        result_file,
+
+        artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+
+            DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+
+            git_slug=git_slug,
+
+            multi_repo=multi_repo,
+
+        ),
+
+        content=report,
+
+        tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "analysis"},
+
+    )
 
     return report
 
@@ -65,9 +78,29 @@ def run_adhoc_query_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     result_file = f"adhoc_query_{timestamp}.txt"
 
-    DefaultAssetLoader().log_results(result_file, artifact_path="results/adhoc_queries",
-                                     content=f"Question: {question}\n\nAnswer:\n{result}",
-                                     tags={"category": "analysis"})
+    DefaultAssetLoader().log_results(
+
+        result_file,
+
+        artifact_path=(
+
+            DefaultAssetLoader.get_log_results_artifact_path(
+
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES,
+
+                git_slug=git_slug,
+
+                multi_repo=multi_repo,
+
+            ) if git_slug else DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES
+
+        ),
+
+        content=f"Question: {question}\n\nAnswer:\n{result}",
+
+        tags={"category": "analysis"},
+
+    )
 
     return result
 

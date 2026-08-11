@@ -113,12 +113,23 @@ def log_interactive_dependency_graph(analyzer: DependencyAnalyzer):
     html_path = visualize_dependencies(analyzer)
 
     if html_path is None:
+
         logging.warning("Skipping artifact logging: dependency graph was not generated.")
+
         return
 
-    artifact_path = ("results/visualizations/multi_repo" if analyzer.multi_repo
-                     else f"results/visualizations/multi_repo/{analyzer.git_slug}").rstrip("/")
+    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+
+        DefaultAssetLoader.RESULTS_PATH_PREFIX_VISUALIZATIONS,
+
+        git_slug=analyzer.git_slug,
+
+        multi_repo=analyzer.multi_repo,
+
+    )
 
     DefaultAssetLoader().log_results(html_path,
+
                                      artifact_path=artifact_path,
+
                                      tags={"category": "visualization", "git_slug": analyzer.git_slug})

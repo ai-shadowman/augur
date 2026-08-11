@@ -395,8 +395,6 @@ class DependencyAnalyzer:
 
         for i, prompt_path in enumerate(prompts):
 
-            is_enhanced = prompt_path.startswith("analysis/migration-report/enhanced")
-
             logging.debug(f"answers = {answers}")
 
             logging.info(f"Generating report for prompt {prompt_path}...")
@@ -410,7 +408,11 @@ class DependencyAnalyzer:
                 post_amble=self.POST_AMBLE,
             )
 
-            result = await self.query_with_llm(prompt, bypass_index=is_enhanced)
+            bypass = prompt_path.startswith("analysis/migration-report/enhanced")
+
+            use_global = meta.get('search_mode') != 'local'
+
+            result = await self.query_with_llm(prompt, bypass_index=bypass, use_global=use_global)
 
             result = f"{meta.get('title')}\n\n{result}"
 

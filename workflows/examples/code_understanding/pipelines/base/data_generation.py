@@ -334,12 +334,21 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         result["status"] = "complete"
 
         DefaultAssetLoader().log_results(
+
             target_path,
-            artifact_path="results/metadata",
-            tags={"git_slug":git_slug,
-                  "category":"data-generation",
-                  "code-metadata":True,
-                  "multi_repo":multi_repo}
+
+            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
+
+                git_slug=git_slug,
+
+                multi_repo=multi_repo,
+
+            ),
+
+            tags={"git_slug": git_slug, "category": "data-generation", "code-metadata": True, "multi_repo": multi_repo},
+
         )
 
     except Exception as e:
@@ -356,10 +365,25 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result_file = f"data_generation_result_{git_slug}{suffix}.json"
 
-        DefaultAssetLoader().log_results(result_file, artifact_path="results/pipelines",
-                                         content=json.dumps(result),
-                                         tags={"git_slug": git_slug, "category":"data-generation",
-                                               "multi_repo": multi_repo})
+        DefaultAssetLoader().log_results(
+
+            result_file,
+
+            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+
+                git_slug=git_slug,
+
+                multi_repo=multi_repo,
+
+            ),
+
+            content=json.dumps(result),
+
+            tags={"git_slug": git_slug, "category": "data-generation", "multi_repo": multi_repo},
+
+        )
 
 
 def generate_git_slug(git_repo: str, git_branch: str) -> str:
