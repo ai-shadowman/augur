@@ -312,6 +312,7 @@ class DependencyAnalyzer:
                     result, context_data = await api.local_search(
                         config=config,
                         entities=self.entity_df,
+                        communities=self.communities_df,
                         community_reports=self.community_reports_df,
                         text_units=self.text_unit_df,
                         relationships=self.relationship_df,
