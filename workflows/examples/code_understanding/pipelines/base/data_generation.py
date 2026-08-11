@@ -159,6 +159,7 @@ def get_parsed_code_metadata(df, language, config=False):
             max_tokens=32_000,
             response_format={"type": "json_object"},
             top_k=1,
+            n=1
         )
 
         converted_dataset = flow.generate(dataset, max_concurrency=10)

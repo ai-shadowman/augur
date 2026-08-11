@@ -52,7 +52,7 @@ blocks:
       output_cols: extracted_code_metadata
       max_tokens: 64000
       async_mode: true
-#      n: 5
+      n: 1
 
   - block_type: LLMParserBlock
     block_config:
