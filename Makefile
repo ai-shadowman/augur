@@ -1,5 +1,6 @@
 ENV_FILE           ?= ./.env
 GIT_REPO_URL       := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+GIT_REPO_BRANCH    := $(shell git branch --show-current)
 CLUSTER_DOMAIN     := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 PIPELINE_GIT_REPO  ?=
 PIPELINE_GIT_BRANCH ?=
@@ -21,6 +22,7 @@ install:
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
 		--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
@@ -71,6 +73,7 @@ deploy-notebooks:
 			--set namespace="$$KFP_NAMESPACE" \
 			--set requester="$$(oc whoami)" \
 			--set repoUrl="$(GIT_REPO_URL)" \
+			--set repoRef="$(GIT_REPO_BRANCH)" \
 			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 			--set dataGeneration.image.version="$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" \
@@ -137,6 +140,7 @@ upload-pipelines:
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set repoRef="$(GIT_REPO_BRANCH)" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 upload-mlflow-assets:
@@ -150,6 +154,7 @@ upload-mlflow-assets:
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set repoRef="$(GIT_REPO_BRANCH)" \
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 run-adhoc-query:
@@ -167,6 +172,7 @@ run-adhoc-query:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set adhocQuery.run=true \
 		--set-string adhocQuery.graphragDir="$${GRAPHRAG_DIR:-graph_rag_app/source}" \
 		--set-string adhocQuery.useGlobal="$${USE_GLOBAL:-1}" \
@@ -195,6 +201,7 @@ run-pipelines:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set repoUrl="$(GIT_REPO_URL)" \
+		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set runPipelines.run=true \
 		--set-string runPipelines.args="$${ARGS:---single}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
