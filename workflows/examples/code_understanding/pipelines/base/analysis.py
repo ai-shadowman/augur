@@ -55,27 +55,53 @@ def run_full_pipeline_multi_repo():
 
 
 def run_adhoc_query_pipeline(
-    graphrag_source_path: str,
     question: str,
     retry_count: int = 3,
     use_global: bool = True,
-    git_slug: str = "",
+    git_repo: str = "",
+    git_branch: str = "main",
     multi_repo: bool = False,
 ):
     """Queries the GraphRAG index with an LLM and returns the result."""
     import asyncio, logging
     from datetime import datetime
-    from loaders.default_asset_loader import DefaultAssetLoader
+    from loaders.default_asset_loader import DefaultAssetLoader, MlFlowAssetLoader
     from utils.graphrag_utils import DependencyAnalyzer
+    from pipelines.base.data_generation import generate_git_slug
     import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else ""
+
+    graphrag_source_path = "graph_rag_app/source"
+
+    try:
+        DefaultAssetLoader().download_dir(
+            asset_dir_path=DefaultAssetLoader.get_log_results_artifact_path(
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+                git_slug,
+                multi_repo),
+            download_dir=graphrag_source_path,
+            experiment_name=MlFlowAssetLoader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+            asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"}
+        )
+    except Exception as e:
+        import traceback
+        logging.error(
+            "Could not perform query: "
+            + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
+            + ". Maybe you need to generate it first?"
+        )
+        logging.debug(traceback.format_exc())
+        return ""
 
     analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
 
     result = asyncio.run(analyzer.query_with_llm(question, retry_count=retry_count, use_global=use_global))
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+
     result_file = f"adhoc_query_{timestamp}.txt"
 
     DefaultAssetLoader().log_results(
@@ -92,13 +118,16 @@ def run_adhoc_query_pipeline(
 
                 multi_repo=multi_repo,
 
-            ) if git_slug else DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES
+            )
 
         ),
 
         content=f"Question: {question}\n\nAnswer:\n{result}",
 
-        tags={"category": "analysis"},
+        tags={"category": "analysis",
+              "adhoc_query": "true",
+              "git_slug": git_slug,
+              "multi_repo": multi_repo},
 
     )
 

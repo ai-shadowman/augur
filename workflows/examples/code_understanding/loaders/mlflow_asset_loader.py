@@ -12,9 +12,9 @@ from .asset_loader import AssetLoader
 class MlFlowAssetLoader(AssetLoader):
     """Loads an asset from the MLflow artifacts registry."""
 
-    _STATIC_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/static"
-    _RESULT_DIRECTORY_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/result-directories"
-    _RESULT_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/results"
+    STATIC_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/static"
+    RESULT_DIRECTORY_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/result-directories"
+    RESULT_ASSET_EXPERIMENT = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/assets/results"
     _RUN_NAME = "code-understanding"
 
     _SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
@@ -41,37 +41,36 @@ class MlFlowAssetLoader(AssetLoader):
 
             requests.Session.send = _send_with_forwarded_token
 
-        try:
+    def _get_absolute_artifact_uri(self,
+                                   asset_file_path: str,
+                                   experiment_name: str,
+                                   tags: dict = None):
 
-            client = MlflowClient()
+        client = MlflowClient()
 
-            experiment = self.get_or_create_experiment_by_name(client, self._STATIC_ASSET_EXPERIMENT)
+        experiment = self.get_or_create_experiment_by_name(client,
+                                                           experiment_name)
 
-            latest_runs = client.search_runs(
-                experiment_ids=[experiment.experiment_id],
-                filter_string="tags.latest = 'true'",
-                max_results=1,
-            )
+        if experiment_name == self.STATIC_ASSET_EXPERIMENT:
 
-            if latest_runs:
+            filter_string = f"tags.latest = 'true'"
 
-                self.asset_base_uri = latest_runs[0].info.artifact_uri
+        else:
 
-            else:
+            filter_string = " AND ".join([f"tags.{k} = '{v}'" for k, v in (tags or {}).items()])
 
-                self.asset_base_uri = experiment.artifact_location
+        latest_runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string=filter_string,
+            order_by=["attributes.start_time DESC"],
+            max_results=1,
+        )
 
-            logging.info(f"Base absolute storage URI: {self.asset_base_uri}")
+        asset_base_uri = latest_runs[0].info.artifact_uri if latest_runs else experiment.artifact_location
 
-        except Exception as e:
+        logging.info(f"Base absolute storage URI: {asset_base_uri}")
 
-            logging.error(f"Error initializing MlFlowAssetLoader: {e}")
-
-            raise e
-
-    def _get_absolute_artifact_uri(self, asset_file_path: str):
-
-        return os.path.join(self.asset_base_uri, asset_file_path)
+        return os.path.join(asset_base_uri, asset_file_path)
 
     def _mark_as_latest(self, client, experiment_id, new_run_id):
 
@@ -113,12 +112,18 @@ class MlFlowAssetLoader(AssetLoader):
 
         return client.get_experiment(client.create_experiment(name=experiment_name))
 
-    def download(self, asset_file_path: str, download_dir: str = None):
+    def download(self,
+                 asset_file_path: str,
+                 download_dir: str = None,
+                 experiment_name=STATIC_ASSET_EXPERIMENT,
+                 asset_tags: dict = None):
         """Downloads and returns the asset from the MLflow artifacts registry.
 
         Args:
             asset_file_path: Path to the asset file relative to its artifact backend location in MLflow.
             download_dir: Optional directory path to download the artifact to.
+            experiment_name: The name of the MLflow experiment to search for the asset.
+            asset_tags: Optional tags to filter the asset by.
 
         Returns:
             The asset content (parsed dict for .json files, str otherwise), or None if not found.
@@ -127,7 +132,9 @@ class MlFlowAssetLoader(AssetLoader):
 
             import shutil
 
-            asset_uri = self._get_absolute_artifact_uri(asset_file_path)
+            asset_uri = self._get_absolute_artifact_uri(asset_file_path,
+                                                        experiment_name=experiment_name,
+                                                        tags=asset_tags)
 
             local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
@@ -153,13 +160,20 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
-    def download_dir(self, asset_dir_path: str, download_dir: str):
+    def download_dir(self,
+                     asset_dir_path: str,
+                     download_dir: str,
+                     experiment_name=STATIC_ASSET_EXPERIMENT,
+                     asset_tags: dict = None
+                     ):
         """Downloads a directory from the MLflow artifacts registry to a local directory."""
         try:
 
             import shutil
 
-            asset_uri = self._get_absolute_artifact_uri(asset_dir_path)
+            asset_uri = self._get_absolute_artifact_uri(asset_dir_path,
+                                                        experiment_name=experiment_name,
+                                                        tags=asset_tags)
 
             local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
@@ -191,7 +205,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             client = MlflowClient()
 
-            experiment_name = self._RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self._RESULT_ASSET_EXPERIMENT
+            experiment_name = self.RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self.RESULT_ASSET_EXPERIMENT
 
             experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 
@@ -292,7 +306,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             client = MlflowClient()
 
-            experiment = self.get_or_create_experiment_by_name(client, self._STATIC_ASSET_EXPERIMENT)
+            experiment = self.get_or_create_experiment_by_name(client, self.STATIC_ASSET_EXPERIMENT)
 
             run = client.create_run(experiment.experiment_id, run_name=self._RUN_NAME)
 
