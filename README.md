@@ -137,9 +137,9 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 1. To run adhoc queries about the indexed code, run the following:
 ```wrappers/adhoc.sh <query>```
    - For example: 
-     - `wrappers/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes? Include the fully qualified names."`
-     - `wrappers/adhoc.sh "Which modules or components would be riskiest to refactor first? Include the fully qualified names."`
-     - `wrappers/adhoc.sh "Which modules or components would be the least risky to refactor first? Include the fully qualified names."`
+     - `wrappers/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes?."`
+     - `wrappers/adhoc.sh "Which modules or components would be riskiest to refactor first?" --git-repo https://github.com/org/repo` 
+     - `wrappers/adhoc.sh "What are the data stores in this codebase?" --git-repo https://github.com/org/repo --git-branch develop`
 
 ## More About the Code Understanding Workflow
 
