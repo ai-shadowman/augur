@@ -13,19 +13,19 @@ logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 DATA_GENERATION_BASE_IMAGE = (
     f"{os.getenv('KFP_IMAGE_REGISTRY')}"
     f"/{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_VERSION')}"
+    f":{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_TAG')}"
 )
 
 INDEXING_BASE_IMAGE = (
     f"{os.getenv('KFP_IMAGE_REGISTRY')}"
     f"/{os.getenv('KFP_INDEXING_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_INDEXING_BASE_IMAGE_VERSION')}"
+    f":{os.getenv('KFP_INDEXING_BASE_IMAGE_TAG')}"
 )
 
 ANALYSIS_BASE_IMAGE = (
     f"{os.getenv('KFP_IMAGE_REGISTRY')}"
     f"/{os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_VERSION')}"
+    f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_TAG')}"
 )
 
 

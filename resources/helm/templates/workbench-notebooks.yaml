@@ -1,13 +1,13 @@
 {{- if .Values.deployNotebooks }}
-{{- $datagen_image := .Values.dataGeneration.image.digestRef | default (printf "%s/%s:%s" .Values.dataGeneration.image.registry .Values.dataGeneration.image.name .Values.dataGeneration.image.version) }}
-{{- $graphrag_image := .Values.graphrag.image.digestRef | default (printf "%s/%s:%s" .Values.graphrag.image.registry .Values.graphrag.image.name .Values.graphrag.image.version) }}
+{{- $datagen_image := .Values.dataGeneration.image.digestRef | default (printf "%s/%s:%s" .Values.dataGeneration.image.registry .Values.dataGeneration.image.name .Values.dataGeneration.image.tag) }}
+{{- $graphrag_image := .Values.graphrag.image.digestRef | default (printf "%s/%s:%s" .Values.graphrag.image.registry .Values.graphrag.image.name .Values.graphrag.image.tag) }}
 ---
 apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
   annotations:
     notebooks.opendatahub.io/inject-auth: "true"
-    notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.version}}"
+    notebooks.opendatahub.io/last-image-selection: "custom-data-generation:{{ .Values.dataGeneration.image.tag}}"
     opendatahub.io/image-display-name: {{ .Values.dataGeneration.image.title}}
     opendatahub.io/workbench-image-namespace: "redhat-ods-applications"
     openshift.io/description: ""
@@ -136,7 +136,7 @@ kind: Notebook
 metadata:
   annotations:
     notebooks.opendatahub.io/inject-auth: "true"
-    notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.version}}"
+    notebooks.opendatahub.io/last-image-selection: "custom-graphrag:{{ .Values.graphrag.image.tag}}"
     opendatahub.io/image-display-name: {{ .Values.graphrag.image.title}}
     opendatahub.io/workbench-image-namespace: "redhat-ods-applications"
     openshift.io/description: ""
