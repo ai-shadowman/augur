@@ -26,7 +26,7 @@ Generate the migration plan in JSON format using the following schema:
             "component": <component name>,
             "git_repo": <git repo url associated with the component>,
             "description": <component description>,
-            "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
+            "relevant_files": [<verbatim file paths from source data only; use [] if none are explicitly present>],
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
             "complexity_justification": <rationale for the complexity score>,
