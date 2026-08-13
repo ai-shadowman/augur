@@ -24,7 +24,7 @@ MINIO_PROJECT_NAME="openshiftai-minio"
 
 oc new-project $DATA_SCIENCE_PROJECT_NAME
 
-GIT_AUGUR_BRANCH="kfrankli-n-best-of"
+GIT_AUGUR_BRANCH="main"
 
 git clone -b $GIT_AUGUR_BRANCH git@github.com:ai-shadowman/augur.git
 
@@ -53,7 +53,7 @@ sed -i "s|GIT_BRANCH=.*|GIT_BRANCH=$GIT_BRANCH|" .env
 
 ### Set S3 bucket settings
 
-Pull the MinIO root credentials deployed in [step 4](#4-deploy-minio):
+Pull the MinIO root credentials deployed in [step 4 of the cluster setup guide](openshift-cluster-setup-digital-twin.md#4-deploy-minio):
 
 ```bash
 MINIO_ROOT_USER=$(echo "$(oc get secret minio-secret -n openshiftai-minio -o jsonpath='{.data.minio_root_user}')" | base64 -d)
