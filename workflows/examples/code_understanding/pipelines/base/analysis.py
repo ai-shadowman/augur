@@ -47,9 +47,22 @@ def run_full_pipeline(graphrag_source_path: str, git_repo: str = "", git_branch:
 
 def run_full_pipeline_multi_repo():
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
-    import os
+    import os, logging
+    from loaders.default_asset_loader import DefaultAssetLoader
+    from utils.loader_utils import download_result_directory
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
+
+    logging.info("Downloading multi-repo GraphRAG index...")
+    download_result_directory(
+        git_slug=None,
+        download_dir=graphrag_source_path,
+        results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+        multi_repo=True,
+        asset_tags={"multi_repo": True, "category": "indexing"},
+    )
 
     run_full_pipeline(graphrag_source_path=graphrag_source_path, multi_repo=True)
 
@@ -65,8 +78,9 @@ def run_adhoc_query_pipeline(
     """Queries the GraphRAG index with an LLM and returns the result."""
     import asyncio, logging
     from datetime import datetime
-    from loaders.default_asset_loader import DefaultAssetLoader, MlFlowAssetLoader
+    from loaders.default_asset_loader import DefaultAssetLoader
     from utils.graphrag_utils import DependencyAnalyzer
+    from utils.loader_utils import download_result_directory
     from pipelines.base.data_generation import generate_git_slug
     import os
 
@@ -77,14 +91,12 @@ def run_adhoc_query_pipeline(
     graphrag_source_path = "graph_rag_app/source"
 
     try:
-        DefaultAssetLoader().download_dir(
-            asset_dir_path=DefaultAssetLoader.get_log_results_artifact_path(
-                DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
-                git_slug,
-                multi_repo),
+        download_result_directory(
+            git_slug=git_slug,
             download_dir=graphrag_source_path,
-            experiment_name=MlFlowAssetLoader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
-            asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"}
+            results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+            multi_repo=multi_repo,
+            asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
         )
     except Exception as e:
         import traceback

@@ -55,7 +55,7 @@ class LocalAssetLoader(AssetLoader):
 
             raise e
 
-    def download_dir(self, asset_dir_path: str, download_dir: str):
+    def download_dir(self, asset_dir_path: str, download_dir: str, **kwargs):
         """Downloads a directory from the local assets directory to a local directory."""
         import shutil
 

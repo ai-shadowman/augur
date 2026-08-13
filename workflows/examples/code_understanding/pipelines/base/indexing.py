@@ -201,16 +201,27 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: s
 
 def run_full_pipeline_multi_repo(parent_target_path: str):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
-    import os
+    import os, logging
+    from loaders.default_asset_loader import DefaultAssetLoader
+    from utils.loader_utils import download_code_metadata_directories
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
-    run_full_pipeline(
+    git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
+
+    download_code_metadata_directories(git_repos, parent_target_path)
+
+    result = run_full_pipeline(
         codebase_path=parent_target_path,
         graphrag_source_path=graphrag_source_path,
         git_repo="",
         git_branch="",
         multi_repo=True,
     )
+
+    if result.get("status") != "success":
+        raise Exception(f"GraphRAG indexing failed: {result.get('fail_message', '')}")
 
 

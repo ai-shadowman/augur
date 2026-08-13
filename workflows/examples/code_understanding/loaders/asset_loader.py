@@ -54,12 +54,14 @@ class AssetLoader(ABC):
         """
 
     @abstractmethod
-    def download_dir(self, asset_dir_path: str, download_dir: str):
+    def download_dir(self, asset_dir_path: str, download_dir: str, **kwargs):
         """Downloads a directory from the backing store to a local directory.
 
         Args:
             asset_dir_path: Path to the asset directory.
             download_dir: Local directory path to download into. Created if it does not exist.
+            **kwargs: Additional keyword arguments passed to the backing store implementation
+                      (e.g. experiment_name, asset_tags for MlFlowAssetLoader).
         """
 
     @abstractmethod

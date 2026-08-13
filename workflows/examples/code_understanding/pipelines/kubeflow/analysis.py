@@ -48,15 +48,11 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 def run_analysis_multi_repo_op():
     """Runs migration report generation for all repositories in the asset-loader repo list."""
 
-    import os
-    from loaders.default_asset_loader import DefaultAssetLoader
-    from pipelines.base.analysis import run_full_pipeline as run_analysis_pipeline
+    from pipelines.base.analysis import run_full_pipeline_multi_repo as run_analysis_multi_repo
     from utils.kubeflow_utils import setup_logging
     setup_logging()
 
-    graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
-
-    run_analysis_pipeline(graphrag_source_path=graphrag_source_path, multi_repo=True)
+    run_analysis_multi_repo()
 
 
 ##############################################################################
