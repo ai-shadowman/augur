@@ -6,6 +6,9 @@ Contents
 ---
 - [ ] [Overview](#overview)
 - [ ] [Required Software / Tested with](#tested-with)
+- [ ] [Documentation](#documentation)
+  - [ ] [OpenShift Cluster Setup](#openshift-cluster-setup)
+  - [ ] [Tola's Harness Installation](#tolas-harness-installation)
 - [ ] [Installing the Code Understanding Workflow](#installing-the-code-understanding-workflow)
   - [ ] [Integrating the Models](#integrating-the-models)
   - [ ] [Preparing the Environment](#preparing-the-environment)
@@ -41,6 +44,20 @@ Understanding** and **Code Migration**. This repository demonstrates the **Code 
 - OpenShift CLI (`oc`)
 - Helm CLI (`helm`)
 - Make (`make`)
+
+<a id="documentation"></a>
+## Documentation
+
+### OpenShift Cluster Setup
+Detailed instructions for provisioning an OpenShift cluster with GPU worker on demo.redhat.com, installing AI Accelerator, MinIO, and embedding models.
+
+See [`docs/openshift-cluster-setup-digital-twin.md`](docs/openshift-cluster-setup-digital-twin.md)
+
+<a id="tolas-harness-installation"></a>
+### Tola's Harness Installation
+Configuration guide for Augur `.env` from cluster state and running pipelines with Tola's harness approach.
+
+See [`docs/tolas-harness-installation.md`](docs/tolas-harness-installation.md)
 
 ## Installing the Code Understanding Workflow
 
