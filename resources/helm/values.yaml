@@ -20,7 +20,7 @@ dataGeneration:
     registry: ""
     name: ""
     title: "Agent Mesh - Data Generation"
-    version: latest
+    tag: latest
     digestRef: ""
   notebook:
     name: data-generation
@@ -30,7 +30,7 @@ graphrag:
     registry: ""
     name: ""
     title: "Agent Mesh - GraphRAG Indexing"
-    version: latest
+    tag: latest
     digestRef: ""
   notebook:
     name: graphrag-indexing
@@ -40,7 +40,7 @@ analysis:
     registry: ""
     name: ""
     title: "Agent Mesh - Analysis"
-    version: latest
+    tag: latest
   notebook:
     name: graphrag-analysis
 
