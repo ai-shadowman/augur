@@ -1,6 +1,6 @@
 # AUGUR: Agentic Understanding for Guided Upgrade Recommendations
 
-![AUGUR](AUGUR.png)
+![AUGUR](images/AUGUR.png)
 
 Contents
 ---
