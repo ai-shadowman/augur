@@ -296,6 +296,8 @@ class DependencyAnalyzer:
 
                 if use_global:
 
+                    _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
+
                     result, context_data = await api.global_search(
                         config=config,
                         entities=self.entity_df,
@@ -304,7 +306,7 @@ class DependencyAnalyzer:
                         community_level=self.community_level,
                         response_type=response_type,
                         query=question,
-                        dynamic_community_selection=False,
+                        dynamic_community_selection=len(self.communities_df) > _community_threshold,
                     )
 
                 else:
