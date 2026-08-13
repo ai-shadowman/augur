@@ -144,10 +144,16 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
     logging.info("Starting GraphRAG index evaluation...")
 
-    DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_repo, git_branch,
-                                                   multi_repo=multi_repo)
+    try:
 
-    logging.info("GraphRAG index evaluation complete.")
+        DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_repo, git_branch,
+                                                       multi_repo=multi_repo)
+
+        logging.info("GraphRAG index evaluation complete.")
+
+    except Exception as e:
+
+        logging.warning(f"GraphRAG index evaluation failed (indexing result is unaffected): {e}")
 
 
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,

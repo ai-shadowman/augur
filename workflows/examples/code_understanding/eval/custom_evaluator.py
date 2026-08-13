@@ -40,7 +40,7 @@ def build_repo_context(graphrag_source_dir: str = "") -> str:
             str(codebase_dir),
             max_file_size=50_000,
             exclude_patterns={"*.lock", "*.min.js", "*.min.css", "dist/*", "vendor/*",
-                              "node_modules/*", "*.egg-info/*", "*.pyc", "__pycache__/*"},
+                              "node_modules/*", "*.egg-info/*", "*.pyc", "__pycache__/*", "*_metadata.txt"},
         )
         return f"Source code of the codebase being analyzed:\n\n{content}"
 
