@@ -153,7 +153,7 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
     except Exception as e:
 
-        logging.warning(f"GraphRAG index evaluation failed (indexing result is unaffected): {e}")
+        logging.warning(f"GraphRAG index evaluation failed: {e}")
 
 
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
