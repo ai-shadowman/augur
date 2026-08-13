@@ -38,10 +38,17 @@ def build_repo_context(graphrag_source_dir: str = "") -> str:
         from gitingest import ingest
         _, _, content = ingest(
             str(codebase_dir),
-            max_file_size=50_000,
+            max_file_size=50_000, # TODO: make this an environment variable setting
             exclude_patterns={"*.lock", "*.min.js", "*.min.css", "dist/*", "vendor/*",
                               "node_modules/*", "*.egg-info/*", "*.pyc", "__pycache__/*", "*_metadata.txt"},
         )
+
+        _MAX_CONTEXT_CHARS = 480_000 # TODO: make this an environment variable setting
+        if len(content) > _MAX_CONTEXT_CHARS:
+            logging.warning("Codebase context truncated from %d to %d chars (~120K tokens).",
+                            len(content), _MAX_CONTEXT_CHARS)
+            content = content[:_MAX_CONTEXT_CHARS]
+            
         return f"Source code of the codebase being analyzed:\n\n{content}"
 
     except Exception as e:
