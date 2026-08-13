@@ -72,13 +72,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         proc = subprocess.run(
             ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
-            capture_output=True, text=True, check=False,
+            check=False,
         )
 
-        logging.info(f"\nSubprocess output: {proc.stdout}")
-
         if proc.returncode != 0:
-            raise Exception(f"GraphRAG indexing failed (exit {proc.returncode}): {proc.stdout}")
+            raise Exception(f"GraphRAG indexing failed (exit {proc.returncode})")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
