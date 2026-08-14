@@ -1,8 +1,10 @@
+
 ENV_FILE            ?= ./.env
 GIT_REPO_URL        := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
 GIT_REPO_BRANCH     := $(shell git branch --show-current 2>/dev/null)
 CLUSTER_DOMAIN      := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 PIPELINE_GIT_REPO   ?=
+
 PIPELINE_GIT_BRANCH ?=
 
 install:
@@ -73,7 +75,11 @@ deploy-notebooks:
 			--set namespace="$$KFP_NAMESPACE" \
 			--set requester="$$(oc whoami)" \
 			--set repoUrl="$(GIT_REPO_URL)" \
+<<<<<<< HEAD
 		    --set repoRef="$(GIT_REPO_BRANCH)" \
+=======
+			--set repoRef="$(GIT_REPO_BRANCH)" \
+>>>>>>> main
 			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 			--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
@@ -181,7 +187,11 @@ run-adhoc-query:
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+<<<<<<< HEAD
 		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+=======
+		-s templates/adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+>>>>>>> main
 	\
 	echo "==> Waiting for job to start..." && \
 	_t=0; until oc logs job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE >/dev/null 2>&1; do \

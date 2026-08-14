@@ -4,19 +4,23 @@
 
 Contents
 ---
-- [ ] [Overview](#overview)
-- [ ] [Required Software / Tested with](#tested-with)
-- [ ] [Installing the Code Understanding Workflow](#installing-the-code-understanding-workflow)
-  - [ ] [Integrating the Models](#integrating-the-models)
-  - [ ] [Preparing the Environment](#preparing-the-environment)
-  - [ ] [(Optional) Building the Container Images](#optional-building-the-container-images)
-  - [ ] [Installing via Makefile](#installing-via-makefile)
-- [ ] [Running the Code Understanding Workflow](#running-the-code-understanding-workflow)
-- [ ] [Integrating with other tools](#integrating-with-other-tools)
-- [ ] [More About the Code Understanding Workflow](#more-about-the-code-understanding-workflow)
-  - [ ] [1. Data Generation](#1-data-generation)
-  - [ ] [2. Data Indexing](#2-data-indexing)
-  - [ ] [3. Data Analysis](#3-data-analysis)
+
+- [Overview](#overview)
+- [Required Software / Tested with](#tested-with)
+- [Documentation](#documentation)
+  - [OpenShift Cluster Setup](#openshift-cluster-setup)
+  - [Tola's Harness Installation](#tolas-harness-installation)
+- [Installing the Code Understanding Workflow](#installing-the-code-understanding-workflow)
+  - [Integrating the Models](#integrating-the-models)
+  - [Preparing the Environment](#preparing-the-environment)
+  - [(Optional) Building the Container Images](#optional-building-the-container-images)
+  - [Installing via Makefile](#installing-via-makefile)
+- [Running the Code Understanding Workflow](#running-the-code-understanding-workflow)
+- [Integrating with other tools](#integrating-with-other-tools)
+- [More About the Code Understanding Workflow](#more-about-the-code-understanding-workflow)
+  - [1. Data Generation](#1-data-generation)
+  - [2. Data Indexing](#2-data-indexing)
+  - [3. Data Analysis](#3-data-analysis)
 
 <a id="overview"></a>
 ## 🧭 Overview
@@ -42,6 +46,20 @@ Understanding** and **Code Migration**. This repository demonstrates the **Code 
 - OpenShift CLI (`oc`)
 - Helm CLI (`helm`)
 - Make (`make`)
+
+<a id="documentation"></a>
+## Documentation
+
+### OpenShift Cluster Setup
+Detailed instructions for provisioning an OpenShift cluster with GPU worker on demo.redhat.com, installing AI Accelerator, MinIO, and embedding models.
+
+See [`docs/openshift-cluster-setup-digital-twin.md`](docs/openshift-cluster-setup-digital-twin.md)
+
+<a id="tolas-harness-installation"></a>
+### Tola's Harness Installation
+Configuration guide for Augur `.env` from cluster state and running pipelines with Tola's harness approach.
+
+See [`docs/tolas-harness-installation.md`](docs/tolas-harness-installation.md)
 
 ## Installing the Code Understanding Workflow
 
@@ -108,7 +126,7 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 
 ### Preparing the Environment
 
-1. Create an environment variables file `.env` using `.env-template` as a guide.
+1. Create an environment variables file `.env` using `.env.template` as a guide.
 
 ### (Optional) Building the Container Images
 1. To build the container images, run the following: `make build-images`
@@ -131,8 +149,7 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
    ```make run-pipelines ARGS="--single-repo" PIPELINE_GIT_REPO=https://github.com/org/repo PIPELINE_GIT_BRANCH=main```
 
 2. To run the **Code Understanding** pipeline for multiple repositories:
-    - Update `assets/repos/repo_list.json` with the list of repositories to
-      be processed.
+    - Update `workflows/examples/code_understanding/assets/repos/repo_list.json` with the list of repositories to be processed.
     - Run the following command:
    ```make run-pipelines ARGS="--multi-repo"```
 
