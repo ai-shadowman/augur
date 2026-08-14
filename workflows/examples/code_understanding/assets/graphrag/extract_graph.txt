@@ -10,6 +10,10 @@ You MUST emit exactly ONE repository entity. Use the values above verbatim — d
 - entity_name MUST be exactly: {git_slug}
 - entity_type: repository
 - entity_description MUST begin with: "Repository hosted at {git_repo}." followed by a brief description of the codebase.
+  If the input contains a `runtime_stack` array, append runtime components
+  immediately after the opening sentence: "Runtime stack: <name> (<runtime_version>), ..."
+  Omit if no such array is present.
+  CORRECT: "Repository hosted at {git_repo}. Runtime stack: Java (OpenJDK 21), Angular (17.3), MySQL (8.0). ..."
 
 WRONG:  ("entity"<|>TIC TAC TOE SAMPLE MAIN<|>repository<|>...)   ← invented title, not the git_slug
 CORRECT:("entity"<|>{git_slug}<|>repository<|>Repository hosted at {git_repo}. ...)
@@ -24,9 +28,10 @@ Given a text document describing a software artifact — which may be source cod
   For all other entities: if multi_repo is true, prefix with <git_slug>:: to
   avoid cross-repo name collisions
   (e.g., acme-payments-main::com.acme.payments.PaymentService); otherwise use the bare name.
-  Within the name, preserve the original casing from the source: fully qualified names for Java/Python
-  (e.g., com.acme.PaymentService), key-path notation for config files (e.g., spring.datasource.url),
-  or filename for flat files. External dependencies shared across repos are never prefixed.
+  Within the name, preserve the original casing from the source: relative file path for modules
+  (e.g., src/main/java/com/acme/PaymentService.java), fully qualified names for classes/functions
+  (e.g., com.acme.PaymentService, com.acme.PaymentService.getPayment), key-path notation for config
+  files (e.g., spring.datasource.url). External dependencies shared across repos are never prefixed.
 - entity_type: One of the following types: [{entity_types}]
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
   - For all entity types except repository and dependency, the description MUST begin with: "Defined in the repository at {git_repo}."
@@ -54,9 +59,9 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 -Entity Types-
 ######################
 - repository: A git repository. entity_name = git_slug (e.g., jhani-user-app-main).
-- module: A single source file or compilation unit
-- class: A class definition
-- function: A function or method
+- module: A single source file or compilation unit. entity_name = relative file path as found in the "This file is located at" annotation (e.g., src/main/java/com/acme/PaymentService.java, src/utils/my_service.py).
+- class: A class definition. entity_name = fully qualified class name (e.g., com.acme.PaymentService, my_module.MyClass).
+- function: A function or method. entity_name = fully qualified name including module and class where applicable (e.g., com.acme.PaymentService.getPayment, my_module.fetch_data, my_module.MyClass.my_method).
 - package: A fully qualified language-specific namespace or directory that groups related modules or classes, or file path for Javascript/Typescript
 - dependency: An external code reference or declared library. Covers both import statements from source files and versioned libraries declared in build or config files (with optional version, vulnerability, and deprecation metadata). Never prefixed with git_slug
 - config_file: A configuration file (e.g., application.yaml, .env, terraform.tfvars)
@@ -94,6 +99,17 @@ CORRECT:("entity"<|>play<|>function<|>...)
 CORRECT:("entity"<|>UserController<|>class<|>...)
 CORRECT:("entity"<|>fetchData<|>function<|>...)
 
+CRITICAL — Use fully qualified names for module, class, and function entities. Never use bare names:
+
+WRONG:  ("entity"<|>my_service.py<|>module<|>...)      ← bare filename; annotation says "located at src/utils/my_service.py"
+WRONG:  ("entity"<|>play<|>function<|>...)             ← bare name; source is in `game.py`
+WRONG:  ("entity"<|>PaymentService<|>class<|>...)      ← bare name; package is `com.acme`
+WRONG:  ("entity"<|>getPayment<|>function<|>...)       ← bare name; class is `com.acme.PaymentService`
+CORRECT:("entity"<|>src/utils/my_service.py<|>module<|>...)
+CORRECT:("entity"<|>game.play<|>function<|>...)
+CORRECT:("entity"<|>com.acme.PaymentService<|>class<|>...)
+CORRECT:("entity"<|>com.acme.PaymentService.getPayment<|>function<|>...)
+
 ######################
 -Example-
 ######################
@@ -109,12 +125,12 @@ def fetch_data(url):
 
 Output:
 ("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Contains the my-app service implementation.)
-("entity"<|>my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
-("entity"<|>fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
-("entity"<|>requests<|>dependency<|>External HTTP library used by my_service.py to perform HTTP GET requests.)
-("relationship"<|>my_service.py<|>my-app-main<|>my_service.py BELONGS_TO the my-app-main repository<|>10)
-("relationship"<|>fetch_data<|>my_service.py<|>fetch_data is defined in my_service.py<|>10)
-("relationship"<|>my_service.py<|>requests<|>my_service.py IMPORTS the requests library<|>8)
+("entity"<|>src/utils/my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
+("entity"<|>my_service.fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
+("entity"<|>requests<|>dependency<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
+("relationship"<|>src/utils/my_service.py<|>my-app-main<|>src/utils/my_service.py BELONGS_TO the my-app-main repository<|>10)
+("relationship"<|>my_service.fetch_data<|>src/utils/my_service.py<|>my_service.fetch_data is defined in src/utils/my_service.py<|>10)
+("relationship"<|>src/utils/my_service.py<|>requests<|>src/utils/my_service.py IMPORTS the requests library<|>8)
 
 ######################
 -Real Data-

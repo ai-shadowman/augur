@@ -32,7 +32,8 @@ Generate the migration plan in JSON format using the following schema:
             "complexity_justification": <rationale for the complexity score>,
             "rank_justification": <rationale for the migration order>,
             "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
-            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>],
+            "runtime_upgrade_required": <runtime stack upgrade needed for RHEL 10 compatibility, if any (e.g., "JDK 1.8 → JDK 21"); omit if not applicable>
         }
     ]
 }

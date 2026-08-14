@@ -184,22 +184,21 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: s
         return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
                 "status": "fail", "fail_message": error_message}
 
-    try:
+    if multi_repo:
 
-        from loaders.default_asset_loader import DefaultAssetLoader
+        logging.info("*** No-op: skipping evaluation for multi-repo index. ***")
 
-        git_repos = (DefaultAssetLoader().download("repos/repo_list.json") if multi_repo
-                     else [{"git_repo": git_repo, "git_branch": git_branch}])
+    else:
 
-        for repo in git_repos:
+        try:
 
             evaluate_graphrag_index(graphrag_source_path=graphrag_source_path,
-                                    git_repo=repo["git_repo"], git_branch=repo["git_branch"],
-                                    multi_repo=multi_repo)
+                                    git_repo=git_repo, git_branch=git_branch,
+                                    multi_repo=False)
 
-    except Exception as e:
+        except Exception as e:
 
-        logging.warning(f"GraphRAG index evaluation failed: {e}")
+            logging.warning(f"GraphRAG index evaluation failed: {e}")
 
     return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
             "status": "success", "fail_message": ""}

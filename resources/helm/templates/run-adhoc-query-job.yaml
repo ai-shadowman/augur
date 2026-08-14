@@ -13,7 +13,7 @@ spec:
       serviceAccountName: pipeline-upload-job
       containers:
         - name: adhoc-query
-          image: {{ .Values.analysis.image.registry }}/{{ .Values.analysis.image.name }}:{{ .Values.analysis.image.version }}
+          image: {{ .Values.analysis.image.registry }}/{{ .Values.analysis.image.name }}:{{ .Values.analysis.image.tag }}
           command:
             - sh
             - -c

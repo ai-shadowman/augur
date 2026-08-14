@@ -7,3 +7,5 @@ Follow these rules based on the number of repositories present:
 
 1. If there is ONE repository: write a single brief summary covering its purpose, architecture, and key dependencies.
 2. If there are MULTIPLE repositories: write a brief summary for each repository individually, then add a short description of how the repositories relate to each other (if they are related).
+
+If runtime stack version information is available (languages, frameworks, databases, middleware), include a brief "Runtime Stack" section. Omit if not available.

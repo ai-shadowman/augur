@@ -1,0 +1,15 @@
+---
+title: "### Characterization Tests Generation Plan"
+---
+{{system_prompt_characterization_tests}}
+
+The following is a summary of the application that is currently being migrated:
+
+--- BEGIN APPLICATION SUMMARY ---
+{{answers[1]}}
+--- END APPLICATION SUMMARY ---
+
+Using this context, generate a plan for generating characterization tests for this application.
+The characterization tests will be used as a baseline for regression testing during refactoring for compatibility with RHEL 10.
+
+Output the plan in markdown format.

@@ -65,9 +65,7 @@ class LocalAssetLoader(AssetLoader):
 
             if not os.path.exists(source_dir):
 
-                logging.info(f"Asset directory {source_dir} not found.")
-
-                return
+                raise FileNotFoundError(f"Asset directory {source_dir} not found.")
 
             os.makedirs(download_dir, exist_ok=True)
 

@@ -48,7 +48,7 @@ def build_repo_context(graphrag_source_dir: str = "") -> str:
             logging.warning("Codebase context truncated from %d to %d chars (~120K tokens).",
                             len(content), _MAX_CONTEXT_CHARS)
             content = content[:_MAX_CONTEXT_CHARS]
-            
+
         return f"Source code of the codebase being analyzed:\n\n{content}"
 
     except Exception as e:

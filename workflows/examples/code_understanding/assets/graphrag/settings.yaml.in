@@ -114,6 +114,8 @@ community_reports:
   graph_prompt: "prompts/community_report.txt"
   max_length: 2000
   max_input_length: 8000
+  llm:
+    max_tokens: 8192
 
 embed_graph:
   enabled: false # if true, will generate node2vec embeddings for nodes

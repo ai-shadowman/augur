@@ -27,13 +27,13 @@ install:
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
 		--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
-		--set dataGeneration.image.version="$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" \
+		--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
 		--set graphrag.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set graphrag.image.name="$$KFP_INDEXING_BASE_IMAGE_NAME" \
-		--set graphrag.image.version="$$KFP_INDEXING_BASE_IMAGE_VERSION" \
+		--set graphrag.image.tag="$$KFP_INDEXING_BASE_IMAGE_TAG" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
-		--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION" \
+		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
 		--set clusterDomain="$(CLUSTER_DOMAIN)"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -50,18 +50,18 @@ deploy-notebooks:
 		echo "==> Notebooks already exist, skipping deployment."; \
 	else \
 		echo "==> Waiting for data-generation ImageStream to import..." && \
-		until oc get imagestreamtag custom-data-generation:$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		DATAGEN_IMAGE="$$(oc get imagestream custom-data-generation -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" && \
+		until oc get imagestreamtag custom-data-generation:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
+		DATAGEN_IMAGE="$$(oc get imagestream custom-data-generation -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
 		echo "  image: $$DATAGEN_IMAGE" && \
 		\
 		echo "==> Waiting for graphrag ImageStream to import..." && \
-		until oc get imagestreamtag custom-graphrag:$$KFP_INDEXING_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_VERSION" && \
+		until oc get imagestreamtag custom-graphrag:$$KFP_INDEXING_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
+		GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_TAG" && \
 		echo "  image: $$GRAPHRAG_IMAGE" && \
 		\
 		echo "==> Waiting for analysis ImageStream to import..." && \
-		until oc get imagestreamtag custom-graphrag:$$KFP_ANALYSIS_BASE_IMAGE_VERSION -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		ANALYSIS_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_ANALYSIS_BASE_IMAGE_VERSION" && \
+		until oc get imagestreamtag custom-graphrag:$$KFP_ANALYSIS_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
+		ANALYSIS_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_ANALYSIS_BASE_IMAGE_TAG" && \
 		echo "  image: $$ANALYSIS_IMAGE" && \
 		\
 		echo "==> Waiting for DSPA to be fully reconciled..." && \
@@ -76,15 +76,15 @@ deploy-notebooks:
 		    --set repoRef="$(GIT_REPO_BRANCH)" \
 			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
-			--set dataGeneration.image.version="$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" \
+			--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
 			--set dataGeneration.image.digestRef="$$DATAGEN_IMAGE" \
 			--set graphrag.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set graphrag.image.name="$$KFP_INDEXING_BASE_IMAGE_NAME" \
-			--set graphrag.image.version="$$KFP_INDEXING_BASE_IMAGE_VERSION" \
+			--set graphrag.image.tag="$$KFP_INDEXING_BASE_IMAGE_TAG" \
 			--set graphrag.image.digestRef="$$GRAPHRAG_IMAGE" \
 			--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
-			--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION" \
+			--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
 			--set analysis.image.digestRef="$$ANALYSIS_IMAGE" \
 			--set deployNotebooks=true \
 			-s templates/workbench-notebooks.yaml | oc apply -f -; \
@@ -108,9 +108,9 @@ apply-secrets:
 
 build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
-	DATAGEN_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_DATA_GENERATION_BASE_IMAGE_NAME:$$KFP_DATA_GENERATION_BASE_IMAGE_VERSION" && \
-	INDEX_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_INDEXING_BASE_IMAGE_NAME:$$KFP_INDEXING_BASE_IMAGE_VERSION" && \
-	ANALYSIS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_ANALYSIS_BASE_IMAGE_NAME:$$KFP_ANALYSIS_BASE_IMAGE_VERSION" && \
+	DATAGEN_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_DATA_GENERATION_BASE_IMAGE_NAME:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
+	INDEX_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_INDEXING_BASE_IMAGE_NAME:$$KFP_INDEXING_BASE_IMAGE_TAG" && \
+	ANALYSIS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_ANALYSIS_BASE_IMAGE_NAME:$$KFP_ANALYSIS_BASE_IMAGE_TAG" && \
 	\
 	echo "==> Building data generation image..." && \
 	podman build -t "$$DATAGEN_IMG" resources/images/data-generation && \
@@ -180,7 +180,7 @@ run-adhoc-query:
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
-		--set analysis.image.version="$$KFP_ANALYSIS_BASE_IMAGE_VERSION" \
+		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
 		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
 	echo "==> Waiting for job to start..." && \

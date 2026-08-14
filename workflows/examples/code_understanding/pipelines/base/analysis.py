@@ -100,11 +100,13 @@ def run_adhoc_query_pipeline(
         )
     except Exception as e:
         import traceback
-        logging.error(
+        msg = (
             "Could not perform query: "
             + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
             + ". Maybe you need to generate it first?"
         )
+        logging.error(msg)
+        print(msg, flush=True)
         logging.debug(traceback.format_exc())
         return ""
 
