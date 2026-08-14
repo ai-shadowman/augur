@@ -3,6 +3,7 @@ title: "### Detailed Migration Plan"
 ---
 Recommend a migration plan for the codebase.
 Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.
+If runtime stack version information is available, factor it into complexity scoring — components that require a major runtime version upgrade (e.g., JDK 1.8 → 21, Node.js 14 → 22) should score higher.
 Render the migration plan as a Markdown table titled "Migration Plan" with one row per component and the following columns:
 
 - **#**: migration order (1 = migrate first)

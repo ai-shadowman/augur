@@ -55,7 +55,7 @@ class LocalAssetLoader(AssetLoader):
 
             raise e
 
-    def download_dir(self, asset_dir_path: str, download_dir: str):
+    def download_dir(self, asset_dir_path: str, download_dir: str, **kwargs):
         """Downloads a directory from the local assets directory to a local directory."""
         import shutil
 
@@ -65,9 +65,7 @@ class LocalAssetLoader(AssetLoader):
 
             if not os.path.exists(source_dir):
 
-                logging.info(f"Asset directory {source_dir} not found.")
-
-                return
+                raise FileNotFoundError(f"Asset directory {source_dir} not found.")
 
             os.makedirs(download_dir, exist_ok=True)
 

@@ -1,0 +1,39 @@
+---
+title: "### End-to-End RHEL Migration Plan (JSON)"
+---
+{{system_prompt_rhel_admin}}
+
+The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
+Use it to structure your migration plan.
+
+--- BEGIN RHEL UPGRADE CONTEXT ---
+{{additional_context}}
+--- END RHEL UPGRADE CONTEXT ---
+
+The following is a summary of the codebase being migrated.
+
+--- BEGIN HOSTED APPLICATIONS ---
+{{answers[1]}}
+--- END HOSTED APPLICATIONS ---
+
+Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
+Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
+If runtime stack version information is available in the hosted applications summary, include a dedicated runtime upgrade phase for each component that requires a version change to run on RHEL 10 (e.g., JDK 1.8 → 21, Node.js 14 → 22, MySQL 5.7 → 8.0). Place runtime upgrade phases before the application migration phase.
+Rank steps in the order they should be executed.
+Generate the migration plan in JSON format using the following schema:
+{
+    "end_to_end_migration_plan": [
+        {
+            "rank": <step number in execution order>,
+            "phase": <phase name>,
+            "description": <what this phase involves and why it is needed>,
+            "complexity": <low | medium | high>,
+            "complexity_score": <0-10>,
+            "complexity_justification": <rationale for complexity score>,
+            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
+            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+        }
+    ]
+}
+
+{{post_amble}}

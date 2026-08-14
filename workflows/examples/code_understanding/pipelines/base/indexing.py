@@ -72,13 +72,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         proc = subprocess.run(
             ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
-            capture_output=True, text=True, check=False,
+            check=False,
         )
 
-        logging.info(f"\nSubprocess output: {proc.stdout}")
-
         if proc.returncode != 0:
-            raise Exception(f"GraphRAG indexing failed (exit {proc.returncode}): {proc.stdout}")
+            raise Exception(f"GraphRAG indexing failed (exit {proc.returncode})")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
@@ -146,10 +144,16 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
     logging.info("Starting GraphRAG index evaluation...")
 
-    DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_repo, git_branch,
-                                                   multi_repo=multi_repo)
+    try:
 
-    logging.info("GraphRAG index evaluation complete.")
+        DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_repo, git_branch,
+                                                       multi_repo=multi_repo)
+
+        logging.info("GraphRAG index evaluation complete.")
+
+    except Exception as e:
+
+        logging.warning(f"GraphRAG index evaluation failed: {e}")
 
 
 def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
@@ -180,22 +184,21 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: s
         return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
                 "status": "fail", "fail_message": error_message}
 
-    try:
+    if multi_repo:
 
-        from loaders.default_asset_loader import DefaultAssetLoader
+        logging.info("*** No-op: skipping evaluation for multi-repo index. ***")
 
-        git_repos = (DefaultAssetLoader().download("repos/repo_list.json") if multi_repo
-                     else [{"git_repo": git_repo, "git_branch": git_branch}])
+    else:
 
-        for repo in git_repos:
+        try:
 
             evaluate_graphrag_index(graphrag_source_path=graphrag_source_path,
-                                    git_repo=repo["git_repo"], git_branch=repo["git_branch"],
-                                    multi_repo=multi_repo)
+                                    git_repo=git_repo, git_branch=git_branch,
+                                    multi_repo=False)
 
-    except Exception as e:
+        except Exception as e:
 
-        logging.warning(f"GraphRAG index evaluation failed: {e}")
+            logging.warning(f"GraphRAG index evaluation failed: {e}")
 
     return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
             "status": "success", "fail_message": ""}
@@ -203,16 +206,27 @@ def run_full_pipeline(codebase_path: str, graphrag_source_path: str, git_repo: s
 
 def run_full_pipeline_multi_repo(parent_target_path: str):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
-    import os
+    import os, logging
+    from loaders.default_asset_loader import DefaultAssetLoader
+    from utils.loader_utils import download_code_metadata_directories
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
-    run_full_pipeline(
+    git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
+
+    download_code_metadata_directories(git_repos, parent_target_path)
+
+    result = run_full_pipeline(
         codebase_path=parent_target_path,
         graphrag_source_path=graphrag_source_path,
         git_repo="",
         git_branch="",
         multi_repo=True,
     )
+
+    if result.get("status") != "success":
+        raise Exception(f"GraphRAG indexing failed: {result.get('fail_message', '')}")
 
 

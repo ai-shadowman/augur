@@ -161,6 +161,7 @@ def get_parsed_code_metadata(df, language, config=False):
             max_tokens=32_000,
             response_format={"type": "json_object"},
             top_k=1,
+            n=1
         )
 
         converted_dataset = flow.generate(dataset, max_concurrency=10)
@@ -243,11 +244,84 @@ def generate_code_comment(metadata: dict, file_path: str, config=False):
         raise e
 
 
-def save_code_and_metadata_files(df, target_path, config=False):
+def save_metadata_file(metadata: dict, target_path: str, relative_file_path: str,
+                       git_repo: str, git_slug: str, language: str, schema: dict = None):
+    """Writes a flattened metadata YAML file for a single source file to target_path."""
+    import os
+    from pathlib import Path
+    from utils import json_utils
+    from loaders.default_asset_loader import DefaultAssetLoader
+
+    if schema is None:
+        schema = DefaultAssetLoader().download("schemas/code_metadata_schema.json")
+
+    metadata_file_path = os.path.join(
+        target_path, str(Path(relative_file_path).with_suffix("")) + "_metadata.txt"
+    )
+
+    os.makedirs(os.path.dirname(metadata_file_path), exist_ok=True)
+
+    with open(metadata_file_path, "w", encoding="utf-8") as f:
+        f.write(json_utils.flatten_code_metadata(metadata, schema))
+
+
+def inject_external_metadata(target_path: str, git_repo: str, git_slug: str, language: str):
+    """Reads every file in CODE_METADATA_DIR and writes a flattened _metadata.txt for each via save_metadata_file."""
+    import os
+    import json
+    import logging
+    from utils import code_utils
+    from loaders.default_asset_loader import DefaultAssetLoader
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    code_metadata_dir = code_utils.CODE_METADATA_DIR
+
+    if not os.path.isdir(code_metadata_dir):
+        logging.info(f"No metadata directory found at '{code_metadata_dir}'. Skipping metadata injection.")
+        return
+
+    schema = DefaultAssetLoader().download("schemas/code_metadata_schema.json")
+
+    injected = 0
+
+    for root, _, files in os.walk(code_metadata_dir):
+
+        for filename in files:
+
+            abs_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(abs_path, code_metadata_dir)
+
+            try:
+
+                with open(abs_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+
+                metadata.update({"git_repo": git_repo, "git_slug": git_slug, "language": language})
+
+                save_metadata_file(metadata, target_path, filename,
+                                   git_repo=git_repo, git_slug=git_slug, language=language,
+                                   schema=schema)
+
+                injected += 1
+
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logging.info(f"Skipping '{rel_path}': could not parse as JSON: {e}")
+
+            except Exception as e:
+                logging.error(f"Error injecting metadata for '{rel_path}': {e}")
+
+    if injected == 0:
+        logging.info(f"No files found in '{code_metadata_dir}'. Skipping metadata injection.")
+    else:
+        logging.info(f"Injected metadata for {injected} file(s) from '{code_metadata_dir}'.")
+
+
+def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, language: str, config=False):
     """Writes annotated code and flattened metadata files to target_path."""
     import os
     from pathlib import Path
-    import logging, json
+    import logging
     from utils import json_utils
     from loaders.default_asset_loader import DefaultAssetLoader
 
@@ -257,7 +331,7 @@ def save_code_and_metadata_files(df, target_path, config=False):
 
         logging.info("Saving code and metadata files...")
 
-        _SCHEMA = DefaultAssetLoader().download("schemas/code_metadata_schema.json")
+        schema = DefaultAssetLoader().download("schemas/code_metadata_schema.json")
 
         for _, row in df.iterrows():
 
@@ -273,23 +347,18 @@ def save_code_and_metadata_files(df, target_path, config=False):
 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 
-            metadata_file_path = os.path.join(
-                target_path, str(Path(rel_file_path).with_suffix("")) + "_metadata.txt"
-            )
-
             code_header_comment = generate_code_comment(
                 metadata=metadata, file_path=rel_file_path, config=config
             ) or ""
 
             os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
 
-            os.makedirs(os.path.dirname(metadata_file_path), exist_ok=True)
-
             with open(target_file_path, "w", encoding="utf-8") as f:
                 f.write(f"{code_header_comment}\n{code}")
 
-            with open(metadata_file_path, "w", encoding="utf-8") as f:
-                f.write(json_utils.flatten_code_metadata(metadata, _SCHEMA))
+            save_metadata_file(metadata, target_path, rel_file_path,
+                               git_repo=git_repo, git_slug=git_slug, language=language,
+                               schema=schema)
 
     except Exception as e:
 
@@ -329,7 +398,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
 
-        save_code_and_metadata_files(code_and_metadata_df, target_path, config=config)
+        save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
+                                     git_slug=git_slug, language=language, config=config)
 
         logging.info(f"Successfully generated code metadata for '{git_repo}'.")
 
@@ -421,6 +491,11 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
 
         prepare_environment(source_path=source_path, target_path=target_path,
                             git_repo=git_repo, git_branch=git_branch)
+
+        inject_external_metadata(target_path=target_path,
+                        git_repo=git_repo,
+                        git_slug=git_slug,
+                        language="")
 
         for language in detect_languages(source_path):
 

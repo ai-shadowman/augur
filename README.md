@@ -4,6 +4,7 @@
 
 Contents
 ---
+
 - [Overview](#overview)
 - [Required Software / Tested with](#tested-with)
 - [Documentation](#documentation)
@@ -15,6 +16,7 @@ Contents
   - [(Optional) Building the Container Images](#optional-building-the-container-images)
   - [Installing via Makefile](#installing-via-makefile)
 - [Running the Code Understanding Workflow](#running-the-code-understanding-workflow)
+- [Integrating with other tools](#integrating-with-other-tools)
 - [More About the Code Understanding Workflow](#more-about-the-code-understanding-workflow)
   - [1. Data Generation](#1-data-generation)
   - [2. Data Indexing](#2-data-indexing)
@@ -155,9 +157,18 @@ nohup python3 -m vllm.entrypoints.openai.api_server \
 1. To run adhoc queries about the indexed code, run the following:
 ```wrappers/adhoc.sh <query>```
    - For example: 
-     - `wrappers/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes? Include the fully qualified names."`
-     - `wrappers/adhoc.sh "Which modules or components would be riskiest to refactor first? Include the fully qualified names."`
-     - `wrappers/adhoc.sh "Which modules or components would be the least risky to refactor first? Include the fully qualified names."`
+     - `wrappers/adhoc.sh "What migration order would be recommended when refactoring to reduce breaking changes?."`
+     - `wrappers/adhoc.sh "Which modules or components would be riskiest to refactor first?" --git-repo https://github.com/org/repo` 
+     - `wrappers/adhoc.sh "What are the data stores in this codebase?" --git-repo https://github.com/org/repo --git-branch develop`
+
+## Integrating with other tools
+
+External tools — such as vulnerability scanners, dependency analysers, 
+static code parsers, etc. — can contribute metadata to the data-generation 
+workflow by writing their output as JSON file(s) into a `.code_metadata` directory at the 
+root of the repository being analysed. Any files present there are automatically picked up and merged into the generated dataset before indexing. 
+Each JSON file must conform to the code metadata schema at [`workflows/examples/code_understanding/assets/schemas/code_metadata_schema.json`](workflows/examples/code_understanding/assets/schemas/code_metadata_schema.json); 
+fields not relevant to a given tool can be omitted.
 
 ## More About the Code Understanding Workflow
 

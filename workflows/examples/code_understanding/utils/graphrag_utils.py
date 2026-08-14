@@ -85,6 +85,10 @@ class DependencyAnalyzer:
         self.SYSTEM_PROMPT_RHEL_ADMIN = _load(
             "analysis/system-prompt/rhel-admin")
 
+        self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS = _load(
+            "analysis/system-prompt/characterization-tests"
+        )
+
         self.POST_AMBLE = _load(
             "analysis/post-amble/json-format")
 
@@ -296,6 +300,8 @@ class DependencyAnalyzer:
 
                 if use_global:
 
+                    _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
+
                     result, context_data = await api.global_search(
                         config=config,
                         entities=self.entity_df,
@@ -304,7 +310,7 @@ class DependencyAnalyzer:
                         community_level=self.community_level,
                         response_type=response_type,
                         query=question,
-                        dynamic_community_selection=False,
+                        dynamic_community_selection=len(self.communities_df) > _community_threshold,
                     )
 
                 else:
@@ -404,6 +410,7 @@ class DependencyAnalyzer:
                 prompt_path,
                 system_prompt_data_extraction=self.SYSTEM_PROMPT_DATA_EXTRACTION,
                 system_prompt_rhel_admin=self.SYSTEM_PROMPT_RHEL_ADMIN,
+                system_prompt_characterization_tests=self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS,
                 additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
                 post_amble=self.POST_AMBLE,

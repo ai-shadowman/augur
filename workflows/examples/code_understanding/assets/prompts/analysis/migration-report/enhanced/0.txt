@@ -1,29 +1,15 @@
 ---
-title: "### Code Migration Plan (JSON)"
+title: "### Characterization Tests Generation Plan"
 ---
-{{system_prompt_data_extraction}}
+{{system_prompt_characterization_tests}}
 
-The following is a previously generated migration plan for a software project:
+The following is a summary of the application that is currently being migrated:
 
---- BEGIN MIGRATION PLAN ---
-{{answers[5]}}
---- END MIGRATION PLAN ---
+--- BEGIN APPLICATION SUMMARY ---
+{{answers[1]}}
+--- END APPLICATION SUMMARY ---
 
-Generate the migration plan in JSON format using the following schema:
-{
-    "code_migration_plan": [
-        {
-            "migration_order": <migration order; 1 = migrate first>,
-            "component": <component name>,
-            "git_repo": <git repo url associated with the component>,
-            "description": <component description>,
-            "relevant_files": [<file paths explicitly present in the graph data only, do not infer>],
-            "complexity": <low | medium | high>,
-            "complexity_score": <0-10>,
-            "complexity_justification": <rationale for the complexity score>,
-            "rank_justification": <rationale for the migration order>
-        }
-    ]
-}
+Using this context, generate a plan for generating characterization tests for this application.
+The characterization tests will be used as a baseline for regression testing during refactoring for compatibility with RHEL 10.
 
-{{post_amble}}
+Output the plan in markdown format.

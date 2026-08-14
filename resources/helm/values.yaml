@@ -7,8 +7,6 @@ deployNotebooks: false
 repoUrl: ""
 repoRef: main
 
-version: latest
-
 minio:
   rootUser: ""
   rootPassword: ""
@@ -49,6 +47,9 @@ adhocQuery:
   graphragDir: "graph_rag_app/source"
   useGlobal: "1"
   retryCount: "3"
+  jobId: ""
+  gitRepo: ""
+  gitBranch: "main"
 
 runPipelines:
   run: false

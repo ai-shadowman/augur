@@ -22,7 +22,7 @@ from loaders.default_asset_loader import DefaultAssetLoader
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-_CODE_METADATA_DIR = ".code_metadata"
+CODE_METADATA_DIR = ".code_metadata"
 
 
 def _load_mappings():
@@ -112,7 +112,7 @@ def get_exclude_dirs_for_language(language):
     if language not in mappings:
         raise ValueError(f"Language={language} has not been mapped")
 
-    return set(mappings[language]) | {_CODE_METADATA_DIR}
+    return set(mappings[language]) | {CODE_METADATA_DIR}
 
 
 def get_comment_delimiters_for_language(language):

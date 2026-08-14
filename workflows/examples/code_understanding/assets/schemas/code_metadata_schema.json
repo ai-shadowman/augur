@@ -19,15 +19,23 @@
       "exceptions": []
     }
   ],
+  "runtime_stack": [
+    {
+      "name": "",
+      "runtime_version": "",
+      "vulnerabilities": [],
+      "eol": null
+    }
+  ],
   "libraries": [
     {
       "library_name": "",
       "library_version": "",
       "library_version_source": "",
-      "runtime_version": "",
-      "deprecated": "",
+      "library_runtime_version": "",
+      "deprecated": null,
       "vulnerabilities": [],
-      "supported_on_rhel10": "",
+      "supported_on_rhel10": null,
       "supported_on_rhel10_reason": "",
       "opensource": ""
     }

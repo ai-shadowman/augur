@@ -1,8 +1,10 @@
-ENV_FILE           ?= ./.env
-GIT_REPO_URL       := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
-GIT_REPO_BRANCH    := $(shell git branch --show-current)
-CLUSTER_DOMAIN     := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
-PIPELINE_GIT_REPO  ?=
+
+ENV_FILE            ?= ./.env
+GIT_REPO_URL        := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+GIT_REPO_BRANCH     := $(shell git branch --show-current 2>/dev/null)
+CLUSTER_DOMAIN      := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+PIPELINE_GIT_REPO   ?=
+
 PIPELINE_GIT_BRANCH ?=
 
 install:
@@ -73,7 +75,11 @@ deploy-notebooks:
 			--set namespace="$$KFP_NAMESPACE" \
 			--set requester="$$(oc whoami)" \
 			--set repoUrl="$(GIT_REPO_URL)" \
+<<<<<<< HEAD
+		    --set repoRef="$(GIT_REPO_BRANCH)" \
+=======
 			--set repoRef="$(GIT_REPO_BRANCH)" \
+>>>>>>> main
 			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 			--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
@@ -158,35 +164,44 @@ upload-mlflow-assets:
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 run-adhoc-query:
-	@[ -z "$(QUESTION)" ] && { echo "Error: QUESTION is required. Usage: make run-adhoc-query QUESTION=\"your question\"" >&2; exit 1; } || true
+	@[ -z "$(QUESTION_FILE)" ] && { echo "Error: QUESTION_FILE is required: generate it via wrappers/adhoc.sh." >&2; exit 1; } || true
 	@set -a && . $(ENV_FILE) && set +a && \
+	JOB_ID="$$(date +%Y%m%d%H%M%S)$$(printf '%04x' $$((RANDOM)))" && \
 	\
-	echo "==> Storing query parameters..." && \
-	oc delete secret adhoc-query-params -n $$KFP_NAMESPACE --ignore-not-found=true && \
-	oc create secret generic adhoc-query-params \
-		--from-literal=QUESTION='$(QUESTION)' \
+	echo "==> Storing query parameters (job: $$JOB_ID)..." && \
+	oc create configmap adhoc-query-$$JOB_ID \
+		--from-file=question=$(QUESTION_FILE) \
 		-n $$KFP_NAMESPACE && \
 	\
 	echo "==> Submitting adhoc query job..." && \
-	oc delete job run-adhoc-query -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set adhocQuery.run=true \
-		--set-string adhocQuery.graphragDir="$${GRAPHRAG_DIR:-graph_rag_app/source}" \
-		--set-string adhocQuery.useGlobal="$${USE_GLOBAL:-1}" \
+		--set-string adhocQuery.jobId="$$JOB_ID" \
+		--set-string adhocQuery.useGlobal="$(if $(GIT_REPO),0,1)" \
+		--set-string adhocQuery.gitRepo="$(GIT_REPO)" \
+		--set-string adhocQuery.gitBranch="$(GIT_BRANCH)" \
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+<<<<<<< HEAD
+		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+=======
 		-s templates/adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+>>>>>>> main
 	\
-	echo "==> Waiting for adhoc-query container to start..." && \
-	until oc logs job/run-adhoc-query -n $$KFP_NAMESPACE >/dev/null 2>&1; do sleep 2; done && \
+	echo "==> Waiting for job to start..." && \
+	_t=0; until oc logs job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE >/dev/null 2>&1; do \
+	    sleep 2; _t=$$((_t+2)); \
+	    [ $$_t -ge 120 ] && { echo "Error: timed out waiting for adhoc-query job to start" >&2; exit 1; }; \
+	done && \
 	\
 	echo "==> Streaming query results..." && \
-	oc logs -f job/run-adhoc-query -n $$KFP_NAMESPACE
+	oc logs -f job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE && \
+	oc delete configmap adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE --ignore-not-found=true
 
 run-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \
