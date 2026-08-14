@@ -1,26 +1,17 @@
 ---
-title: "### RHEL-Enhanced Code Migration Plan (JSON)"
+title: "### Code Migration Plan (JSON)"
 ---
-{{system_prompt_rhel_admin}}
+{{system_prompt_data_extraction}}
 
-The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
-Use it to structure your migration plan.
+The following is a previously generated migration plan for a software project:
 
---- BEGIN RHEL UPGRADE MATERIAL ---
-{{additional_context}}
---- END RHEL UPGRADE MATERIAL ---
-
-The following is a generic migration plan for the applications hosted on this system.
-
---- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
+--- BEGIN MIGRATION PLAN ---
 {{answers[5]}}
---- END GENERIC RECOMMENDED MIGRATION PLAN ---
+--- END MIGRATION PLAN ---
 
-Revise the high-level migration plan provided above by enhancing it to take
-into account any relevant information from the provided RHEL upgrade reference material.
 Generate the migration plan in JSON format using the following schema:
 {
-    "rhel_enhanced_code_migration_plan": [
+    "code_migration_plan": [
         {
             "migration_order": <migration order; 1 = migrate first>,
             "component": <component name>,
@@ -30,9 +21,7 @@ Generate the migration plan in JSON format using the following schema:
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
             "complexity_justification": <rationale for the complexity score>,
-            "rank_justification": <rationale for the migration order>,
-            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
-            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+            "rank_justification": <rationale for the migration order>
         }
     ]
 }

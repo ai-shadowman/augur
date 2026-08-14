@@ -1,34 +1,36 @@
 ---
-title: "### End-to-End RHEL Migration Plan (JSON)"
+title: "### RHEL-Enhanced Code Migration Plan (JSON)"
 ---
 {{system_prompt_rhel_admin}}
 
 The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
 Use it to structure your migration plan.
 
---- BEGIN RHEL UPGRADE CONTEXT ---
+--- BEGIN RHEL UPGRADE MATERIAL ---
 {{additional_context}}
---- END RHEL UPGRADE CONTEXT ---
+--- END RHEL UPGRADE MATERIAL ---
 
-The following is a summary of the codebase being migrated.
+The following is a generic migration plan for the applications hosted on this system.
 
---- BEGIN HOSTED APPLICATIONS ---
-{{answers[1]}}
---- END HOSTED APPLICATIONS ---
+--- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
+{{answers[5]}}
+--- END GENERIC RECOMMENDED MIGRATION PLAN ---
 
-Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
-Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
-Rank steps in the order they should be executed.
+Revise the high-level migration plan provided above by enhancing it to take
+into account any relevant information from the provided RHEL upgrade reference material.
 Generate the migration plan in JSON format using the following schema:
 {
-    "end_to_end_migration_plan": [
+    "rhel_enhanced_code_migration_plan": [
         {
-            "rank": <step number in execution order>,
-            "phase": <phase name>,
-            "description": <what this phase involves and why it is needed>,
+            "migration_order": <migration order; 1 = migrate first>,
+            "component": <component name>,
+            "git_repo": <git repo url associated with the component>,
+            "description": <component description>,
+            "relevant_files": [<verbatim file paths from source data only; use [] if none are explicitly present>],
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
-            "complexity_justification": <rationale for complexity score>,
+            "complexity_justification": <rationale for the complexity score>,
+            "rank_justification": <rationale for the migration order>,
             "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
             "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
         }
