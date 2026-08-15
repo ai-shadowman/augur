@@ -334,6 +334,8 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
         for _, row in df.iterrows():
 
+            logging.debug(f"**Processing file {row['file_path']}...**")
+
             code = row["code"]
 
             metadata = json_utils.extract_json_from_string(row["extracted_data"])
@@ -343,6 +345,15 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
                 continue
 
             rel_file_path = row["file_path"]
+
+            if not metadata.get('language'):
+                metadata['language'] = language
+            if not metadata.get('file_path'):
+                metadata['file_path'] = rel_file_path
+            if not metadata.get('git_repo'):
+                metadata['git_repo'] = git_repo
+            if not metadata.get('git_slug'):
+                metadata['git_slug'] = git_slug
 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 
