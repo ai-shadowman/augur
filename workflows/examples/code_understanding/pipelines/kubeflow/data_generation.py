@@ -50,19 +50,27 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
+    import logging
+
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
 
-        languages = detect_languages(tmp_source)
+        try:
 
-        for language in languages:
+            languages = detect_languages(tmp_source)
 
-            for config in [False, True]:
+            for language in languages:
 
-                generate_code_and_meta(
-                    git_repo=git_repo, git_branch=git_branch,
-                    language=language, source_path=tmp_source, target_path=tmp_target,
-                    config=config, multi_repo=multi_repo,
-                )
+                for config in [False, True]:
+
+                    generate_code_and_meta(
+                        git_repo=git_repo, git_branch=git_branch,
+                        language=language, source_path=tmp_source, target_path=tmp_target,
+                        config=config, multi_repo=multi_repo,
+                    )
+
+        except Exception as e:
+
+            logging.error(f"Skipping repo '{git_repo}': {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
