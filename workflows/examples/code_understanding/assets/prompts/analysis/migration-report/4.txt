@@ -1,5 +1,6 @@
 ---
 title: "### Known Dependencies Requiring Upgrade"
+search_mode: "local"
 ---
 Are there any dependencies that need to be upgraded and in what order?
 If runtime stack version information is available (languages, frameworks, databases, middleware), include those components alongside library dependencies (e.g., JDK 1.8 → 21, Angular 15 → 17, MySQL 5.7 → 8.0).

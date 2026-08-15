@@ -475,14 +475,23 @@ def generate_git_slug(git_repo: str, git_branch: str) -> str:
     return code_utils.generate_slug_from_repo(git_repo, git_branch)
 
 
-def detect_languages(source_path: str) -> list:
-    """Returns the list of programming languages detected in source_path."""
+def detect_languages(source_path: str, error_on_empty: bool = True) -> list:
+    """Returns the list of programming languages detected in source_path.
+
+    When error_on_empty=True (default), raises if no languages are found.
+    When error_on_empty=False, returns an empty list so the caller can decide
+    how to handle a repo with no detectable languages.
+    """
     from utils import code_utils
+    import logging
 
     languages = code_utils.get_detected_languages_for_repo(source_path)
 
     if not languages:
-        raise Exception(f"No languages detected in source_path='{source_path}'.")
+        if error_on_empty:
+            raise Exception(f"No languages detected in source_path='{source_path}'.")
+        logging.info(f"No languages detected in '{source_path}'. Skipping repo.")
+        return []
 
     return languages
 
@@ -502,12 +511,17 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
         prepare_environment(source_path=source_path, target_path=target_path,
                             git_repo=git_repo, git_branch=git_branch)
 
+        languages = detect_languages(source_path, error_on_empty=False)
+
+        if not languages:
+            return {"git_slug": git_slug, "status": "skipped", "fail_message": "No languages detected"}
+
         inject_external_metadata(target_path=target_path,
                         git_repo=git_repo,
                         git_slug=git_slug,
                         language="")
 
-        for language in detect_languages(source_path):
+        for language in languages:
 
             for config in [False, True]:
 
