@@ -29,9 +29,23 @@ def clone_from_repo(repo_url, destination_path, branch="master"):
         raise e
 
 
+def reset_environment(source_path: str, target_path: str):
+    """Removes the source and target directories."""
+    import shutil
+    import logging
+    import os
+
+    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+    logging.info("Resetting environment...")
+
+    shutil.rmtree(source_path, ignore_errors=True)
+
+    shutil.rmtree(target_path, ignore_errors=True)
+
+
 def prepare_environment(source_path: str, target_path: str, git_repo: str, git_branch: str):
     """Prepares the environment at the start of the pipeline."""
-    import shutil
     import logging
     import os
 
@@ -41,9 +55,7 @@ def prepare_environment(source_path: str, target_path: str, git_repo: str, git_b
 
     try:
 
-        shutil.rmtree(source_path, ignore_errors=True)
-
-        shutil.rmtree(target_path, ignore_errors=True)
+        reset_environment(source_path, target_path)
 
         clone_from_repo(git_repo, source_path, branch=git_branch)
 
@@ -530,6 +542,8 @@ def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_p
         error_message = traceback.format_exc()
 
         logging.error(error_message)
+
+        reset_environment(source_path, target_path)
 
         result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
 

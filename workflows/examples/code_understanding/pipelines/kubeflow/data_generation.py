@@ -46,7 +46,9 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                multi_repo: bool = False):
     """Detects languages and generates code metadata for all detected languages."""
 
-    from pipelines.base.data_generation import detect_languages, generate_code_and_meta
+    from pipelines.base.data_generation import (
+        detect_languages, generate_code_and_meta, inject_external_metadata, generate_git_slug
+    )
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
@@ -57,6 +59,11 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
         try:
 
             languages = detect_languages(tmp_source)
+
+            git_slug = generate_git_slug(git_repo, git_branch)
+
+            inject_external_metadata(target_path=tmp_target, git_repo=git_repo,
+                                     git_slug=git_slug, language="")
 
             for language in languages:
 
@@ -70,7 +77,16 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
 
         except Exception as e:
 
-            logging.error(f"Skipping repo '{git_repo}': {e}")
+            if type(e).__name__ == "RateLimitError" or "429" in str(e):
+                logging.error(
+                    f"Rate limit exceeded for repo '{git_repo}' (branch='{git_branch}'). "
+                    f"Consider reducing GRAPHRAG_PARALLEL_REPOS: {e}"
+                )
+                raise
+
+            logging.error(
+                f"Skipping repo '{git_repo}' (branch='{git_branch}'): {e}"
+            )
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -117,7 +133,8 @@ def run_full_pipeline_multi_repo_op():
 
     repo_list_task = get_repo_list_op()
 
-    with dsl.ParallelFor(items=repo_list_task.output) as repo:
+    with dsl.ParallelFor(items=repo_list_task.output,
+                         parallelism=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
 
         run_full_pipeline(
             git_repo=repo.git_repo,

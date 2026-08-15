@@ -210,7 +210,7 @@ run-pipelines:
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set runPipelines.run=true \
-		--set-string runPipelines.args="$${ARGS:---single}" \
+		--set-string runPipelines.args="$${ARGS:---single-repo}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
 		--set-string runPipelines.graphragSourcePath="$${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}" \
 		-s templates/run-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \

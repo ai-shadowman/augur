@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from kfp import dsl
 from utils.kubeflow_utils import compile_all_and_exit
-from loaders.default_asset_loader import DefaultAssetLoader
 
 from utils.pipeline_utils import uses_kfp
 
@@ -28,12 +27,6 @@ else:
     from pipelines.base.data_generation import run_full_pipeline as data_generation_pipeline
     from pipelines.base.indexing import run_full_pipeline as graphrag_indexing_pipeline
     from pipelines.base.analysis import run_full_pipeline as graphrag_analysis_pipeline
-
-##############################################################################
-# Multi-repo pipeline repo list
-##############################################################################
-
-_GIT_REPOS = DefaultAssetLoader().download("repos/repo_list.json")
 
 ##############################################################################
 # Pipeline definitions
@@ -131,8 +124,11 @@ def multi_repo_pipeline(
         from pipelines.base.data_generation import run_full_pipeline_multi_repo
         from pipelines.base.indexing import run_full_pipeline_multi_repo as run_indexing_multi_repo
         from pipelines.base.analysis import run_full_pipeline_multi_repo as run_analysis_multi_repo
+        from loaders.default_asset_loader import DefaultAssetLoader
 
-        run_full_pipeline_multi_repo(_GIT_REPOS)
+        git_repos = DefaultAssetLoader().download("repos/repo_list.json")
+
+        run_full_pipeline_multi_repo(git_repos)
 
         run_indexing_multi_repo(parent_target_path=parent_target_path)
 
