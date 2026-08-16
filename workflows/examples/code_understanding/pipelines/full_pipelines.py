@@ -117,7 +117,9 @@ def multi_repo_pipeline(
             parent_target_path=parent_target_path,
         ).after(dg)
 
-        run_analysis_multi_repo_op().after(idx)
+        run_analysis_multi_repo_op(
+            graphrag_dir=idx.outputs["graphrag_dir"],
+        )
 
     else:
 

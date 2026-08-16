@@ -83,14 +83,15 @@ def get_eval_repo_list_op(git_repo: str, git_branch: str, multi_repo: bool) -> l
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def run_indexing_multi_repo_op(parent_target_path: str):
+def run_indexing_multi_repo_op(parent_target_path: str, graphrag_dir: Output[Dataset]):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
 
     from pipelines.base.indexing import run_full_pipeline_multi_repo
-    from utils.kubeflow_utils import setup_logging
+    from utils.kubeflow_utils import setup_logging, write_to_output_artifact
     setup_logging()
 
-    run_full_pipeline_multi_repo(parent_target_path)
+    with write_to_output_artifact(graphrag_dir) as tmp_graphrag:
+        run_full_pipeline_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
 
 
 ##############################################################################
