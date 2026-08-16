@@ -64,8 +64,4 @@ def download_code_metadata_directories(git_repos: list, parent_target_path: str)
             )
         except Exception as e:
 
-            if "No such file or directory" in str(e):
-                logging.error(f"Could not find generated data for {git_repo} ({repo_slug}); skipping...")
-
-            else:
-                raise e
+            logging.error(f"Could not find generated data for {git_repo} ({repo_slug}); skipping...")
