@@ -57,7 +57,7 @@ class MlFlowAssetLoader(AssetLoader):
 
         else:
 
-            filter_string = " AND ".join([f"tags.{k} = '{v}'" for k, v in (tags or {}).items()])
+            filter_string = " AND ".join([f"`tags.{k}` = '{v}'" for k, v in (tags or {}).items()])
 
         latest_runs = client.search_runs(
             experiment_ids=[experiment.experiment_id],
