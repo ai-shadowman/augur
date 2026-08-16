@@ -58,7 +58,7 @@ def run_full_pipeline_multi_repo():
     logging.info("Downloading multi-repo GraphRAG index...")
     download_result_directory(
         git_slug=None,
-        download_dir=graphrag_source_path,
+        download_dir=os.path.join(graphrag_source_path, "output"),
         results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
         multi_repo=True,
         asset_tags={"multi_repo": True, "category": "indexing"},
