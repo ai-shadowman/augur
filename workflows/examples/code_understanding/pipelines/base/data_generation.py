@@ -192,7 +192,34 @@ def get_parsed_code_metadata(df, language, config=False):
         raise e
 
 
-def generate_code_comment(metadata: dict, file_path: str, config=False):
+def load_external_data(source_path: str) -> dict:
+    """Loads and merges all JSON files from source_path/.code_metadata/ into a single dict."""
+    import os, json
+    from utils import code_utils
+
+    code_metadata_dir = os.path.join(source_path, code_utils.CODE_METADATA_DIR)
+    result = {}
+
+    if not os.path.isdir(code_metadata_dir):
+        return result
+
+    for root, _, files in os.walk(code_metadata_dir):
+        for filename in files:
+            try:
+                with open(os.path.join(root, filename), "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for key, value in data.items():
+                    if isinstance(value, list) and isinstance(result.get(key), list):
+                        result[key].extend(value)
+                    else:
+                        result[key] = value
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
+    return result
+
+
+def generate_code_comment(metadata: dict, file_path: str, config=False, external_metadata: dict = None):
     """Builds a structured text comment from a code file's metadata dictionary."""
     import os
     from utils import code_utils
@@ -202,12 +229,25 @@ def generate_code_comment(metadata: dict, file_path: str, config=False):
 
     try:
 
+        external_metadata = external_metadata or {}
+
         lines = []
 
-        lines.append(f"This file is located at {metadata.get('file_path')} "
-                     f"from repository url {metadata.get('git_repo')}, "
-                     f"repository slug {metadata.get('git_slug')}, "
-                     f"multi_repo {str(metadata.get('multi_repo', False)).lower()}")
+        header = (f"This file is located at {metadata.get('file_path')} "
+                  f"from repository url {metadata.get('git_repo')}, "
+                  f"repository slug {metadata.get('git_slug')}, "
+                  f"multi_repo {str(metadata.get('multi_repo', False)).lower()}")
+
+        runtime_stack = external_metadata.get('runtime_stack') or []
+        if runtime_stack:
+            runtime_parts = " / ".join(
+                f"{r.get('name', '')} {r.get('runtime_version', '')}".strip()
+                for r in runtime_stack if r.get('name')
+            )
+            if runtime_parts:
+                header += f", runtime {runtime_parts}"
+
+        lines.append(header)
 
         if metadata.get('package'):
             lines.append(f"\n Package: {metadata['package']}")
@@ -218,12 +258,23 @@ def generate_code_comment(metadata: dict, file_path: str, config=False):
         imports = metadata.get('imports') or []
         libraries = metadata.get('libraries') or []
 
-        if imports or libraries:
+        package = metadata.get('package')
+        external_libraries = []
+        if package:
+            for pkg_entry in external_metadata.get('repo_packages', []):
+                if pkg_entry.get('package') == package:
+                    external_libraries.extend(pkg_entry.get('libraries', []))
+
+        if imports or libraries or external_libraries:
             lines.append(f"\nDependencies:")
             lines.extend(f"- [import] {imp}" for imp in imports)
             lines.extend(
                 f"- [library] {lib.get('library_name', '')} {lib.get('library_version', '')}".strip()
                 for lib in libraries
+            )
+            lines.extend(
+                f"- [library] {lib.get('library_name', '')} {lib.get('library_version', '')}".strip()
+                for lib in external_libraries
             )
 
         if metadata.get('classes'):
@@ -277,60 +328,8 @@ def save_metadata_file(metadata: dict, target_path: str, relative_file_path: str
         f.write(json_utils.flatten_code_metadata(metadata, schema))
 
 
-def inject_external_metadata(target_path: str, git_repo: str, git_slug: str, language: str,
-                             source_path: str = ""):
-    """Reads every file in CODE_METADATA_DIR (resolved relative to source_path) and writes a flattened _metadata.txt for each via save_metadata_file."""
-    import os
-    import json
-    import logging
-    from utils import code_utils
-    from loaders.default_asset_loader import DefaultAssetLoader
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
-
-    code_metadata_dir = os.path.join(source_path, code_utils.CODE_METADATA_DIR) if source_path else code_utils.CODE_METADATA_DIR
-
-    if not os.path.isdir(code_metadata_dir):
-        logging.info(f"No metadata directory found at '{code_metadata_dir}'. Skipping metadata injection.")
-        return
-
-    schema = DefaultAssetLoader().download("schemas/code_metadata_schema.json")
-
-    injected = 0
-
-    for root, _, files in os.walk(code_metadata_dir):
-
-        for filename in files:
-
-            abs_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(abs_path, code_metadata_dir)
-
-            try:
-
-                with open(abs_path, "r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-
-                metadata.update({"git_repo": git_repo, "git_slug": git_slug, "language": language})
-
-                save_metadata_file(metadata, target_path, filename,
-                                   git_repo=git_repo, git_slug=git_slug, language=language,
-                                   schema=schema)
-
-                injected += 1
-
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                logging.info(f"Skipping '{rel_path}': could not parse as JSON: {e}")
-
-            except Exception as e:
-                logging.error(f"Error injecting metadata for '{rel_path}': {e}")
-
-    if injected == 0:
-        logging.info(f"No files found in '{code_metadata_dir}'. Skipping metadata injection.")
-    else:
-        logging.info(f"Injected metadata for {injected} file(s) from '{code_metadata_dir}'.")
-
-
-def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, language: str, config=False):
+def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, language: str, config=False,
+                                 external_metadata: dict = None):
     """Writes annotated code and flattened metadata files to target_path."""
     import os
     from pathlib import Path
@@ -372,7 +371,8 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 
             code_header_comment = generate_code_comment(
-                metadata=metadata, file_path=rel_file_path, config=config
+                metadata=metadata, file_path=rel_file_path, config=config,
+                external_metadata=external_metadata,
             ) or ""
 
             os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
@@ -393,7 +393,7 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
 def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                             source_path: str, target_path: str, config: bool = False,
-                            multi_repo: bool = False):
+                            multi_repo: bool = False, external_metadata: dict = None):
     """Generates and saves code metadata for one language/config combination."""
     import json, logging, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
@@ -423,7 +423,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
 
         save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
-                                     git_slug=git_slug, language=language, config=config)
+                                     git_slug=git_slug, language=language, config=config,
+                                     external_metadata=external_metadata)
 
         logging.info(f"Successfully generated code metadata for '{git_repo}'.")
 
@@ -524,11 +525,7 @@ class DataGenerationPipeline:
 
             languages = detect_languages(source_path)
 
-            inject_external_metadata(target_path=target_path,
-                            git_repo=git_repo,
-                            git_slug=git_slug,
-                            language="",
-                            source_path=source_path)
+            external_metadata = load_external_data(source_path)
 
             for language in languages:
 
@@ -537,7 +534,7 @@ class DataGenerationPipeline:
                     generate_code_and_meta(
                         git_repo=git_repo, git_branch=git_branch,
                         language=language, source_path=source_path, target_path=target_path,
-                        config=config, multi_repo=multi_repo,
+                        config=config, multi_repo=multi_repo, external_metadata=external_metadata,
                     )
 
             logging.info("Data generation pipeline complete.")

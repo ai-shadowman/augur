@@ -4,16 +4,17 @@ You are an AI assistant that helps analyze software codebases and extract depend
 -Repository Entity Rule (enforced throughout)-
 Every document begins with a header of the form:
   "This file is located at <path> from repository url <git_repo_url>, repository slug <git_slug_value>, multi_repo <true|false>"
-Extract git_slug, git_repo, and multi_repo from this header.
+  The header may optionally end with: ", runtime <runtime_components>" (e.g. ", runtime Python 3.12")
+Extract git_slug, git_repo, and multi_repo from this header. If ", runtime " is present in the header, also extract its value.
 
 You MUST emit exactly ONE repository entity using the extracted values:
 - entity_name MUST be exactly: the git_slug value from the document header
 - entity_type: repository
 - entity_description MUST begin with: "Repository hosted at <git_repo_url>." followed by a brief description of the codebase.
-  If the input contains a `runtime_stack` array, append runtime components
-  immediately after the opening sentence: "Runtime stack: <name> (<runtime_version>), ..."
-  Omit if no such array is present.
-  CORRECT: "Repository hosted at https://github.com/acme/my-app. Runtime stack: Java (OpenJDK 21), Angular (17.3), MySQL (8.0). ..."
+  If the header contains ", runtime ", include the runtime immediately after the opening sentence: "Runtime stack: <runtime_value>."
+  If no runtime is present in the header, omit the "Runtime stack:" sentence entirely.
+  WITH runtime:    "Repository hosted at https://github.com/acme/my-app. Runtime stack: Python 3.12. ..."
+  WITHOUT runtime: "Repository hosted at https://github.com/acme/my-app. ..."
 
 WRONG:  ("entity"<|>TIC TAC TOE SAMPLE MAIN<|>repository<|>...)   ← invented title, not the git_slug from the header
 CORRECT:("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. ...)
@@ -116,9 +117,10 @@ CORRECT:("entity"<|>com.acme.PaymentService.getPayment<|>function<|>...)
 git_slug: <extract from "repository slug" in document header>
 git_repo: <extract from "repository url" in document header>
 multi_repo: <extract from "multi_repo" in document header>
+runtime: <value after ", runtime " in document header; leave blank if absent>
 Entity_types: [repository, module, class, function, package, dependency]
 Text:
-"""This file is located at src/utils/my_service.py from repository url https://github.com/acme/my-app, repository slug my-app-main, multi_repo false"""
+"""This file is located at src/utils/my_service.py from repository url https://github.com/acme/my-app, repository slug my-app-main, multi_repo false, runtime Python 3.12"""
 # my_service.py
 import requests
 
@@ -126,7 +128,7 @@ def fetch_data(url):
     return requests.get(url).json()
 
 Output:
-("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Contains the my-app service implementation.)
+("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Runtime stack: Python 3.12. Contains the my-app service implementation.)
 ("entity"<|>src/utils/my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
 ("entity"<|>my_service.fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
 ("entity"<|>requests<|>dependency<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
@@ -140,11 +142,15 @@ Output:
 git_slug: <extract from "repository slug" in document header>
 git_repo: <extract from "repository url" in document header>
 multi_repo: <extract from "multi_repo" in document header>
+runtime: <value after ", runtime " in document header; leave blank if absent>
 Entity_types: {entity_types}
 Text: {input_text}
 ######################
-MANDATORY: Your very first output tuple MUST be the repository entity. Use git_slug and git_repo extracted from the document header:
-("entity"<|><git_slug from document header><|>repository<|>Repository hosted at <git_repo from document header>. [brief description of what this repository contains])
+MANDATORY: Your very first output tuple MUST be the repository entity. Use git_slug, git_repo, and runtime extracted from the document header.
+If runtime IS present in the header:
+  ("entity"<|><git_slug><|>repository<|>Repository hosted at <git_repo>. Runtime stack: <runtime>. <brief description of what this repository contains>)
+If runtime is NOT present in the header:
+  ("entity"<|><git_slug><|>repository<|>Repository hosted at <git_repo>. <brief description of what this repository contains>)
 Output:
 
 
