@@ -56,7 +56,7 @@ Detailed instructions for provisioning an OpenShift cluster with GPU worker on d
 See [`docs/openshift-cluster-setup-digital-twin.md`](docs/openshift-cluster-setup-digital-twin.md)
 
 <a id="tolas-harness-installation"></a>
-### Tola's Harness Installation
+### Augur Installation
 Configuration guide for Augur `.env` from cluster state and running pipelines with Tola's harness approach.
 
 See [`docs/tolas-harness-installation.md`](docs/tolas-harness-installation.md)
