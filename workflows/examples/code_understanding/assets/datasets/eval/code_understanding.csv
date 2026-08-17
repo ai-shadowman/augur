@@ -1,39 +1,32 @@
-question,one_shot_example,evaluation_metric_names,answer,multi_repo_only
-What are the packages in this codebase? Include their direct dependencies. Include fully qualified names.,"| Package | Version | Depends On | Dependency Type |
-|---------|---------|------------|-----------------|
-| com.example.service | 1.2.3 | com.example.core, org.springframework | internal, external |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What are the circular dependencies in the codebase? Identify all that you can find and rate their severity.,"| Cycle | Severity | Break Point Recommendation |
-|-------|----------|--------------------------|
-| moduleA → moduleB → moduleA | medium | Extract interface from moduleA |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What are the orphaned modules in the codebase (code with no inbound references)? Identify all that you can find.,"| Path | Safe to Remove | Justification |
-|------|---------------|---------------|
-| src/utils/legacy.py | Yes | No inbound references found in the codebase |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What are the known CVEs in the codebase?,"| CVE ID | Affected Component | CVSS Score | Severity | Exploit Available | Remediation |
-|--------|-------------------|------------|----------|-------------------|-------------|
-| CVE-2023-1234 | org.example:lib:1.0.0 | 7.5 | high | Yes | Upgrade to version 2.1.0 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-"Are there any deprecated cryptographic algorithms in use (e.g., MD5, SHA-1, TLS 1.0)?","| Algorithm | Location | Usage Context | Recommended Replacement |
-|-----------|----------|---------------|------------------------|
-| MD5 | src/auth/HashUtil.java:42 | Password hashing | SHA-256 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-Are there any outdated authentication or authorization mechanisms used in the code?,"| Mechanism | Location | Standards Compliant | Issues | Recommended Standard |
-|-----------|----------|---------------------|--------|---------------------|
-| Basic Auth | src/api/AuthFilter.java | No | Credentials transmitted without encryption | OAuth2 |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What are the modules in the codebase with the greatest level of complexity?,"| Module | File Path | Complexity Score | Reason |
-|--------|-----------|-----------------|--------|
-| PaymentService | src/payment/PaymentService.java | 8 | High cyclomatic complexity with 30+ conditional branches |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What are the modules in the codebase with the least level of complexity?,"| Module | File Path | Complexity Score | Reason |
-|--------|-----------|-----------------|--------|
-| StringUtil | src/utils/StringUtil.java | 1 | Single-purpose utility with no branching logic |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-"Are there any ""god classes"" in the codebase (classes with excessive responsibilities, >500 LOC or >20 methods)?","| Class | File Path | LOC | Methods | Responsibilities | Decomposition Suggestion |
-|-------|-----------|-----|---------|-----------------|------------------------|
-| OrderManager | src/OrderManager.java | 650 | 25 | 5 | Split into OrderCreator, OrderValidator, and OrderFulfiller |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What is the recommended migration order for the modules in this codebase from least risky to most risky?,"| # | Module | Risk Level | Risk Factors | Mitigation Actions |
-|---|--------|------------|--------------|-------------------|
-| 1 | com.example.utils | low | No dependents | Migrate independently |
-| 2 | com.example.core | high | Depended on by 12 modules | Migrate last; coordinate with dependents |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
-What is the recommended migration order for the git repositories in this index from least risky to most risky? Include all the git repos you can find and their repository links.,"| # | Repository | Risk Level | Risk Factors | Mitigation Actions |
-|---|------------|------------|--------------|-------------------|
-| 1 | https://github.com/org/repo-a | low | Standalone service with no cross-repo dependents | Migrate first |
-| 2 | https://github.com/org/repo-b | high | Shared library used by 5 other repositories | Migrate last |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
-What categories of applications are available in this index? Include all the git repos you can find and their repository links.,"| Category | Repositories | Description |
-|----------|-------------|-------------|
-| Backend Services | https://github.com/org/api, https://github.com/org/worker | REST APIs and background job processors |","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
+question,one_shot_example,evaluation_metric_names,answer,global_query
+What are the packages in this codebase? Include their direct dependencies. Include fully qualified names.,"- **Package**: com.example.service (v1.2.3)
+- **Depends On**: com.example.core (internal), org.springframework (external)","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the circular dependencies in the codebase? Identify all that you can find and rate their severity.,"- **Cycle**: moduleA → moduleB → moduleA
+- **Severity**: medium
+- **Break Point**: Extract interface from moduleA","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the orphaned modules in the codebase (code with no inbound references)? Identify all that you can find.,"- **Path**: src/utils/legacy.py
+- **Safe to Remove**: Yes — no inbound references found in the codebase","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the known CVEs in the codebase?,"- **CVE**: CVE-2023-1234
+- **Component**: org.example:lib:1.0.0
+- **CVSS**: 7.5 (high) — exploit available
+- **Remediation**: Upgrade to version 2.1.0","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+"Are there any deprecated cryptographic algorithms in use (e.g., MD5, SHA-1, TLS 1.0)?","- **Algorithm**: MD5 at src/auth/HashUtil.java:42
+- **Usage**: Password hashing
+- **Replacement**: SHA-256","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+Are there any outdated authentication or authorization mechanisms used in the code?,"- **Mechanism**: Basic Auth at src/api/AuthFilter.java
+- **Issue**: Credentials transmitted without encryption
+- **Recommended Standard**: OAuth2","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What are the modules in the codebase with the greatest level of complexity?,"- **Module**: PaymentService (src/payment/PaymentService.java)
+- **Complexity Score**: 8 — high cyclomatic complexity with 30+ conditional branches","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
+What are the modules in the codebase with the least level of complexity?,"- **Module**: StringUtil (src/utils/StringUtil.java)
+- **Complexity Score**: 1 — single-purpose utility with no branching logic","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
+"Are there any ""god classes"" in the codebase (classes with excessive responsibilities, >500 LOC or >20 methods)?","- **Class**: OrderManager (src/OrderManager.java) — 650 LOC, 25 methods, 5 responsibilities
+- **Suggestion**: Split into OrderCreator, OrderValidator, and OrderFulfiller","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+What is the recommended migration order for the modules in this codebase from least risky to most risky?,"- **#1** com.example.utils (low risk) — no dependents; migrate independently before touching core modules","answer_correctness, faithfulness, answer_relevance, token_count, latency",,TRUE
+"What are the external systems that the codebase integrates with, if any? Include databases, message queues, APIs and other infrastructure services if any. ","- **Component**: OrderService
+- **External System**: Oracle DB 19c (orders_db, on-prem)
+- **Integration Type**: Database
+- **Nature of Interaction**: Reads and writes order records via JDBC","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE
+Are there any code smells in the codebase? Identify all that you can find and rate their severity.,"- **Code Smell**: Long Method at src/order/OrderProcessor.java:45
+- **Severity**: high — processOrder() spans 250 lines with mixed concerns
+- **Recommendation**: Extract into smaller focused methods","answer_correctness, faithfulness, answer_relevance, token_count, latency",,FALSE

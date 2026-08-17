@@ -63,31 +63,37 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         return f"openai:/{judge_id}"
 
     def _ground_truth_answer(self, input: str, graphrag_source_dir: str = "") -> str:
-        """Generates a reference answer using GROUND_TRUTH_LLM via LiteLLM."""
+        """Generates a reference answer using GROUND_TRUTH_LLM via LiteLLM.
+
+        Returns "Could not process query" if the LLM call fails.
+        """
         from litellm import completion
 
         repo_context = build_repo_context(graphrag_source_dir)
 
-        response = completion(
-            model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
-            api_base=os.getenv("GROUND_TRUTH_LLM_API_BASE"),
-            api_key=os.getenv("GROUND_TRUTH_LLM_TOKEN"),
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software architect providing authoritative "
-                        "reference answers about code structure and dependencies."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"{repo_context}\n\n{input}" if repo_context else input,
-                },
-            ],
-        )
-
-        return response.choices[0].message.content
+        try:
+            response = completion(
+                model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
+                api_base=os.getenv("GROUND_TRUTH_LLM_API_BASE"),
+                api_key=os.getenv("GROUND_TRUTH_LLM_TOKEN"),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a senior software architect providing authoritative "
+                            "reference answers about code structure and dependencies."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"{repo_context}\n\n{input}" if repo_context else input,
+                    },
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"Ground truth LLM failed: {e}")
+            return "Could not process query"
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
@@ -205,11 +211,16 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             lambda t: self._ground_truth_answer(t, graphrag_source_dir)
         )
 
-        def _query(input_text):
+        def _query(row):
+
+            input_text = row["inputs"]
+
+            global_val = row.get("global_query", False)
+            use_global = bool(global_val) if pd.notna(global_val) else False
 
             try:
 
-                answer, context_data = asyncio.run(analyzer.query_with_llm(input_text, include_context=True))
+                answer, context_data = asyncio.run(analyzer.query_with_llm(input_text, include_context=True, use_global=use_global))
 
                 context_str = DependencyAnalyzer.extract_context_content(context_data)
 
@@ -223,7 +234,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             return pd.Series({"predictions": answer, "context": context_str})
 
-        results = df["inputs"].apply(_query)
+        results = df.apply(_query, axis=1)
 
         df["predictions"] = results["predictions"]
 
