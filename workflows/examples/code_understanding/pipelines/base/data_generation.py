@@ -206,7 +206,8 @@ def generate_code_comment(metadata: dict, file_path: str, config=False):
 
         lines.append(f"This file is located at {metadata.get('file_path')} "
                      f"from repository url {metadata.get('git_repo')}, "
-                     f"repository slug {metadata.get('git_slug')}")
+                     f"repository slug {metadata.get('git_slug')}, "
+                     f"multi_repo {str(metadata.get('multi_repo', False)).lower()}")
 
         if metadata.get('package'):
             lines.append(f"\n Package: {metadata['package']}")

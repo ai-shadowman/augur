@@ -1,5 +1,6 @@
 ---
 title: "### Detailed Migration Plan"
+skip_prompt: "multi_repo"
 ---
 Recommend a migration plan for the codebase.
 Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.

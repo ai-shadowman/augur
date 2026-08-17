@@ -1,5 +1,6 @@
 ---
 title: "### End-to-End RHEL Migration Plan (JSON)"
+skip_prompt: "multi_repo"
 ---
 {{system_prompt_rhel_admin}}
 

@@ -1,5 +1,6 @@
 ---
 title: "### Code Migration Plan (JSON)"
+skip_prompt: "multi_repo"
 ---
 {{system_prompt_data_extraction}}
 

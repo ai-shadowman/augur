@@ -307,10 +307,10 @@ class DependencyAnalyzer:
                         entities=self.entity_df,
                         communities=self.communities_df,
                         community_reports=self.community_reports_df,
-                        community_level=self.community_level,
+                        community_level=0 if self.multi_repo else self.community_level,
                         response_type=response_type,
                         query=question,
-                        dynamic_community_selection=len(self.communities_df) > _community_threshold,
+                        dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
                     )
 
                 else:
@@ -414,19 +414,26 @@ class DependencyAnalyzer:
                 additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
                 post_amble=self.POST_AMBLE,
+                multi_repo=self.multi_repo,
             )
 
-            bypass = prompt_path.startswith("analysis/migration-report/enhanced")
+            skip_prompt = meta.get('skip_prompt') == 'multi_repo' if self.multi_repo else meta.get('skip_prompt') == 'single_repo'
 
-            use_global = meta.get('search_mode') != 'local'
+            if not skip_prompt:
 
-            result = await self.query_with_llm(prompt, bypass_index=bypass, use_global=use_global)
+                bypass_index = prompt_path.startswith("analysis/migration-report/enhanced")
 
-            result = f"{meta.get('title')}\n\n{result}"
+                use_global = self.multi_repo or meta.get('search_mode') != 'local'
 
-            answers[i] = result
+                result = await self.query_with_llm(prompt,
+                                                   bypass_index=bypass_index,
+                                                   use_global=use_global)
 
-            report += f"{result}\n\n"
+                result = f"{meta.get('title')}\n\n{result}"
+
+                answers[i] = result
+
+                report += f"{result}\n\n"
 
         from utils.visualization_utils import log_interactive_dependency_graph
 

@@ -1,5 +1,6 @@
 ---
 title: "### Characterization Tests Generation Plan"
+skip_prompt: "multi_repo"
 ---
 {{system_prompt_characterization_tests}}
 
