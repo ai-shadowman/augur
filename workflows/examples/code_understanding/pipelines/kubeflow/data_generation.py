@@ -47,7 +47,7 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
-        detect_languages, generate_code_and_meta, inject_external_metadata, generate_git_slug
+        detect_languages, generate_code_and_meta, generate_git_slug
     )
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
@@ -59,11 +59,6 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
         try:
 
             languages = detect_languages(tmp_source)
-
-            git_slug = generate_git_slug(git_repo, git_branch)
-
-            inject_external_metadata(target_path=tmp_target, git_repo=git_repo,
-                                     git_slug=git_slug, language="")
 
             for language in languages:
 
