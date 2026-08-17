@@ -106,7 +106,7 @@ def get_repo_list_op() -> list:
 ##############################################################################
 
 @dsl.pipeline(name="data-generation-pipeline")
-def run_full_pipeline(
+def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
@@ -128,7 +128,7 @@ def run_full_pipeline(
 
 
 @dsl.pipeline(name="data-generation-multi-repo-pipeline")
-def run_full_pipeline_multi_repo_op():
+def _run_pipeline_multi_repo():
     """Generates code metadata for all repositories in the asset-loader repo list."""
 
     repo_list_task = get_repo_list_op()
@@ -136,8 +136,17 @@ def run_full_pipeline_multi_repo_op():
     with dsl.ParallelFor(items=repo_list_task.output,
                          parallelism=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
 
-        run_full_pipeline(
+        _run_pipeline(
             git_repo=repo.git_repo,
             git_branch=repo.git_branch,
             multi_repo=True,
         )
+
+
+##############################################################################
+# Pipeline stage
+##############################################################################
+
+class DataGenerationPipeline:
+    run = staticmethod(_run_pipeline)
+    run_multi_repo = staticmethod(_run_pipeline_multi_repo)

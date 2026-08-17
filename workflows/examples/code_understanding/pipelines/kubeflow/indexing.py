@@ -86,12 +86,12 @@ def get_eval_repo_list_op(git_repo: str, git_branch: str, multi_repo: bool) -> l
 def run_indexing_multi_repo_op(parent_target_path: str, graphrag_dir: Output[Dataset]):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
 
-    from pipelines.base.indexing import run_full_pipeline_multi_repo
+    from pipelines.base.indexing import IndexingPipeline
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact
     setup_logging()
 
     with write_to_output_artifact(graphrag_dir) as tmp_graphrag:
-        run_full_pipeline_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
+        IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
 
 
 ##############################################################################
@@ -99,7 +99,7 @@ def run_indexing_multi_repo_op(parent_target_path: str, graphrag_dir: Output[Dat
 ##############################################################################
 
 @dsl.pipeline(name="graphrag-indexing-pipeline")
-def run_full_pipeline(
+def _run_pipeline(
     codebase_dir: Input[Dataset],
     git_repo: str = "",
     git_branch: str = "",
@@ -129,3 +129,12 @@ def run_full_pipeline(
         )
 
     return task.outputs["graphrag_dir"]
+
+
+##############################################################################
+# Pipeline stage
+##############################################################################
+
+class IndexingPipeline:
+    run = staticmethod(_run_pipeline)
+    run_multi_repo = staticmethod(run_indexing_multi_repo_op)

@@ -277,8 +277,9 @@ def save_metadata_file(metadata: dict, target_path: str, relative_file_path: str
         f.write(json_utils.flatten_code_metadata(metadata, schema))
 
 
-def inject_external_metadata(target_path: str, git_repo: str, git_slug: str, language: str):
-    """Reads every file in CODE_METADATA_DIR and writes a flattened _metadata.txt for each via save_metadata_file."""
+def inject_external_metadata(target_path: str, git_repo: str, git_slug: str, language: str,
+                             source_path: str = ""):
+    """Reads every file in CODE_METADATA_DIR (resolved relative to source_path) and writes a flattened _metadata.txt for each via save_metadata_file."""
     import os
     import json
     import logging
@@ -287,7 +288,7 @@ def inject_external_metadata(target_path: str, git_repo: str, git_slug: str, lan
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-    code_metadata_dir = code_utils.CODE_METADATA_DIR
+    code_metadata_dir = os.path.join(source_path, code_utils.CODE_METADATA_DIR) if source_path else code_utils.CODE_METADATA_DIR
 
     if not os.path.isdir(code_metadata_dir):
         logging.info(f"No metadata directory found at '{code_metadata_dir}'. Skipping metadata injection.")
@@ -500,90 +501,105 @@ def detect_languages(source_path: str) -> list:
     return languages
 
 
-def run_full_pipeline(git_repo: str, git_branch: str, source_path: str, target_path: str,
-                      multi_repo: bool = False):
-    """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
-    import traceback, logging
-    import os
+##############################################################################
+# Pipeline stage
+##############################################################################
 
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+class DataGenerationPipeline:
 
-    git_slug = generate_git_slug(git_repo, git_branch)
+    def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
+            multi_repo: bool = False):
+        """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
+        import traceback, logging
+        import os
 
-    try:
+        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-        prepare_environment(source_path=source_path, target_path=target_path,
-                            git_repo=git_repo, git_branch=git_branch)
+        git_slug = generate_git_slug(git_repo, git_branch)
 
-        languages = detect_languages(source_path)
+        try:
 
-        inject_external_metadata(target_path=target_path,
-                        git_repo=git_repo,
-                        git_slug=git_slug,
-                        language="")
+            prepare_environment(source_path=source_path, target_path=target_path,
+                                git_repo=git_repo, git_branch=git_branch)
 
-        for language in languages:
+            languages = detect_languages(source_path)
 
-            for config in [False, True]:
+            inject_external_metadata(target_path=target_path,
+                            git_repo=git_repo,
+                            git_slug=git_slug,
+                            language="",
+                            source_path=source_path)
 
-                generate_code_and_meta(
-                    git_repo=git_repo, git_branch=git_branch,
-                    language=language, source_path=source_path, target_path=target_path,
-                    config=config, multi_repo=multi_repo,
-                )
+            for language in languages:
 
-        logging.info("Data generation pipeline complete.")
+                for config in [False, True]:
 
-        result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}
+                    generate_code_and_meta(
+                        git_repo=git_repo, git_branch=git_branch,
+                        language=language, source_path=source_path, target_path=target_path,
+                        config=config, multi_repo=multi_repo,
+                    )
 
-    except Exception as e:
+            logging.info("Data generation pipeline complete.")
 
-        logging.error("PIPELINE FAILED!")
+            result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}
 
-        error_message = traceback.format_exc()
+        except Exception as e:
 
-        logging.error(error_message)
+            logging.error("PIPELINE FAILED!")
 
-        reset_environment(source_path, target_path)
+            error_message = traceback.format_exc()
 
-        result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
+            logging.error(error_message)
 
-    return result
+            reset_environment(source_path, target_path)
+
+            result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
+
+        return result
+
+    def run_multi_repo(self, git_repos: list):
+        """Runs run for each repository in git_repos and returns a list of status dicts."""
+        import logging
+        from utils import code_utils
+        import os
+
+        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+        parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
+        parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
+
+        pipeline_results = []
+
+        for git_data in git_repos:
+
+            git_repo = git_data["git_repo"]
+
+            git_branch = git_data["git_branch"]
+
+            repo_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+            source_path = f"{parent_source_path}/{repo_slug}"
+
+            target_path = f"{parent_target_path}/{repo_slug}"
+
+            logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
+
+            result = self.run(git_repo=git_repo, git_branch=git_branch,
+                              source_path=source_path, target_path=target_path,
+                              multi_repo=True)
+
+            pipeline_results.append(result)
+
+        return pipeline_results
 
 
-def run_full_pipeline_multi_repo(git_repos: list):
-    """Runs run_full_pipeline for each repository in git_repos and returns a list of status dicts."""
-    import logging
-    from utils import code_utils
-    import os
+##############################################################################
+# Module-level aliases for external callers (notebooks)
+##############################################################################
 
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+def run_full_pipeline(*args, **kwargs):
+    return DataGenerationPipeline().run(*args, **kwargs)
 
-    parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
-    parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
-
-    pipeline_results = []
-
-    for git_data in git_repos:
-
-        git_repo = git_data["git_repo"]
-
-        git_branch = git_data["git_branch"]
-
-        repo_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
-
-        source_path = f"{parent_source_path}/{repo_slug}"
-
-        target_path = f"{parent_target_path}/{repo_slug}"
-
-        logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
-
-        result = run_full_pipeline(git_repo=git_repo, git_branch=git_branch,
-                                   source_path=source_path, target_path=target_path,
-                                   multi_repo=True)
-
-        pipeline_results.append(result)
-
-    return pipeline_results
-
-
+def run_full_pipeline_multi_repo(*args, **kwargs):
+    return DataGenerationPipeline().run_multi_repo(*args, **kwargs)
