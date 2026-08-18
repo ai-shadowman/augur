@@ -85,7 +85,6 @@ class AnalysisPipeline:
         from datetime import datetime
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
-        from utils.loader_utils import download_result_directory
         from pipelines.base.data_generation import generate_git_slug
         import os
 
@@ -96,23 +95,13 @@ class AnalysisPipeline:
         graphrag_source_path = "graph_rag_app/source"
 
         try:
-            download_result_directory(
+            DependencyAnalyzer.download_graphrag_directory(
+                download_dir=graphrag_source_path,
                 git_slug=git_slug,
-                download_dir=os.path.join(graphrag_source_path, "output"),
-                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
                 multi_repo=multi_repo,
-                asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
+                git_repo=git_repo,
             )
-        except Exception as e:
-            import traceback
-            msg = (
-                "Could not perform query: "
-                + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
-                + ". Maybe you need to generate it first?"
-            )
-            logging.error(msg)
-            print(msg, flush=True)
-            logging.debug(traceback.format_exc())
+        except Exception:
             return ""
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)

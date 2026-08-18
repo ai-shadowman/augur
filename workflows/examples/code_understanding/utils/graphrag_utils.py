@@ -352,6 +352,77 @@ class DependencyAnalyzer:
         return result
 
     @staticmethod
+    def download_graphrag_directory(download_dir: str, git_slug: str, multi_repo: bool, git_repo: str = ""):
+        """Downloads GraphRAG index artifacts and prepares settings.
+
+        Args:
+            download_dir: Root directory of the GraphRAG source. Artifacts are
+                downloaded into its output/ subdirectory and settings.yaml is written here.
+            git_slug: Repository slug used to scope the artifact lookup.
+            multi_repo: Whether the index spans multiple repositories.
+            git_repo: Repository URL, used in error messages.
+
+        Raises:
+            Exception: If the index artifacts cannot be downloaded.
+        """
+        import os
+        import traceback
+        from loaders.default_asset_loader import DefaultAssetLoader
+        from utils.loader_utils import download_result_directory
+
+        output_dir = os.path.join(download_dir, "output")
+
+        try:
+            download_result_directory(
+                git_slug=git_slug,
+                download_dir=output_dir,
+                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+                multi_repo=multi_repo,
+                asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
+            )
+        except Exception:
+            msg = (
+                "Could not perform query: "
+                + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
+                + ". Maybe you need to generate it first?"
+            )
+            logging.error(msg)
+            print(msg, flush=True)
+            logging.debug(traceback.format_exc())
+            raise
+
+        DependencyAnalyzer.prepare_settings(template_dir=output_dir, output_dir=download_dir)
+
+    @staticmethod
+    def prepare_settings(template_dir: str, output_dir: str):
+        """Downloads and processes the GraphRAG settings template, writing the result to output_dir.
+
+        Args:
+            template_dir: Directory to download settings.yaml.in into.
+            output_dir: Directory to write the processed settings.yaml into.
+        """
+        import string
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        DefaultAssetLoader().download("graphrag/settings.yaml.in", download_dir=template_dir)
+
+        template_path = f"{template_dir}/settings.yaml.in"
+        output_path = f"{output_dir}/settings.yaml"
+
+        logging.info("Preparing settings...")
+
+        try:
+
+            with open(template_path) as f:
+                content = string.Template(f.read())
+
+            with open(output_path, "w") as f:
+                f.write(content.substitute(os.environ))
+
+        except KeyError as keyerr:
+            raise ValueError(f"Required environment variable {keyerr} is not set")
+
+    @staticmethod
     def extract_context_content(context_data) -> str:
         """Extracts and concatenates the full_content column from GraphRAG context_data.
 
