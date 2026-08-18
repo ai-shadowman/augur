@@ -1,7 +1,12 @@
+import os
+import ssl
+
+if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
+    ssl._create_default_https_context = ssl._create_unverified_context
+
 import graphrag.api as api
 from graphrag.config.load_config import load_config
 from pathlib import Path
-import os
 import logging
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())

@@ -42,8 +42,8 @@ spec:
             - name: GIT_BRANCH
               value: "{{ .Values.adhocQuery.gitBranch }}"
             {{- end }}
-            - name: SSL_CERT_FILE
-              value: /etc/pki/ca-trust/source/anchors/odh-ca-bundle.crt
+            - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
+              value: "true"
           envFrom:
             - secretRef:
                 name: code-understanding-env
@@ -51,15 +51,7 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /opt/app-root/src
-            - name: trusted-ca
-              mountPath: /etc/pki/ca-trust/source/anchors/odh-ca-bundle.crt
-              subPath: ca-bundle.crt
-              readOnly: true
       volumes:
         - name: workspace
           emptyDir: {}
-        - name: trusted-ca
-          configMap:
-            name: odh-trusted-ca-bundle
-            optional: true
 {{- end }}
