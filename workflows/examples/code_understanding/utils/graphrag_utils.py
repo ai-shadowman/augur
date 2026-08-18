@@ -395,13 +395,6 @@ class DependencyAnalyzer:
                 asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
             )
         except Exception:
-            msg = (
-                "Could not perform query: "
-                + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
-                + ". Maybe you need to generate it first?"
-            )
-            logging.error(msg)
-            print(msg, flush=True)
             logging.debug(traceback.format_exc())
             raise
 

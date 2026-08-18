@@ -102,7 +102,13 @@ class AnalysisPipeline:
                 git_repo=git_repo,
             )
         except Exception:
-            return ""
+            msg = (
+                "Could not perform query: "
+                + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
+                + ". Maybe you need to generate it first?"
+            )
+            logging.error(msg)
+            return msg
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
 
