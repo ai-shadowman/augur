@@ -192,8 +192,9 @@ run-adhoc-query:
 	done && \
 	\
 	echo "==> Streaming query results..." && \
-	oc logs -f job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE && \
-	oc delete configmap adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE --ignore-not-found=true
+	oc logs -f job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE; LOG_EXIT=$$?; \
+	oc delete configmap adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE --ignore-not-found=true; \
+	exit $$LOG_EXIT
 
 run-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \

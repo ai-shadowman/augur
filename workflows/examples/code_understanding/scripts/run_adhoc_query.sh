@@ -37,6 +37,6 @@ result = run_adhoc_query_pipeline(
 )
 print(result)
 PYEOF
-)
+) || true
 
 echo "$RESULT"
