@@ -139,7 +139,7 @@ class AnalysisPipeline:
 
         )
 
-        print("\n---\n\n## ADHOC RESULTS\n", flush=True)
+        print("\n---\n\n# ##################ADHOC RESULTS##################\n", flush=True)
         return result
 
 

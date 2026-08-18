@@ -47,5 +47,5 @@ _spin "$MAKE_PID"
 wait "$MAKE_PID"
 STATUS=$?
 
-awk '/^## ADHOC RESULTS/{found=1} found{print}' "$TMPFILE"
+awk '/ADHOC RESULTS/{found=1} found{print}' "$TMPFILE"
 exit $STATUS

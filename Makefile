@@ -185,14 +185,9 @@ run-adhoc-query:
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
 		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
-	echo "==> Waiting for job to start..." && \
-	_t=0; until oc logs job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE >/dev/null 2>&1; do \
-	    sleep 2; _t=$$((_t+2)); \
-	    [ $$_t -ge 120 ] && { echo "Error: timed out waiting for adhoc-query job to start" >&2; exit 1; }; \
-	done && \
-	\
-	echo "==> Streaming query results..." && \
-	oc logs -f job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE; LOG_EXIT=$$?; \
+	echo "==> Waiting for query to complete..." && \
+	oc wait job/run-adhoc-query-$$JOB_ID --for=condition=complete --timeout=1800s -n $$KFP_NAMESPACE; LOG_EXIT=$$?; \
+	oc logs job/run-adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE; \
 	oc delete configmap adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE --ignore-not-found=true; \
 	exit $$LOG_EXIT
 
