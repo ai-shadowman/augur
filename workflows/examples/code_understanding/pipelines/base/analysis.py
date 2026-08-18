@@ -94,6 +94,8 @@ class AnalysisPipeline:
 
         graphrag_source_path = "graph_rag_app/source"
 
+        adhoc_results_header = "\n---\n\n# ##################ADHOC RESULTS##################\n"
+
         try:
             DependencyAnalyzer.download_graphrag_directory(
                 download_dir=graphrag_source_path,
@@ -108,6 +110,7 @@ class AnalysisPipeline:
                 + ". Maybe you need to generate it first?"
             )
             logging.error(msg)
+            print(adhoc_results_header, flush=True)
             return msg
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
@@ -150,7 +153,7 @@ class AnalysisPipeline:
 
         )
 
-        print("\n---\n\n# ##################ADHOC RESULTS##################\n", flush=True)
+        print(adhoc_results_header, flush=True)
         return f"{result}\n\n"
 
 
