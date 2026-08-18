@@ -106,7 +106,8 @@ class AnalysisPipeline:
         except Exception:
             msg = (
                 "Could not perform query: "
-                + ("no multi-repository index was found" if multi_repo else f"no index was found for git_repo='{git_repo}'")
+                + ("no multi-repository index was found" if multi_repo else
+                   f"no index was found (git_repo='{git_repo}')")
                 + ". Maybe you need to generate it first?"
             )
             logging.error(msg)
@@ -115,8 +116,10 @@ class AnalysisPipeline:
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
 
+        postamble = "Provide as much detail as possible. Include the git repo url(s) in the report."
+
         result = asyncio.run(analyzer.query_with_llm(
-            question,
+            question + postamble,
             retry_count=retry_count,
             use_global=use_global,
             response_type="Multiple Paragraphs, plain text, no markdown formatting",
