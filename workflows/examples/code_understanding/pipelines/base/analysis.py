@@ -106,7 +106,12 @@ class AnalysisPipeline:
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
 
-        result = asyncio.run(analyzer.query_with_llm(question, retry_count=retry_count, use_global=use_global))
+        result = asyncio.run(analyzer.query_with_llm(
+            question,
+            retry_count=retry_count,
+            use_global=use_global,
+            response_type="Multiple Paragraphs, plain text, no markdown formatting",
+        ))
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
@@ -140,7 +145,7 @@ class AnalysisPipeline:
         )
 
         print("\n---\n\n# ##################ADHOC RESULTS##################\n", flush=True)
-        return result
+        return f"{result}\n\n"
 
 
 ##############################################################################

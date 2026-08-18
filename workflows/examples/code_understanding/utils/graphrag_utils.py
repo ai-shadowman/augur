@@ -248,7 +248,8 @@ class DependencyAnalyzer:
                              retry_count: int = 3,
                              use_global: bool = True,
                              include_context: bool = False,
-                             bypass_index: bool = False):
+                             bypass_index: bool = False,
+                             response_type: str = "Multiple Paragraphs"):
         """
         Use LLM to answer a question.
 
@@ -296,8 +297,6 @@ class DependencyAnalyzer:
 
             else:
 
-                response_type = "Multiple Paragraphs"
-
                 if use_global:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
@@ -328,6 +327,7 @@ class DependencyAnalyzer:
                         query=question,
                     )
 
+
         except Exception as e:
 
             num_tries_left -= 1
@@ -340,7 +340,8 @@ class DependencyAnalyzer:
                                                  retry_count=num_tries_left,
                                                  use_global=use_global,
                                                  include_context=include_context,
-                                                 bypass_index=bypass_index)
+                                                 bypass_index=bypass_index,
+                                                 response_type=response_type)
 
             else:
 
