@@ -132,7 +132,11 @@ Respond ONLY with valid JSON in this exact format:
         git_slug: str = None,
         multi_repo: bool = False,
     ):
-        """Runs evaluate() for every row in a CSV dataset and uploads the results.
+        """Evaluates all rows in a CSV dataset using a DataFrame-based pipeline and uploads the results.
+
+        Builds inputs from question and one_shot_example columns, generates reference answers
+        via GROUND_TRUTH_LLM, queries GraphRAG for actual answers, then scores each row
+        using JUDGE_LLM.
 
         Args:
             graphrag_source_dir: Root directory of the GraphRAG index
@@ -142,47 +146,89 @@ Respond ONLY with valid JSON in this exact format:
             eval_dataset_file: Path to the evaluation CSV. Defaults to
                 assets/datasets/eval/code_understanding.csv.
             git_slug: Optional repository slug used to scope results and artifact paths.
+            multi_repo: Whether the index spans multiple repositories.
 
         Returns:
-            The updated pandas DataFrame with "answer" and metric columns populated.
+            The updated pandas DataFrame with "answer", "reference_answer", and metric columns populated.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
         df = pd.read_csv(eval_dataset_file)
-        df["answer"] = pd.Series(dtype=object, index=df.index)
 
-        for idx, row in df.iterrows():
+        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-            question = str(row["question"])
+        df["inputs"] = df.apply(
+            lambda row: (
+                f"{row['question']}\n\n**Example format:**\n{row['one_shot_example']}"
+                if pd.notna(row.get("one_shot_example")) and str(row.get("one_shot_example", "")).strip()
+                else str(row["question"])
+            ),
+            axis=1,
+        )
 
-            one_shot = row.get("one_shot_example", "")
+        repo_context = build_repo_context(graphrag_source_dir)
 
-            if pd.notna(one_shot) and str(one_shot).strip():
-
-                input_text = f"{question}\n\n**Example format:**\n{one_shot}"
-
-            else:
-
-                input_text = question
-
+        def _ground_truth(input_text):
             try:
-
-                result = self.evaluate(input_text, graphrag_source_dir, git_repo, git_branch,
-                                       git_slug=git_slug, multi_repo=multi_repo)
-
-                df.at[idx, "answer"] = result.get("actual_answer", "")
-
-                for key, value in result.items():
-
-                    if key not in ("question", "actual_answer"):
-
-                        df.at[idx, key] = value
-
+                return completion(
+                    **_llm_kwargs("GROUND_TRUTH"),
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior software architect providing authoritative "
+                                "reference answers about code structure and dependencies."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"{repo_context}\n\n{input_text}" if repo_context else input_text,
+                        },
+                    ],
+                ).choices[0].message.content
             except Exception as e:
+                logging.error(f"Ground truth LLM failed: {e}")
+                return "Could not process query"
 
-                logging.error(f"Error evaluating row {idx}: {e}")
+        df["targets"] = df["inputs"].apply(_ground_truth)
 
-                df.at[idx, "answer"] = f"ERROR: {e}"
+        def _query(row):
+            global_val = row.get("global_query", False)
+            use_global = bool(global_val) if pd.notna(global_val) else False
+            try:
+                return asyncio.run(analyzer.query_with_llm(row["inputs"], use_global=use_global))
+            except Exception as e:
+                logging.error(f"GraphRAG query failed: {e}")
+                return f"ERROR: {e}"
+
+        df["predictions"] = df.apply(_query, axis=1)
+
+        def _judge(row):
+            try:
+                response = completion(
+                    **_llm_kwargs("JUDGE"),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": self._JUDGE_PROMPT.format(
+                                question=row["inputs"],
+                                reference=row["targets"],
+                                actual=row["predictions"],
+                            ),
+                        }
+                    ],
+                )
+                return json.loads(response.choices[0].message.content.strip())
+            except Exception as e:
+                logging.error(f"Judge LLM failed: {e}")
+                return {}
+
+        metrics_df = pd.DataFrame(df.apply(_judge, axis=1).tolist(), index=df.index)
+        for col in metrics_df.columns:
+            df[col] = metrics_df[col]
+
+        df["answer"] = df["predictions"]
+        df["reference_answer"] = df["targets"]
 
         from utils import code_utils
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)

@@ -1,7 +1,20 @@
+import os
+import ssl
+
+if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
+    _orig_create_default_context = ssl.create_default_context
+
+    def _unverified_context(*args, **kwargs):
+        ctx = _orig_create_default_context(*args, **kwargs)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    ssl.create_default_context = _unverified_context
+
 import graphrag.api as api
 from graphrag.config.load_config import load_config
 from pathlib import Path
-import os
 import logging
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
@@ -248,7 +261,8 @@ class DependencyAnalyzer:
                              retry_count: int = 3,
                              use_global: bool = True,
                              include_context: bool = False,
-                             bypass_index: bool = False):
+                             bypass_index: bool = False,
+                             response_type: str = "Multiple Paragraphs"):
         """
         Use LLM to answer a question.
 
@@ -296,8 +310,6 @@ class DependencyAnalyzer:
 
             else:
 
-                response_type = "Multiple Paragraphs"
-
                 if use_global:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
@@ -307,10 +319,10 @@ class DependencyAnalyzer:
                         entities=self.entity_df,
                         communities=self.communities_df,
                         community_reports=self.community_reports_df,
-                        community_level=self.community_level,
+                        community_level=0 if self.multi_repo else self.community_level,
                         response_type=response_type,
                         query=question,
-                        dynamic_community_selection=len(self.communities_df) > _community_threshold,
+                        dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
                     )
 
                 else:
@@ -328,6 +340,7 @@ class DependencyAnalyzer:
                         query=question,
                     )
 
+
         except Exception as e:
 
             num_tries_left -= 1
@@ -340,7 +353,8 @@ class DependencyAnalyzer:
                                                  retry_count=num_tries_left,
                                                  use_global=use_global,
                                                  include_context=include_context,
-                                                 bypass_index=bypass_index)
+                                                 bypass_index=bypass_index,
+                                                 response_type=response_type)
 
             else:
 
@@ -350,6 +364,70 @@ class DependencyAnalyzer:
             return result, context_data
 
         return result
+
+    @staticmethod
+    def download_graphrag_directory(download_dir: str, git_slug: str, multi_repo: bool, git_repo: str = ""):
+        """Downloads GraphRAG index artifacts and prepares settings.
+
+        Args:
+            download_dir: Root directory of the GraphRAG source. Artifacts are
+                downloaded into its output/ subdirectory and settings.yaml is written here.
+            git_slug: Repository slug used to scope the artifact lookup.
+            multi_repo: Whether the index spans multiple repositories.
+            git_repo: Repository URL, used in error messages.
+
+        Raises:
+            Exception: If the index artifacts cannot be downloaded.
+        """
+        import os
+        import traceback
+        from loaders.default_asset_loader import DefaultAssetLoader
+        from utils.loader_utils import download_result_directory
+
+        output_dir = os.path.join(download_dir, "output")
+
+        try:
+            download_result_directory(
+                git_slug=git_slug,
+                download_dir=output_dir,
+                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+                multi_repo=multi_repo,
+                asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
+            )
+        except Exception:
+            logging.debug(traceback.format_exc())
+            raise
+
+        DependencyAnalyzer.prepare_settings(template_dir=output_dir, output_dir=download_dir)
+
+    @staticmethod
+    def prepare_settings(template_dir: str, output_dir: str):
+        """Downloads and processes the GraphRAG settings template, writing the result to output_dir.
+
+        Args:
+            template_dir: Directory to download settings.yaml.in into.
+            output_dir: Directory to write the processed settings.yaml into.
+        """
+        import string
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        DefaultAssetLoader().download("graphrag/settings.yaml.in", download_dir=template_dir)
+
+        template_path = f"{template_dir}/settings.yaml.in"
+        output_path = f"{output_dir}/settings.yaml"
+
+        logging.info("Preparing settings...")
+
+        try:
+
+            with open(template_path) as f:
+                content = string.Template(f.read())
+
+            with open(output_path, "w") as f:
+                f.write(content.substitute(os.environ))
+
+        except KeyError as keyerr:
+            raise ValueError(f"Required environment variable {keyerr} is not set")
 
     @staticmethod
     def extract_context_content(context_data) -> str:
@@ -414,19 +492,26 @@ class DependencyAnalyzer:
                 additional_context=self.RHEL_8to10_CONTEXT,
                 answers=answers,
                 post_amble=self.POST_AMBLE,
+                multi_repo=self.multi_repo,
             )
 
-            bypass = prompt_path.startswith("analysis/migration-report/enhanced")
+            skip_prompt = meta.get('skip_prompt') == 'multi_repo' if self.multi_repo else meta.get('skip_prompt') == 'single_repo'
 
-            use_global = meta.get('search_mode') != 'local'
+            if not skip_prompt:
 
-            result = await self.query_with_llm(prompt, bypass_index=bypass, use_global=use_global)
+                bypass_index = prompt_path.startswith("analysis/migration-report/enhanced")
 
-            result = f"{meta.get('title')}\n\n{result}"
+                use_global = self.multi_repo or meta.get('search_mode') != 'local'
 
-            answers[i] = result
+                result = await self.query_with_llm(prompt,
+                                                   bypass_index=bypass_index,
+                                                   use_global=use_global)
 
-            report += f"{result}\n\n"
+                result = f"{meta.get('title')}\n\n{result}"
+
+                answers[i] = result
+
+                report += f"{result}\n\n"
 
         from utils.visualization_utils import log_interactive_dependency_graph
 

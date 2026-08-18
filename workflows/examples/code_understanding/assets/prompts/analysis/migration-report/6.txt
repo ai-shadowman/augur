@@ -1,5 +1,6 @@
 ---
-title: "### Regression Risk Assessment"
+title: "### Integration Points"
+skip_prompt: "multi_repo"
 ---
-What areas of the codebase are most at risk of breaking during migration?
-For each risk area, describe what is likely to break, why, and what should be validated before and after migration.
+What external systems does this codebase integrate with?
+For each integration point, identify the component that connects to it, the type of integration (database, API, message queue, infrastructure service), and the nature of the interaction.

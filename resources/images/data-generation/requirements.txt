@@ -15,7 +15,7 @@ pysqlite3-binary==0.5.4
 langchain_nomic==0.1.4
 ruamel_yaml==0.18.14
 lance==1.2.1
-sdg-hub==0.6.1
+sdg-hub==0.7.2
 langchain-graph-retriever==0.8.0
 keybert==0.9.0
 rake-spacy==0.3.1

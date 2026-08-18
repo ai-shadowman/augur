@@ -46,23 +46,42 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                multi_repo: bool = False):
     """Detects languages and generates code metadata for all detected languages."""
 
-    from pipelines.base.data_generation import detect_languages, generate_code_and_meta
+    from pipelines.base.data_generation import (
+        detect_languages, generate_code_and_meta, generate_git_slug
+    )
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
+    import logging
+
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
 
-        languages = detect_languages(tmp_source)
+        try:
 
-        for language in languages:
+            languages = detect_languages(tmp_source)
 
-            for config in [False, True]:
+            for language in languages:
 
-                generate_code_and_meta(
-                    git_repo=git_repo, git_branch=git_branch,
-                    language=language, source_path=tmp_source, target_path=tmp_target,
-                    config=config, multi_repo=multi_repo,
+                for config in [False, True]:
+
+                    generate_code_and_meta(
+                        git_repo=git_repo, git_branch=git_branch,
+                        language=language, source_path=tmp_source, target_path=tmp_target,
+                        config=config, multi_repo=multi_repo,
+                    )
+
+        except Exception as e:
+
+            if type(e).__name__ == "RateLimitError" or "429" in str(e):
+                logging.error(
+                    f"Rate limit exceeded for repo '{git_repo}' (branch='{git_branch}'). "
+                    f"Consider reducing GRAPHRAG_PARALLEL_REPOS: {e}"
                 )
+                raise
+
+            logging.error(
+                f"Skipping repo '{git_repo}' (branch='{git_branch}'): {e}"
+            )
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -82,7 +101,7 @@ def get_repo_list_op() -> list:
 ##############################################################################
 
 @dsl.pipeline(name="data-generation-pipeline")
-def run_full_pipeline(
+def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
@@ -104,15 +123,25 @@ def run_full_pipeline(
 
 
 @dsl.pipeline(name="data-generation-multi-repo-pipeline")
-def run_full_pipeline_multi_repo_op():
+def _run_pipeline_multi_repo():
     """Generates code metadata for all repositories in the asset-loader repo list."""
 
     repo_list_task = get_repo_list_op()
 
-    with dsl.ParallelFor(items=repo_list_task.output) as repo:
+    with dsl.ParallelFor(items=repo_list_task.output,
+                         parallelism=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
 
-        run_full_pipeline(
+        _run_pipeline(
             git_repo=repo.git_repo,
             git_branch=repo.git_branch,
             multi_repo=True,
         )
+
+
+##############################################################################
+# Pipeline stage
+##############################################################################
+
+class DataGenerationPipeline:
+    run = staticmethod(_run_pipeline)
+    run_multi_repo = staticmethod(_run_pipeline_multi_repo)

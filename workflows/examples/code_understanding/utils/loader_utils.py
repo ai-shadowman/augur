@@ -44,19 +44,24 @@ def download_code_metadata_directories(git_repos: list, parent_target_path: str)
 
         repo_target_path = os.path.join(parent_target_path, repo_slug)
 
-        logging.info(f"Downloading generated data for {git_repo} ({repo_slug})...")
+        try:
 
-        download_result_directory(
+            logging.info(f"Downloading generated data for {git_repo} ({repo_slug})...")
 
-            git_slug=repo_slug,
+            download_result_directory(
 
-            download_dir=repo_target_path,
+                git_slug=repo_slug,
 
-            results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
+                download_dir=repo_target_path,
 
-            multi_repo=True,
+                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
 
-            asset_tags={"git_slug": repo_slug, "category": "data-generation",
-                        "code-metadata": True, "multi_repo": True},
+                multi_repo=True,
 
-        )
+                asset_tags={"git_slug": repo_slug, "category": "data-generation",
+                            "code-metadata": True, "multi_repo": True},
+
+            )
+        except Exception as e:
+
+            logging.error(f"Could not find generated data for {git_repo} ({repo_slug}); skipping...")

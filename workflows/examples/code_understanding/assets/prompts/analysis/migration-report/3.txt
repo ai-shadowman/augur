@@ -1,5 +1,7 @@
 ---
 title: "### Known Vulnerabilities"
+search_mode: "local"
+skip_prompt: "multi_repo"
 ---
 Are there any security vulnerabilities in the code or associated libraries?
 If runtime stack version information is available (languages, frameworks, databases, middleware), include those components in the assessment and check each version for known CVEs or end-of-life status.

@@ -5,7 +5,7 @@ Run directly to compile all pipelines to YAML:
     PIPELINE_COMPILE_ONLY=1 \\
     KFP_PIPELINE_OUTPUT_DIR=compiled_pipelines \\
     PYTHONPATH=<code_understanding_dir> \\
-    python3 pipelines/full_pipelines.py
+    python3 pipelines/orchestrator.py
 """
 import os
 import sys
@@ -13,27 +13,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from kfp import dsl
 from utils.kubeflow_utils import compile_all_and_exit
-from loaders.default_asset_loader import DefaultAssetLoader
 
 from utils.pipeline_utils import uses_kfp
 
 if uses_kfp():
 
-    from pipelines.kubeflow.data_generation import run_full_pipeline as data_generation_pipeline
-    from pipelines.kubeflow.indexing import run_full_pipeline as graphrag_indexing_pipeline
-    from pipelines.kubeflow.analysis import run_full_pipeline as graphrag_analysis_pipeline
+    from pipelines.kubeflow.data_generation import DataGenerationPipeline
+    from pipelines.kubeflow.indexing import IndexingPipeline
+    from pipelines.kubeflow.analysis import AnalysisPipeline
 
 else:
 
-    from pipelines.base.data_generation import run_full_pipeline as data_generation_pipeline
-    from pipelines.base.indexing import run_full_pipeline as graphrag_indexing_pipeline
-    from pipelines.base.analysis import run_full_pipeline as graphrag_analysis_pipeline
-
-##############################################################################
-# Multi-repo pipeline repo list
-##############################################################################
-
-_GIT_REPOS = DefaultAssetLoader().download("repos/repo_list.json")
+    from pipelines.base.data_generation import DataGenerationPipeline
+    from pipelines.base.indexing import IndexingPipeline
+    from pipelines.base.analysis import AnalysisPipeline
 
 ##############################################################################
 # Pipeline definitions
@@ -50,20 +43,20 @@ def single_repo_pipeline(
 
     if uses_kfp():
 
-        dg = data_generation_pipeline(
+        dg = DataGenerationPipeline.run(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
-        idx = graphrag_indexing_pipeline(
+        idx = IndexingPipeline.run(
             codebase_dir=dg.output,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
-        graphrag_analysis_pipeline(
+        AnalysisPipeline.run(
             graphrag_dir=idx.output,
             git_repo=git_repo,
             git_branch=git_branch,
@@ -72,17 +65,16 @@ def single_repo_pipeline(
 
     else:
 
-        from pipelines.base.data_generation import generate_git_slug as _gen_slug
+        from pipelines.base.data_generation import generate_git_slug
 
-        git_slug = _gen_slug(git_repo, git_branch)
-
+        git_slug = generate_git_slug(git_repo, git_branch)
         source_path = f"{parent_source_path}/{git_slug}"
         target_path = f"{parent_target_path}/{git_slug}"
         graphrag_source_path = os.path.join(
             os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), git_slug
         )
 
-        data_generation_pipeline(
+        DataGenerationPipeline().run(
             git_repo=git_repo,
             git_branch=git_branch,
             source_path=source_path,
@@ -90,7 +82,7 @@ def single_repo_pipeline(
             multi_repo=multi_repo,
         )
 
-        graphrag_indexing_pipeline(
+        IndexingPipeline().run(
             codebase_path=target_path,
             graphrag_source_path=graphrag_source_path,
             git_repo=git_repo,
@@ -98,7 +90,7 @@ def single_repo_pipeline(
             multi_repo=multi_repo,
         )
 
-        graphrag_analysis_pipeline(
+        AnalysisPipeline().run(
             graphrag_source_path=graphrag_source_path,
             git_repo=git_repo,
             git_branch=git_branch,
@@ -114,29 +106,27 @@ def multi_repo_pipeline(
 
     if uses_kfp():
 
-        from pipelines.kubeflow.data_generation import run_full_pipeline_multi_repo_op as run_data_generation_multi_repo_op
-        from pipelines.kubeflow.indexing import run_indexing_multi_repo_op
-        from pipelines.kubeflow.analysis import run_analysis_multi_repo_op
+        dg = DataGenerationPipeline.run_multi_repo()
 
-        dg = run_data_generation_multi_repo_op()
-
-        idx = run_indexing_multi_repo_op(
+        idx = IndexingPipeline.run_multi_repo(
             parent_target_path=parent_target_path,
         ).after(dg)
 
-        run_analysis_multi_repo_op().after(idx)
+        AnalysisPipeline.run_multi_repo(
+            graphrag_dir=idx.outputs["graphrag_dir"],
+        )
 
     else:
 
-        from pipelines.base.data_generation import run_full_pipeline_multi_repo
-        from pipelines.base.indexing import run_full_pipeline_multi_repo as run_indexing_multi_repo
-        from pipelines.base.analysis import run_full_pipeline_multi_repo as run_analysis_multi_repo
+        from loaders.default_asset_loader import DefaultAssetLoader
 
-        run_full_pipeline_multi_repo(_GIT_REPOS)
+        git_repos = DefaultAssetLoader().download("repos/repo_list.json")
 
-        run_indexing_multi_repo(parent_target_path=parent_target_path)
+        DataGenerationPipeline().run_multi_repo(git_repos)
 
-        run_analysis_multi_repo()
+        IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path)
+
+        AnalysisPipeline().run_multi_repo()
 
 
 ##############################################################################
@@ -146,9 +136,9 @@ def multi_repo_pipeline(
 if __name__ == "__main__":
 
     compile_all_and_exit({
-        "data_generation": data_generation_pipeline,
+        "data_generation": DataGenerationPipeline.run,
         "single_repo":     single_repo_pipeline,
         "multi_repo":      multi_repo_pipeline,
-        "indexing":        graphrag_indexing_pipeline,
-        "analysis":        graphrag_analysis_pipeline,
+        "indexing":        IndexingPipeline.run,
+        "analysis":        AnalysisPipeline.run,
     })

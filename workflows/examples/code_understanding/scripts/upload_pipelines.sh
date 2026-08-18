@@ -31,7 +31,7 @@ echo "Compiling all pipelines..."
 PIPELINE_COMPILE_ONLY=1 \
 KFP_PIPELINE_OUTPUT_DIR="$YAML_DIR" \
 PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \
-python3 "$CODE_UNDERSTANDING_DIR/pipelines/full_pipelines.py"
+python3 "$CODE_UNDERSTANDING_DIR/pipelines/orchestrator.py"
 echo "  Compiled YAMLs -> $YAML_DIR/"
 
 # ---------------------------------------------------------------------------
