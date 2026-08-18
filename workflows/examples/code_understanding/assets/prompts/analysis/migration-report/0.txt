@@ -7,7 +7,7 @@ Generate a Mermaid dependency diagram representing the key architectural compone
 Requirements:
 1. Use `graph TD` (top-down) layout
 {% if multi_repo %}
-2. Use a `subgraph` block for each repository. Inside each subgraph, include its most significant packages or modules as nodes. Keep the total node count across all subgraphs ≤ 20.
+2. Each node represents one git repository. Use the full git repository URL as the node label (e.g. `A["https://github.com/org/ticket-monster"]`). Add a directed edge A --> B only when repository A depends on or imports code from repository B. Keep the total node count ≤ 20.
 {% else %}
 2. Select entity types using this priority order: `package` → `module` → `class` → `function`.
    Step 1: Start with the highest level present in the data.
