@@ -98,7 +98,7 @@ class AnalysisPipeline:
         try:
             download_result_directory(
                 git_slug=git_slug,
-                download_dir=graphrag_source_path,
+                download_dir=os.path.join(graphrag_source_path, "output"),
                 results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
                 multi_repo=multi_repo,
                 asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
