@@ -120,6 +120,10 @@ class AnalysisPipeline:
 
         postamble = "Provide as much detail as possible. Include the git repo url(s) in the report."
 
+        if use_multi_repo:
+            postamble += (" Include ALL the git repo urls that you can find."
+                          " Group git repositories by their git repo url.")
+
         result = asyncio.run(analyzer.query_with_llm(
             question + postamble,
             retry_count=retry_count,
