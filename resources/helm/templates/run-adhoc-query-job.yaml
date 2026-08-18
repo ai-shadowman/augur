@@ -36,12 +36,10 @@ spec:
               value: "{{ .Values.adhocQuery.useGlobal }}"
             - name: RETRY_COUNT
               value: "{{ .Values.adhocQuery.retryCount }}"
-            {{- if .Values.adhocQuery.gitRepo }}
             - name: GIT_REPO
               value: "{{ .Values.adhocQuery.gitRepo }}"
             - name: GIT_BRANCH
               value: "{{ .Values.adhocQuery.gitBranch }}"
-            {{- end }}
             - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
               value: "true"
           envFrom:

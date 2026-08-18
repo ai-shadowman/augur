@@ -90,6 +90,8 @@ class AnalysisPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        use_multi_repo = multi_repo or not git_repo
+
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else ""
 
         graphrag_source_path = "graph_rag_app/source"
@@ -100,13 +102,13 @@ class AnalysisPipeline:
             DependencyAnalyzer.download_graphrag_directory(
                 download_dir=graphrag_source_path,
                 git_slug=git_slug,
-                multi_repo=multi_repo,
+                multi_repo=use_multi_repo,
                 git_repo=git_repo,
             )
         except Exception:
             msg = (
                 "Could not perform query: "
-                + ("no multi-repository index was found" if multi_repo else
+                + ("no multi-repository index was found" if use_multi_repo else
                    f"no index was found (git_repo='{git_repo}')")
                 + ". Maybe you need to generate it first?"
             )
@@ -114,7 +116,7 @@ class AnalysisPipeline:
             print(adhoc_results_header, flush=True)
             return msg
 
-        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=multi_repo)
+        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=use_multi_repo)
 
         postamble = "Provide as much detail as possible. Include the git repo url(s) in the report."
 
@@ -141,7 +143,7 @@ class AnalysisPipeline:
 
                     git_slug=git_slug,
 
-                    multi_repo=multi_repo,
+                    multi_repo=use_multi_repo,
 
                 )
 
@@ -152,7 +154,7 @@ class AnalysisPipeline:
             tags={"category": "analysis",
                   "adhoc_query": "true",
                   "git_slug": git_slug,
-                  "multi_repo": multi_repo},
+                  "multi_repo": use_multi_repo},
 
         )
 
