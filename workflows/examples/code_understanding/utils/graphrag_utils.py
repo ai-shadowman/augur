@@ -2,7 +2,15 @@ import os
 import ssl
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
-    ssl._create_default_https_context = ssl._create_unverified_context
+    _orig_create_default_context = ssl.create_default_context
+
+    def _unverified_context(*args, **kwargs):
+        ctx = _orig_create_default_context(*args, **kwargs)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    ssl.create_default_context = _unverified_context
 
 import graphrag.api as api
 from graphrag.config.load_config import load_config
