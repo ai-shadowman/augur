@@ -1,5 +1,11 @@
 ---
 title: "### Recommended Migration Order"
 ---
+{% if multi_repo %}
+What migration order would be recommended for the repos in this codebase to reduce risk?
+Include all the git urls you can find, including smaller repos. Treat repos with the same git url as a
+single repo. Assume each git url represents an independent repo unless a cross-dependency with other repos exists.
+{% else %}
 What migration order would be recommended when refactoring to reduce breaking changes?
 Provide a comprehensive order that includes as many classes, packages, and components as possible.
+{% endif %}

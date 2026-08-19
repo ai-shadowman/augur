@@ -2,13 +2,22 @@
 title: "### Dependency Graph"
 search_mode: "local"
 ---
+{% if multi_repo %}
+Generate a Mermaid dependency diagram that captures ALL git repositories present in the index.
+
+Requirements:
+1. Use `graph TD` (top-down) layout
+2. Each node represents one git repository.
+   Use the full git repository URL as the node label (e.g. `A["https://github.com/org/ticket-monster"]`).
+   Include EVERY git repository you find in the data as a node — even repositories that have no cross-repository dependencies.
+3. Add a directed edge A --> B only when repository A directly imports or depends on code from repository B. Omit edges entirely if no cross-repository dependencies exist.
+4. Keep the total node count ≤ 20.
+5. Output the Mermaid code block only — no explanation or preamble.
+{% else %}
 Generate a Mermaid dependency diagram representing the key architectural components and their relationships in this codebase.
 
 Requirements:
 1. Use `graph TD` (top-down) layout
-{% if multi_repo %}
-2. Each node represents one git repository. Use the full git repository URL as the node label (e.g. `A["https://github.com/org/ticket-monster"]`). Add a directed edge A --> B only when repository A depends on or imports code from repository B. Keep the total node count ≤ 20.
-{% else %}
 2. Select entity types using this priority order: `package` → `module` → `class` → `function`.
    Step 1: Start with the highest level present in the data.
    Step 2: Keep adding the next level down as long as the running total remains ≤ 20. Stop when adding the next level would exceed 20.
@@ -16,7 +25,6 @@ Requirements:
    CORRECT: 5 packages + 8 modules = 13 ≤ 20, but 13 + 9 classes = 22 > 20 → include only package and module entities
    CORRECT: 18 packages ≤ 20, but 18 + 5 modules = 23 > 20 → include only package entities
    WRONG: 5 packages + 8 modules + 6 classes = 19 ≤ 20 → include only package and module entities
-{% endif %}
 3. Include only import and dependency relationships
 4. Limit to the most architecturally significant components (maximum 20 nodes)
 5. Use short, readable node labels derived from the component names
@@ -30,3 +38,4 @@ Requirements:
             graph TD
                 ComponentA --> ComponentB
             ```
+{% endif %}
