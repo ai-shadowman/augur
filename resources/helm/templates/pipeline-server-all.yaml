@@ -37,10 +37,10 @@ spec:
     disableHealthCheck: false
     enableExternalRoute: false
     externalStorage:
-      host: minio-service.{{ .Values.namespace }}.svc.cluster.local
-      port: "9000"
-      scheme: http
-      secure: false
+      host: minio-api-{{ .Values.namespace }}.{{ .Values.clusterDomain }}
+      port: "443"
+      scheme: https
+      secure: true
       region: {{ .Values.minio.region }}
       bucket: {{ .Values.minio.bucket }}pipelines
       s3CredentialsSecret:
