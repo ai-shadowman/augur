@@ -1,11 +1,17 @@
 ---
 title: "### High-Level Summary"
 ---
+{% if multi_repo %}
+Provide a brief high-level summary of the repos in this codebase covering the
+purpose, architecture, and key dependencies of each repo.
+Include all the git urls you can find, including smaller repos. Treat repos with the
+same git url as a single repo.
+After all per-repository entries, add a short paragraph describing how the repositories relate to each other (omit if they are unrelated).
+If runtime stack version information is available (languages, frameworks,
+databases, middleware), include a brief "Runtime Stack" section for each repo.
+Omit if not available.
+{% else %}
 Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
-
-Follow these rules based on the number of repositories present:
-
-1. If there is ONE repository: write a single brief summary covering its purpose, architecture, and key dependencies.
-2. If there are MULTIPLE repositories: for each git repository present in the index, write exactly one summary entry. Begin each entry with the full git repository URL on its own line, then cover its purpose, architecture, and key dependencies. Write exactly one entry per distinct git URL — do not split a single git repository into multiple entries even if it contains several components or modules. After all per-repository entries, add a short paragraph describing how the repositories relate to each other (omit if they are unrelated).
-
 If runtime stack version information is available (languages, frameworks, databases, middleware), include a brief "Runtime Stack" section. Omit if not available.
+{% endif %}
+

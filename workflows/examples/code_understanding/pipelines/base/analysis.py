@@ -26,7 +26,7 @@ class AnalysisPipeline:
 
         report = asyncio.run(analyzer.generate_migration_report())
 
-        result_file = f"migration_report_{git_slug}.txt" if git_slug else "migration_report.txt"
+        result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
         DefaultAssetLoader().log_results(
 
