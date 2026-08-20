@@ -4,7 +4,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Metrics, Output
-from typing import NamedTuple
 from utils.kubeflow_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
@@ -106,7 +105,7 @@ def _run_pipeline(
     git_repo: str = "",
     git_branch: str = "",
     multi_repo: bool = False,
-) -> NamedTuple('Outputs', [('graphrag_dir', Dataset), ('eval_results', Dataset)]):
+) -> Dataset:
 
     task = graphrag_indexing_op(
         codebase_dir=codebase_dir,
@@ -115,14 +114,14 @@ def _run_pipeline(
         multi_repo=multi_repo,
     )
 
-    eval_task = graphrag_evaluation_op(
+    graphrag_evaluation_op(
         graphrag_dir=task.outputs["graphrag_dir"],
         git_repo=git_repo,
         git_branch=git_branch,
         multi_repo=multi_repo,
     )
 
-    return task.outputs["graphrag_dir"], eval_task.outputs["eval_results"]
+    return task.outputs["graphrag_dir"]
 
 
 ##############################################################################

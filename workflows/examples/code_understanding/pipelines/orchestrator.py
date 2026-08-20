@@ -57,7 +57,7 @@ def single_repo_pipeline(
         )
 
         AnalysisPipeline.run(
-            graphrag_dir=idx.outputs["graphrag_dir"],
+            graphrag_dir=idx.output,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
