@@ -47,51 +47,52 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def graphrag_evaluation_op(graphrag_dir: Input[Dataset],
+def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Dataset],
                             git_repo: str = "", git_branch: str = "",
                             multi_repo: bool = False):
 
-    from pipelines.base.indexing import evaluate_graphrag_index
+    import logging
+    import pandas as pd
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
+    if not git_repo or multi_repo:
+        logging.info("Skipping evaluation: git_repo not provided or multi_repo=True.")
+        pd.DataFrame().to_csv(eval_results.path, index=False)
+        return
+
+    from pipelines.base.indexing import evaluate_graphrag_index
+
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
 
-        evaluate_graphrag_index(
+        results = evaluate_graphrag_index(
             graphrag_source_path=tmp_graphrag,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
         )
 
-
-@inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def get_eval_repo_list_op(git_repo: str, git_branch: str, multi_repo: bool) -> list:
-    """Returns the list of repos to evaluate: all repos if multi_repo, otherwise just the given repo."""
-
-    from loaders.default_asset_loader import DefaultAssetLoader
-    from utils.kubeflow_utils import setup_logging
-    setup_logging()
-
-    if multi_repo:
-        return DefaultAssetLoader().download("repos/repo_list.json")
-    else:
-        return [{"git_repo": git_repo, "git_branch": git_branch}]
+    df = results if isinstance(results, pd.DataFrame) else pd.DataFrame(results or [])
+    df.to_csv(eval_results.path, index=False)
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def run_indexing_multi_repo_op(parent_target_path: str, graphrag_dir: Output[Dataset]):
+def run_indexing_multi_repo_op(parent_target_path: str,
+                                graphrag_dir: Output[Dataset],
+                                eval_results: Output[Dataset]):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
 
+    import pandas as pd
     from pipelines.base.indexing import IndexingPipeline
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact
     setup_logging()
 
     with write_to_output_artifact(graphrag_dir) as tmp_graphrag:
         IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
+
+    pd.DataFrame().to_csv(eval_results.path, index=False)
 
 
 ##############################################################################
@@ -113,20 +114,12 @@ def _run_pipeline(
         multi_repo=multi_repo,
     )
 
-    repo_list_task = get_eval_repo_list_op(
+    graphrag_evaluation_op(
+        graphrag_dir=task.outputs["graphrag_dir"],
         git_repo=git_repo,
         git_branch=git_branch,
         multi_repo=multi_repo,
     )
-
-    with dsl.ParallelFor(items=repo_list_task.output) as repo:
-
-        graphrag_evaluation_op(
-            graphrag_dir=task.outputs["graphrag_dir"],
-            git_repo=repo.git_repo,
-            git_branch=repo.git_branch,
-            multi_repo=multi_repo,
-        )
 
     return task.outputs["graphrag_dir"]
 

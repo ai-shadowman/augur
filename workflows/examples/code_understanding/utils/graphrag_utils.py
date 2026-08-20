@@ -24,6 +24,8 @@ import pandas as pd
 class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
 
+    GIT_URL_REGEX = r'https?://(?:github|gitlab)\.com/[\w\-\.]+/[\w\-\.]+'
+
     def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False):
 
         self.root_dir = root_dir
@@ -71,6 +73,17 @@ class DependencyAnalyzer:
             else 0
         )
 
+    def _extract_indexed_git_urls(self) -> frozenset:
+        """Return the set of unique git repository URLs found in REPOSITORY entity descriptions."""
+        import re
+
+        repo_mask = self.entity_df['type'].str.upper() == 'REPOSITORY'
+        return frozenset(
+            url.rstrip('.,;').lower()
+            for desc in self.entity_df.loc[repo_mask, 'description'].dropna()
+            for url in re.findall(self.GIT_URL_REGEX, str(desc), re.IGNORECASE)
+        )
+
     def _community_level_for_multi_repo(self) -> int:
         """Return the minimum community level at which all git repository URLs
         found in REPOSITORY entity descriptions are cumulatively covered by
@@ -79,14 +92,7 @@ class DependencyAnalyzer:
 
         logging.info("[multi_repo] Computing minimum community level to cover all repository URLs...")
 
-        pat = r'https?://(?:github|gitlab)\.com/[\w\-\.]+/[\w\-\.]+'
-
-        repo_mask = self.entity_df['type'].str.upper() == 'REPOSITORY'
-        all_git_urls = frozenset(
-            url.rstrip('.,;').lower()
-            for desc in self.entity_df.loc[repo_mask, 'description'].dropna()
-            for url in re.findall(pat, str(desc), re.IGNORECASE)
-        )
+        all_git_urls = self._extract_indexed_git_urls()
 
         if not all_git_urls or self.community_reports_df.empty:
             return 0
@@ -94,7 +100,8 @@ class DependencyAnalyzer:
         covered = set()
         for level, group in self.community_reports_df.sort_values('level').groupby('level'):
             content = group['full_content'].dropna().str.cat(sep=' ')
-            covered |= {url.rstrip('.,;').lower() for url in re.findall(pat, content, re.IGNORECASE)}
+            covered |= {url.rstrip('.,;').lower() for url in re.findall(self.GIT_URL_REGEX,
+                                                                        content, re.IGNORECASE)}
             if covered >= all_git_urls:
                 logging.info(f"[multi_repo] community_level={level} covers all {len(all_git_urls)} repo URLs")
                 return int(level)
@@ -103,7 +110,6 @@ class DependencyAnalyzer:
         logging.warning(f"[multi_repo] Not all repo URLs covered; using max community_level={max_level}. "
                         f"Missing: {all_git_urls - covered}")
         return max_level
-
 
     def _setup_prompts(self):
         """Pre-load static prompt assets."""
@@ -510,6 +516,11 @@ class DependencyAnalyzer:
 
         answers = ["N/A"] * len(prompts)
 
+        git_urls = self._extract_indexed_git_urls()
+
+        git_urls_list = "\n".join("- " + url for url in sorted(git_urls))
+        title = f"# Migration Report\n{git_urls_list}\n\n---\n"
+
         report = ""
 
         for i, prompt_path in enumerate(prompts):
@@ -551,7 +562,7 @@ class DependencyAnalyzer:
 
         log_interactive_dependency_graph(self)
 
-        return report
+        return f"{title}{report}"
     
     async def generate_report(self, service_name: str):
 

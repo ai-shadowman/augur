@@ -167,6 +167,23 @@ class AnalysisPipeline:
 
 
 ##############################################################################
+# Helpers
+##############################################################################
+
+def write_migration_report(graphrag_source_path: str, report_path: str,
+                           git_repo: str = "", git_branch: str = "",
+                           multi_repo: bool = False):
+    """Run the migration report and write the result to report_path."""
+    import os
+    migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
+                                              git_branch=git_branch, multi_repo=multi_repo)
+    if dirname := os.path.dirname(report_path):
+        os.makedirs(dirname, exist_ok=True)
+    with open(report_path, "w") as f:
+        f.write(migration_report)
+
+
+##############################################################################
 # Module-level aliases for external callers (notebooks, scripts)
 ##############################################################################
 

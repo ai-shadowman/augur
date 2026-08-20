@@ -58,6 +58,10 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
 
         try:
 
+            from pipelines.base.data_generation import load_external_data
+
+            external_metadata = load_external_data(tmp_source)
+
             languages = detect_languages(tmp_source)
 
             for language in languages:
@@ -68,6 +72,7 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
                         git_repo=git_repo, git_branch=git_branch,
                         language=language, source_path=tmp_source, target_path=tmp_target,
                         config=config, multi_repo=multi_repo,
+                        external_metadata=external_metadata,
                     )
 
         except Exception as e:
