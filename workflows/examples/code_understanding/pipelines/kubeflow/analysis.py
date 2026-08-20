@@ -26,34 +26,26 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
                                   git_repo: str = "", git_branch: str = "",
                                   multi_repo: bool = False):
 
-    import os
-    from pipelines.base.analysis import AnalysisPipeline
+    from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
-
-        migration_report = AnalysisPipeline().run(tmp_graphrag, git_repo=git_repo,
-                                                  git_branch=git_branch, multi_repo=multi_repo)
-
-    os.makedirs(os.path.dirname(report.path), exist_ok=True)
-
-    with open(report.path, "w") as f:
-
-        f.write(migration_report)
+        write_migration_report(tmp_graphrag, report.path, git_repo=git_repo,
+                               git_branch=git_branch, multi_repo=multi_repo)
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset]):
+def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
 
-    from pipelines.base.analysis import AnalysisPipeline
+    from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
-        AnalysisPipeline().run(graphrag_source_path=tmp_graphrag, multi_repo=True)
+        write_migration_report(tmp_graphrag, report.path, multi_repo=True)
 
 
 ##############################################################################
