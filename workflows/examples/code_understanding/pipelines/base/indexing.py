@@ -126,10 +126,13 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
     try:
 
-        DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path, git_repo, git_branch,
-                                                       multi_repo=multi_repo)
+        results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
+                                                                 git_repo, git_branch,
+                                                                 multi_repo=multi_repo)
 
         logging.info("GraphRAG index evaluation complete.")
+
+        return results
 
     except Exception as e:
 
