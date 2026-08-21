@@ -203,6 +203,8 @@ Respond ONLY with valid JSON in this exact format:
 
         df["predictions"] = df.apply(_query, axis=1)
 
+        _METRIC_KEYS = ["faithfulness", "relevancy", "completeness", "reasoning"]
+
         def _judge(row):
             try:
                 response = completion(
@@ -218,10 +220,17 @@ Respond ONLY with valid JSON in this exact format:
                         }
                     ],
                 )
-                return json.loads(response.choices[0].message.content.strip())
+                raw = response.choices[0].message.content.strip()
+                # Strip markdown code fences if present
+                if raw.startswith("```"):
+                    raw = "\n".join(
+                        line for line in raw.splitlines()
+                        if not line.strip().startswith("```")
+                    ).strip()
+                return json.loads(raw)
             except Exception as e:
                 logging.error(f"Judge LLM failed: {e}")
-                return {}
+                return {k: None for k in _METRIC_KEYS}
 
         metrics_df = pd.DataFrame(df.apply(_judge, axis=1).tolist(), index=df.index)
         for col in metrics_df.columns:

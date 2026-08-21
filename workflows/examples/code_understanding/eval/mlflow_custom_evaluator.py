@@ -280,6 +280,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
                     df[col] = per_row[col].values
 
+        else:
+
+            logging.info("MLflow eval_results_table not available; metric scores will not be captured.")
+
         df["answer"] = df["predictions"]
 
         df["reference_answer"] = df["targets"]
