@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -9,6 +8,7 @@ from litellm import completion
 
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
+from utils.json_utils import extract_json_from_string
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -103,7 +103,10 @@ Respond ONLY with valid JSON in this exact format:
                 ],
             )
 
-            metrics = json.loads(judge_response.choices[0].message.content.strip())
+            metrics = extract_json_from_string(judge_response.choices[0].message.content)
+            if not isinstance(metrics, dict):
+                logging.error("Judge LLM returned no valid JSON object")
+                metrics = {}
 
             metrics["question"] = input
             metrics["actual_answer"] = actual_answer
@@ -121,7 +124,7 @@ Respond ONLY with valid JSON in this exact format:
 
             logging.error(f"Error during basic evaluation: {e}")
 
-            raise e
+            return {}
 
     def evaluate_with_dataset(
         self,
@@ -220,14 +223,10 @@ Respond ONLY with valid JSON in this exact format:
                         }
                     ],
                 )
-                raw = response.choices[0].message.content.strip()
-                # Strip markdown code fences if present
-                if raw.startswith("```"):
-                    raw = "\n".join(
-                        line for line in raw.splitlines()
-                        if not line.strip().startswith("```")
-                    ).strip()
-                return json.loads(raw)
+                result = extract_json_from_string(response.choices[0].message.content)
+                if not isinstance(result, dict):
+                    logging.error("Judge LLM returned no valid JSON object")
+                return result if isinstance(result, dict) else {k: None for k in _METRIC_KEYS}
             except Exception as e:
                 logging.error(f"Judge LLM failed: {e}")
                 return {k: None for k in _METRIC_KEYS}
