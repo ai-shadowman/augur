@@ -10,6 +10,7 @@ from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similari
 
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
+from utils.eval_utils import load_evaluation_results
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -254,7 +255,11 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 client.create_experiment(name=self._EXPERIMENT_NAME)
             )
 
-        with mlflow.start_run(experiment_id=experiment.experiment_id, run_name=self._RUN_NAME):
+        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+        _eval_tags = {"category": "evaluation", "git_slug": slug}
+
+        with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
 
             results = mlflow.evaluate(
                 data=eval_data,
@@ -268,17 +273,17 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 ],
             )
 
+            eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
+
         logging.info(f"MLflow batch evaluation complete: {results.metrics}")
 
-        per_row = results.tables.get("eval_results_table")
+        if eval_results is not None:
 
-        if per_row is not None:
-
-            for col in per_row.columns:
+            for col in eval_results.columns:
 
                 if col not in ("inputs", "targets", "predictions"):
 
-                    df[col] = per_row[col].values
+                    df[col] = eval_results[col].values
 
         else:
 
@@ -287,8 +292,6 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         df["answer"] = df["predictions"]
 
         df["reference_answer"] = df["targets"]
-
-        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
@@ -309,7 +312,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         DefaultAssetLoader().log_results(
             result_file,
             artifact_path=artifact_path,
-            tags={"category": "evaluation", "git_slug": slug},
+            tags=_eval_tags,
         )
 
         return df
