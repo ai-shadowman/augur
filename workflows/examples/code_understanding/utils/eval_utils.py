@@ -10,10 +10,6 @@ def load_evaluation_results(results, experiment_name: str, eval_tags: dict) -> p
 
     """Returns per-row evaluation scores from an MLflow EvaluationResult.
 
-    First attempts to read the table from in-memory run data. If unavailable
-    (e.g. artifact upload failed due to SSL issues), falls back to downloading
-    eval_results_table.json from the artifact store via DefaultAssetLoader.
-
     Args:
         results: The MLflow EvaluationResult returned by mlflow.evaluate().
         experiment_name: The MLflow experiment name used for the evaluation run.
