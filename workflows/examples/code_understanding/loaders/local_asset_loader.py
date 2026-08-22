@@ -13,7 +13,7 @@ class LocalAssetLoader(AssetLoader):
 
         self.asset_base_uri = self._ASSETS_DIR
 
-    def download(self, asset_file_path: str, download_dir: str = None):
+    def download(self, asset_file_path: str, download_dir: str = None, **kwargs):
         """Downloads and returns the asset from the local assets directory.
 
         Args:
