@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
@@ -203,7 +204,8 @@ class IndexingPipeline:
         if graphrag_source_path is None:
             graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
-        git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
+        #git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
+        git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS")) or []
 
         download_code_metadata_directories(git_repos, parent_target_path)
 

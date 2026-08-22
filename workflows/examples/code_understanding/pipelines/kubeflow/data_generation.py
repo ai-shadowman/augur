@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from kfp import dsl
@@ -97,8 +98,10 @@ def get_repo_list_op() -> list:
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.kubeflow_utils import setup_logging
     setup_logging()
+    
+    return json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
 
-    return DefaultAssetLoader().download("repos/repo_list.json")
+    #return DefaultAssetLoader().download("repos/repo_list.json")
 
 
 ##############################################################################
