@@ -36,13 +36,14 @@ Reference Answer:
 Actual Answer:
 {actual}
 
-Rate the actual answer on each dimension from 0.0 to 1.0:
+Rate the actual answer on each dimension from 1 to 5:
 - faithfulness: Does the actual answer stay true to the reference without hallucinations?
-- relevancy: Does the actual answer address the question?
-- completeness: Does the actual answer cover the key points from the reference?
+- answer_relevance: Does the actual answer address the question?
+- answer_similarity: Does the actual answer cover the key points from the reference?
+- answer_correctness: Is the actual answer factually correct based on the reference?
 
 Respond ONLY with valid JSON in this exact format:
-{{"faithfulness": <score>, "relevancy": <score>, "completeness": <score>, "reasoning": "<brief explanation>"}}"""
+{{"faithfulness": <score>, "answer_relevance": <score>, "answer_similarity": <score>, "answer_correctness": <score>, "reasoning": "<brief explanation>"}}"""
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
@@ -59,7 +60,7 @@ Respond ONLY with valid JSON in this exact format:
             git_slug: Optional repository slug used to scope results.
 
         Returns:
-            dict with keys: faithfulness, relevancy, completeness, reasoning,
+            dict with keys: faithfulness, answer_relevance, answer_similarity, answer_correctness, reasoning,
             question, actual_answer, reference_answer.
         """
         try:
@@ -114,8 +115,9 @@ Respond ONLY with valid JSON in this exact format:
 
             logging.info(
                 f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
-                f"relevancy={metrics.get('relevancy')}, "
-                f"completeness={metrics.get('completeness')}"
+                f"answer_relevance={metrics.get('answer_relevance')}, "
+                f"answer_similarity={metrics.get('answer_similarity')}, "
+                f"answer_correctness={metrics.get('answer_correctness')}"
             )
 
             return metrics
@@ -206,7 +208,7 @@ Respond ONLY with valid JSON in this exact format:
 
         df["predictions"] = df.apply(_query, axis=1)
 
-        _METRIC_KEYS = ["faithfulness", "relevancy", "completeness", "reasoning"]
+        _METRIC_KEYS = ["faithfulness", "answer_relevance", "answer_similarity", "answer_correctness", "reasoning"]
 
         def _judge(row):
             try:
