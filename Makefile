@@ -5,7 +5,6 @@ GIT_REPO_BRANCH     := $(shell git branch --show-current 2>/dev/null)
 CLUSTER_DOMAIN      := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 PIPELINE_GIT_REPO   ?=
 PIPELINE_GIT_BRANCH ?=
-PIPELINE_GIT_REPO_LIST ?= workflows/examples/code_understanding/assets/repos/repo_list.json
 
 install:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -104,7 +103,8 @@ apply-secrets:
 	echo "==> Recreating secret code-understanding-env..." && \
 	oc delete secret code-understanding-env -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
-	oc set data secret/code-understanding-env --from-literal=GIT_REPO_LIST_CONTENTS=$(cat $GIT_REPO_LIST) -n $$KFP_NAMESPACE && \
+	[ -n "$(GIT_REPO_LIST)" ] && [ -f "$(GIT_REPO_LIST)" ] && oc set data secret/code-understanding-env -n $$KFP_NAMESPACE \
+                --from-file=GIT_REPO_LIST_CONTENTS="$(PIPELINE_GIT_REPO_LIST)" || true && \
 	oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge \
 		-p "{\"stringData\":{\"MLFLOW_WORKSPACE\":\"$$KFP_NAMESPACE\"}}"
