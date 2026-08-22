@@ -18,9 +18,9 @@ class DefaultAssetLoader(AssetLoader):
 
             self._loader = LocalAssetLoader()
 
-    def download(self, asset_file_path: str, download_dir: str = None):
+    def download(self, asset_file_path: str, download_dir: str = None, **kwargs):
 
-        return self._loader.download(asset_file_path, download_dir)
+        return self._loader.download(asset_file_path, download_dir, **kwargs)
 
     def download_dir(self, asset_dir_path: str, download_dir: str, **kwargs):
 
