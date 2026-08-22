@@ -154,7 +154,7 @@ Respond ONLY with valid JSON in this exact format:
             multi_repo: Whether the index spans multiple repositories.
 
         Returns:
-            The updated pandas DataFrame with "answer", "reference_answer", and metric columns populated.
+            The updated pandas DataFrame with "answer", "reference", and metric columns populated.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
@@ -238,7 +238,8 @@ Respond ONLY with valid JSON in this exact format:
             df[col] = metrics_df[col]
 
         df["answer"] = df["predictions"]
-        df["reference_answer"] = df["targets"]
+        df = df.rename(columns={"targets": "reference"})
+        df = df.drop(columns=["inputs", "reference_answer"], errors="ignore")
 
         from utils import code_utils
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)

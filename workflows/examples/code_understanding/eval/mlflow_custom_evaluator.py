@@ -194,7 +194,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             multi_repo: Whether the index spans multiple repositories.
 
         Returns:
-            The updated pandas DataFrame with "answer" and metric columns populated.
+            The updated pandas DataFrame with "answer", "reference", and metric columns populated.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
@@ -291,7 +291,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         df["answer"] = df["predictions"]
 
-        df["reference_answer"] = df["targets"]
+        df = df.rename(columns={"targets": "reference"})
+
+        df = df.drop(columns=["inputs", "reference_answer"], errors="ignore")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
