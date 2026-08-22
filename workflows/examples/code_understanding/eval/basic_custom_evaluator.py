@@ -239,7 +239,7 @@ Respond ONLY with valid JSON in this exact format:
 
         df["answer"] = df["predictions"]
         df = df.rename(columns={"targets": "reference"})
-        df = df.drop(columns=["inputs", "reference_answer"], errors="ignore")
+        df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
 
         from utils import code_utils
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)

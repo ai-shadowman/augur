@@ -293,7 +293,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         df = df.rename(columns={"targets": "reference"})
 
-        df = df.drop(columns=["inputs", "reference_answer"], errors="ignore")
+        df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
