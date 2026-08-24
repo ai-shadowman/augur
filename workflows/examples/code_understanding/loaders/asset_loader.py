@@ -40,7 +40,7 @@ class AssetLoader(ABC):
         return artifact_path
 
     @abstractmethod
-    def download(self, asset_file_path: str, download_dir: str = None):
+    def download(self, asset_file_path: str, download_dir: str = None, **kwargs):
         """Downloads and returns the asset, optionally saving it to a directory.
 
         Args:

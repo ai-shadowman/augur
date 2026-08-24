@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -9,6 +8,7 @@ from litellm import completion
 
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
+from utils.json_utils import extract_json_from_string
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -36,13 +36,14 @@ Reference Answer:
 Actual Answer:
 {actual}
 
-Rate the actual answer on each dimension from 0.0 to 1.0:
+Rate the actual answer on each dimension from 1 to 5:
 - faithfulness: Does the actual answer stay true to the reference without hallucinations?
-- relevancy: Does the actual answer address the question?
-- completeness: Does the actual answer cover the key points from the reference?
+- answer_relevance: Does the actual answer address the question?
+- answer_similarity: Does the actual answer cover the key points from the reference?
+- answer_correctness: Is the actual answer factually correct based on the reference?
 
 Respond ONLY with valid JSON in this exact format:
-{{"faithfulness": <score>, "relevancy": <score>, "completeness": <score>, "reasoning": "<brief explanation>"}}"""
+{{"faithfulness": <score>, "answer_relevance": <score>, "answer_similarity": <score>, "answer_correctness": <score>, "reasoning": "<brief explanation>"}}"""
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
@@ -59,7 +60,7 @@ Respond ONLY with valid JSON in this exact format:
             git_slug: Optional repository slug used to scope results.
 
         Returns:
-            dict with keys: faithfulness, relevancy, completeness, reasoning,
+            dict with keys: faithfulness, answer_relevance, answer_similarity, answer_correctness, reasoning,
             question, actual_answer, reference_answer.
         """
         try:
@@ -103,7 +104,10 @@ Respond ONLY with valid JSON in this exact format:
                 ],
             )
 
-            metrics = json.loads(judge_response.choices[0].message.content.strip())
+            metrics = extract_json_from_string(judge_response.choices[0].message.content)
+            if not isinstance(metrics, dict):
+                logging.error("Judge LLM returned no valid JSON object")
+                metrics = {}
 
             metrics["question"] = input
             metrics["actual_answer"] = actual_answer
@@ -111,8 +115,9 @@ Respond ONLY with valid JSON in this exact format:
 
             logging.info(
                 f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
-                f"relevancy={metrics.get('relevancy')}, "
-                f"completeness={metrics.get('completeness')}"
+                f"answer_relevance={metrics.get('answer_relevance')}, "
+                f"answer_similarity={metrics.get('answer_similarity')}, "
+                f"answer_correctness={metrics.get('answer_correctness')}"
             )
 
             return metrics
@@ -121,7 +126,7 @@ Respond ONLY with valid JSON in this exact format:
 
             logging.error(f"Error during basic evaluation: {e}")
 
-            raise e
+            return {}
 
     def evaluate_with_dataset(
         self,
@@ -149,7 +154,7 @@ Respond ONLY with valid JSON in this exact format:
             multi_repo: Whether the index spans multiple repositories.
 
         Returns:
-            The updated pandas DataFrame with "answer", "reference_answer", and metric columns populated.
+            The updated pandas DataFrame with "answer", "reference", and metric columns populated.
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
@@ -203,6 +208,8 @@ Respond ONLY with valid JSON in this exact format:
 
         df["predictions"] = df.apply(_query, axis=1)
 
+        _METRIC_KEYS = ["faithfulness", "answer_relevance", "answer_similarity", "answer_correctness", "reasoning"]
+
         def _judge(row):
             try:
                 response = completion(
@@ -218,17 +225,21 @@ Respond ONLY with valid JSON in this exact format:
                         }
                     ],
                 )
-                return json.loads(response.choices[0].message.content.strip())
+                result = extract_json_from_string(response.choices[0].message.content)
+                if not isinstance(result, dict):
+                    logging.error("Judge LLM returned no valid JSON object")
+                return result if isinstance(result, dict) else {k: None for k in _METRIC_KEYS}
             except Exception as e:
                 logging.error(f"Judge LLM failed: {e}")
-                return {}
+                return {k: None for k in _METRIC_KEYS}
 
         metrics_df = pd.DataFrame(df.apply(_judge, axis=1).tolist(), index=df.index)
         for col in metrics_df.columns:
             df[col] = metrics_df[col]
 
         df["answer"] = df["predictions"]
-        df["reference_answer"] = df["targets"]
+        df = df.rename(columns={"targets": "reference"})
+        df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
 
         from utils import code_utils
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)

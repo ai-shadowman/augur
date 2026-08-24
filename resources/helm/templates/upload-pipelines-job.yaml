@@ -15,19 +15,11 @@ spec:
       serviceAccountName: pipeline-upload-job
       containers:
         - name: upload-pipelines
-          image: registry.access.redhat.com/ubi9/python-311
+          image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
           command:
             - sh
             - -c
-            - |
-              pip install --quiet 'kfp>=2.0.0,<3.0.0' kfp-kubernetes mlflow jupyter
-              git config --global --add safe.directory /opt/app-root/src
-              git config --global credential.helper '!f() { echo "username=${GIT_USERNAME}"; echo "password=${GIT_TOKEN}"; }; f'
-              git -C /opt/app-root/src init
-              git -C /opt/app-root/src remote add origin "{{ .Values.repoUrl }}" 2>/dev/null || true
-              git -C /opt/app-root/src fetch origin "{{ .Values.repoRef }}"
-              git -C /opt/app-root/src reset --hard FETCH_HEAD
-              workflows/examples/code_understanding/scripts/upload_pipelines.sh
+            - workflows/examples/code_understanding/scripts/upload_pipelines.sh
           workingDir: /opt/app-root/src
           env:
             - name: KFP_HOST
@@ -46,9 +38,3 @@ spec:
             - secretRef:
                 name: code-understanding-env
                 optional: true
-          volumeMounts:
-            - name: workspace
-              mountPath: /opt/app-root/src
-      volumes:
-        - name: workspace
-          emptyDir: {}
