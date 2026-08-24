@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/python-311
+FROM ${BASE_IMAGE}
+
+USER 1001
+WORKDIR /opt/app-root/src
+
+COPY --chown=1001:0 resources/images/pipeline-tools/requirements.txt ./requirements.txt
+COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
+
+RUN pip install --no-cache-dir --upgrade pip \
+	&& pip install --no-cache-dir -r requirements.txt \
+	&& pip install --no-cache-dir ./workflows/examples/code_understanding
