@@ -4,7 +4,6 @@ GIT_REPO_URL        := $(shell git remote get-url origin 2>/dev/null | sed 's|^g
 GIT_REPO_BRANCH     := $(shell git branch --show-current 2>/dev/null)
 CLUSTER_DOMAIN      := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 PIPELINE_GIT_REPO   ?=
-
 PIPELINE_GIT_BRANCH ?=
 
 install:
@@ -104,6 +103,8 @@ apply-secrets:
 	echo "==> Recreating secret code-understanding-env..." && \
 	oc delete secret code-understanding-env -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
+	[ -n "$$GIT_REPO_LIST" ] && [ -f "$$GIT_REPO_LIST" ] && oc set data secret/code-understanding-env -n $$KFP_NAMESPACE \
+                --from-file=GIT_REPO_LIST_CONTENTS="$$GIT_REPO_LIST" || true && \
 	oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge \
 		-p "{\"stringData\":{\"MLFLOW_WORKSPACE\":\"$$KFP_NAMESPACE\"}}"
@@ -198,6 +199,8 @@ run-pipelines:
 		--type=merge -p '{"stringData":{"GIT_REPO":"$(PIPELINE_GIT_REPO)"}}' || true && \
 	[ -n "$(PIPELINE_GIT_BRANCH)" ] && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge -p '{"stringData":{"GIT_BRANCH":"$(PIPELINE_GIT_BRANCH)"}}' || true && \
+	[ -n "$(PIPELINE_GIT_REPO_LIST)" ] && [ -f "$(PIPELINE_GIT_REPO_LIST)" ] && oc set data secret/code-understanding-env -n $$KFP_NAMESPACE \
+		--from-file=GIT_REPO_LIST_CONTENTS="$(PIPELINE_GIT_REPO_LIST)" || true && \
 	\
 	echo "==> Submitting run-pipelines job..." && \
 	oc delete job run-pipelines -n $$KFP_NAMESPACE --ignore-not-found=true && \
