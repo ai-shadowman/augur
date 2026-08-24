@@ -36,6 +36,9 @@ install:
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		--set clusterDomain="$(CLUSTER_DOMAIN)"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -113,6 +116,7 @@ build-images:
 	DATAGEN_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_DATA_GENERATION_BASE_IMAGE_NAME:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
 	INDEX_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_INDEXING_BASE_IMAGE_NAME:$$KFP_INDEXING_BASE_IMAGE_TAG" && \
 	ANALYSIS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_ANALYSIS_BASE_IMAGE_NAME:$$KFP_ANALYSIS_BASE_IMAGE_TAG" && \
+	TOOLS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_PIPELINE_TOOLS_IMAGE_NAME:$$KFP_PIPELINE_TOOLS_IMAGE_TAG" && \
 	\
 	echo "==> Building data generation image..." && \
 	podman build -t "$$DATAGEN_IMG" resources/images/data-generation && \
@@ -127,7 +131,14 @@ build-images:
 	echo "==> Building analysis image..." && \
 	podman build -t "$$ANALYSIS_IMG" resources/images/data-indexing && \
 	echo "==> Pushing analysis image..." && \
-	podman push "$$ANALYSIS_IMG"
+	podman push "$$ANALYSIS_IMG" && \
+	\
+	echo "==> Building pipeline-tools image..." && \
+	podman build -f resources/images/pipeline-tools/Containerfile \
+		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
+		-t "$$TOOLS_IMG" . && \
+	echo "==> Pushing pipeline-tools image..." && \
+	podman push "$$TOOLS_IMG"
 
 upload-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -143,6 +154,9 @@ upload-pipelines:
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 upload-mlflow-assets:
@@ -157,6 +171,9 @@ upload-mlflow-assets:
 		--set requester="$$(oc whoami)" \
 		--set repoUrl="$(GIT_REPO_URL)" \
 		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 run-adhoc-query:
@@ -209,6 +226,9 @@ run-pipelines:
 		--set-string runPipelines.args="$${ARGS:---single-repo}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
 		--set-string runPipelines.graphragSourcePath="$${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		-s templates/run-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
 	echo "==> Waiting for run-pipelines container to start..." && \

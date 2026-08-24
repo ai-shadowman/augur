@@ -18,7 +18,28 @@ KFP_HOST="${KFP_HOST:-https://ds-pipeline-dspa.${KFP_NAMESPACE}.svc.cluster.loca
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_UNDERSTANDING_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+
+repo_root() {
+    local git_root dir
+    git_root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || true
+    if [[ -n "${git_root:-}" ]]; then
+        printf '%s\n' "$git_root"
+        return
+    fi
+    dir="$SCRIPT_DIR"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -d "$dir/workflows/examples/code_understanding" ]]; then
+            printf '%s\n' "$dir"
+            return
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo "Error: could not find repository root from $SCRIPT_DIR" >&2
+    exit 1
+}
+
+REPO_ROOT="$(repo_root)"
+
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 YAML_DIR="$REPO_ROOT/compiled_pipelines/${TIMESTAMP}_yamls"
 
