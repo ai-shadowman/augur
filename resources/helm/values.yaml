@@ -12,6 +12,7 @@ minio:
   rootPassword: ""
   bucket: demo
   region: us-east-1
+  image: "quay.io/minio/minio:latest"
 
 dataGeneration:
   image:
