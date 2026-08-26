@@ -9,6 +9,7 @@ Run directly to compile all pipelines to YAML:
 """
 import os
 import sys
+import json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from kfp import dsl
@@ -120,7 +121,8 @@ def multi_repo_pipeline(
 
         from loaders.default_asset_loader import DefaultAssetLoader
 
-        git_repos = DefaultAssetLoader().download("repos/repo_list.json")
+        #git_repos = DefaultAssetLoader().download("repos/repo_list.json")
+        git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
 
         DataGenerationPipeline().run_multi_repo(git_repos)
 
