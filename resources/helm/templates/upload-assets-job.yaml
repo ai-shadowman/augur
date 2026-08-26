@@ -15,7 +15,7 @@ spec:
       serviceAccountName: pipeline-upload-job
       containers:
         - name: upload-assets
-          image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
+          image: "{{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
           command:
             - python
             - -c
