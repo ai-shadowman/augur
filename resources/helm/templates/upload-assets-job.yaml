@@ -17,10 +17,9 @@ spec:
         - name: upload-assets
           image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
           command:
-            - sh
+            - python
             - -c
             - |
-              python - <<'PYEOF'
               import sys, os, mlflow
               sys.path.insert(0, '/opt/app-root/src/workflows/examples/code_understanding')
               from loaders.mlflow_asset_loader import MlFlowAssetLoader
@@ -28,7 +27,6 @@ spec:
               mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.redhat-ods-applications.svc:8443"))
 
               MlFlowAssetLoader().upload_all_assets("workflows/examples/code_understanding/assets")
-              PYEOF
           workingDir: /opt/app-root/src
           env:
             - name: MLFLOW_WORKSPACE

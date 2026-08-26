@@ -40,7 +40,8 @@ install:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
-		--set clusterDomain="$(CLUSTER_DOMAIN)"
+		--set clusterDomain="$(CLUSTER_DOMAIN)" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
