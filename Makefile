@@ -27,6 +27,7 @@ install:
 		--set repoRef="$(GIT_REPO_BRANCH)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
+		--set minio.image="$$MINIO_IMAGE" \
 		--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 		--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
