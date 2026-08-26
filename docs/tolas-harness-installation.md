@@ -33,6 +33,18 @@ cd augur/
 cp .env.template .env
 ```
 
+### Set TLS verification
+
+Pipeline jobs skip TLS verification unless you turn it on. See [TLS Certificate Injection](tls-cert-injection.md) for how the CA bundle is mounted.
+
+```bash
+# Skip verification (default)
+sed -i "s/ENABLE_TLS_VERIFICATION=.*/ENABLE_TLS_VERIFICATION=false/" .env
+
+# Trust the OpenShift AI odh-trusted-ca-bundle
+# sed -i "s/ENABLE_TLS_VERIFICATION=.*/ENABLE_TLS_VERIFICATION=true/" .env
+```
+
 ### Set Git credentials
 
 ```bash
