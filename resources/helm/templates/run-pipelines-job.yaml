@@ -28,8 +28,36 @@ spec:
               value: "{{ .Values.runPipelines.targetPath }}"
             - name: KFP_DATA_INDEXING_OUTPUT_PATH
               value: "{{ .Values.runPipelines.graphragSourcePath }}"
+            {{- if not .Values.tls.enableVerification }}
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
+            {{- else }}
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: SSL_CERT_FILE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: AWS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: MLFLOW_TRACKING_SERVER_CERT_PATH
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            {{- end }}
+          {{- if .Values.tls.enableVerification }}
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/ca-trust/extracted/pem
+              readOnly: true
+          {{- end }}
           envFrom:
             - secretRef:
                 name: code-understanding-env
                 optional: true
+      {{- if .Values.tls.enableVerification }}
+      volumes:
+        - name: trusted-ca
+          configMap:
+            name: odh-trusted-ca-bundle
+            items:
+              - key: ca-bundle.crt
+                path: tls-ca-bundle.pem
+      {{- end }}
 {{- end }}
