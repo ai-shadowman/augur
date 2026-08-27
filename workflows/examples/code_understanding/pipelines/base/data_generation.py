@@ -6,14 +6,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 def clone_from_repo(repo_url, destination_path, branch="master"):
     """Clones the given git repo to the specified destination."""
     from git import Repo
+    from urllib.parse import urlparse, urlunparse
     import logging
     import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+    username = os.environ.get('GIT_USERNAME')
+    token = os.environ.get('GIT_TOKEN')
+    updated_repo_url = repo_url
+    if username and token:
+        parsed = urlparse(repo_url)
+        updated_repo_url = urlunparse(parsed._replace(netloc=f"{username}:{token}@{parsed.netloc}"))
+
     try:
 
-        Repo.clone_from(repo_url, destination_path, branch=branch)
+        Repo.clone_from(updated_repo_url, destination_path, branch=branch)
 
         all_files = [os.path.join(root, f) for root, _, files in
                      os.walk(destination_path) for f in files]
@@ -24,7 +32,8 @@ def clone_from_repo(repo_url, destination_path, branch="master"):
 
     except Exception as e:
 
-        logging.error(f"Error cloning repository: {e}")
+        err_msg = str(e).replace(token, '***') if token else str(e)
+        logging.error(f"Error cloning repository: {err_msg}")
 
         raise e
 
