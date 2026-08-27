@@ -1,7 +1,7 @@
 
 ENV_FILE            	?= ./.env
-GIT_REPO_URL        	:= $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
-GIT_REPO_BRANCH     	:= $(shell git branch --show-current 2>/dev/null)
+#AUGUR_GIT_REPO_URL     := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+#AUGUR_GIT_REPO_BRANCH  := $(shell git branch --show-current 2>/dev/null)
 CLUSTER_DOMAIN      	:= $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 PIPELINE_GIT_REPO   	?=
 PIPELINE_GIT_BRANCH 	?=
@@ -23,8 +23,8 @@ install:
 		--create-namespace \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
 		--set minio.image="$$MINIO_IMAGE" \
@@ -78,8 +78,8 @@ deploy-notebooks:
 		helm template agent-mesh-for-sw resources/helm \
 			--set namespace="$$KFP_NAMESPACE" \
 			--set requester="$$(oc whoami)" \
-			--set repoUrl="$(GIT_REPO_URL)" \
-			--set repoRef="$(GIT_REPO_BRANCH)" \
+			--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+			--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 			--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
@@ -109,7 +109,7 @@ apply-secrets:
 	oc delete secret code-understanding-env -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
 	\
-	REPO_LIST="$$GIT_REPO_LIST" && \
+	REPO_LIST="$$TARGET_GIT_REPO_LIST" && \
 	if [ -n "$$PIPELINE_GIT_REPO_LIST" ] && [ -f "$$PIPELINE_GIT_REPO_LIST" ]; then \
 		echo "==> PIPELINE_GIT_REPO_LIST is set, using instead of GIT_REPO_LIST"; \
 		REPO_LIST="$$PIPELINE_GIT_REPO_LIST"; \
@@ -163,8 +163,8 @@ upload-pipelines:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
@@ -180,8 +180,8 @@ upload-mlflow-assets:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
@@ -200,13 +200,13 @@ run-adhoc-query:
 	echo "==> Submitting adhoc query job..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set adhocQuery.run=true \
 		--set-string adhocQuery.jobId="$$JOB_ID" \
-		--set-string adhocQuery.useGlobal="$(if $(GIT_REPO),0,1)" \
-		--set-string adhocQuery.gitRepo="$(GIT_REPO)" \
-		--set-string adhocQuery.gitBranch="$(GIT_BRANCH)" \
+		--set-string adhocQuery.useGlobal="$(if $(TARGET_GIT_REPO_URL),0,1)" \
+		--set-string adhocQuery.gitRepo="$(TARGET_GIT_REPO_URL)" \
+		--set-string adhocQuery.gitBranch="$(TARGET_GIT_BRANCH)" \
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
@@ -226,7 +226,7 @@ run-pipelines:
 		--type=merge -p '{"stringData":{"GIT_REPO":"$(PIPELINE_GIT_REPO)"}}' || true && \
 	[ -n "$(PIPELINE_GIT_BRANCH)" ] && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge -p '{"stringData":{"GIT_BRANCH":"$(PIPELINE_GIT_BRANCH)"}}' || true && \
-	REPO_LIST="$$GIT_REPO_LIST" && \
+	REPO_LIST="$$TARGET_GIT_REPO_LIST" && \
 	if [ -n "$$PIPELINE_GIT_REPO_LIST" ] && [ -f "$$PIPELINE_GIT_REPO_LIST" ]; then \
 		echo "==> PIPELINE_GIT_REPO_LIST is set, using instead of GIT_REPO_LIST"; \
 		REPO_LIST="$$PIPELINE_GIT_REPO_LIST"; \
@@ -241,8 +241,8 @@ run-pipelines:
 	oc delete job run-pipelines -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set runPipelines.run=true \
 		--set-string runPipelines.args="$${ARGS:---single-repo}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
