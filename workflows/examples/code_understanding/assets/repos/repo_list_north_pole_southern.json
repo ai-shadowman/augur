@@ -1,0 +1,10 @@
+[
+    {
+        "git_repo": "https://github.com/kfrankli/northpolesouthern-train",
+        "git_branch": "main"
+    },
+    {
+        "git_repo": "https://github.com/kfrankli/northpolesouthern-timetable",
+        "git_branch": "main"
+    }
+]
