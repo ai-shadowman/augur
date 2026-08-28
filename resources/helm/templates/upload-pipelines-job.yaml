@@ -13,6 +13,20 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: pipeline-upload-job
+      {{- if .Values.tls.enableVerification }}
+      initContainers:
+        - name: concatenate-all-ca-trusts
+          image: "{{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - cat /etc/pki/ca-trust/extracted/trusted-ca/* /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt > /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/ca-trust/extracted/trusted-ca
+              readOnly: true
+            - name: trusted-ca-concatenated
+              mountPath: /etc/pki/ca-trust/extracted/pem
+      {{- end }}
       containers:
         - name: upload-pipelines
           image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
@@ -47,7 +61,7 @@ spec:
               value: "{{ .Values.repoRef }}"
           {{- if .Values.tls.enableVerification }}
           volumeMounts:
-            - name: trusted-ca
+            - name: trusted-ca-concatenated
               mountPath: /etc/pki/ca-trust/extracted/pem
               readOnly: true
           {{- end }}
@@ -62,5 +76,9 @@ spec:
             name: odh-trusted-ca-bundle
             items:
               - key: ca-bundle.crt
-                path: tls-ca-bundle.pem
+                path: ca-bundle.pem
+              - key: odh-ca-bundle.crt
+                path: odh-ca-bundle.crt
+        - name: trusted-ca-concatenated
+          emptyDir: {}
       {{- end }}
