@@ -51,6 +51,29 @@ Set the env var **before** `make install` (and again before any later job target
 
 ## 2. What the cluster must provide
 
+To inject custom certificates automatically, you will need to update the [OpenShift Container Platform CA bundle](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/security_and_compliance/configuring-certificates#updating-ca-bundle). E.g. similar to the below:
+
+```bash
+cat << 'EOF' > user-ca-bundle.yaml
+---
+apiVersion: v1
+data:
+  ca-bundle.crt: |
+      #Kevin Intermediate Root CA used for Gitea
+      -----BEGIN CERTIFICATE-----
+      ...
+      -----END CERTIFICATE-----
+kind: ConfigMap
+metadata:
+  name: user-ca-bundle
+  namespace: openshift-config
+EOF
+oc create -f user-ca-bundle.yaml -n openshift-config
+oc patch proxy/cluster \
+     --type=merge \
+     --patch='{"spec":{"trustedCA":{"name":"user-ca-bundle"}}}'
+```
+
 When the Data Science project namespace is created, it is labeled `opendatahub.io/dashboard: "true"`. OpenShift AI then injects ConfigMap `odh-trusted-ca-bundle` with key `ca-bundle.crt` (cluster trusted CAs, including the service CA).
 
 `make install` waits until that bundle is present before Helm upgrade:
