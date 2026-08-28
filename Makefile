@@ -40,7 +40,8 @@ install:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
-		--set clusterDomain="$(CLUSTER_DOMAIN)"
+		--set clusterDomain="$(CLUSTER_DOMAIN)" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}"
 	$(MAKE) apply-secrets
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
@@ -168,6 +169,7 @@ upload-pipelines:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 upload-mlflow-assets:
@@ -185,11 +187,15 @@ upload-mlflow-assets:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
 run-adhoc-query:
 	@[ -z "$(QUESTION_FILE)" ] && { echo "Error: QUESTION_FILE is required: generate it via wrappers/adhoc.sh." >&2; exit 1; } || true
 	@set -a && . $(ENV_FILE) && set +a && \
+	[ "$${ENABLE_TLS_VERIFICATION:-false}" = "false" ] || \
+		oc get configmap odh-trusted-ca-bundle -n $$KFP_NAMESPACE >/dev/null 2>&1 || \
+		{ echo "Error: TLS settings issue. Contact your system administrator." >&2; exit 1; } && \
 	JOB_ID="$$(date +%Y%m%d%H%M%S)$$(printf '%04x' $$((RANDOM)))" && \
 	\
 	echo "==> Storing query parameters (job: $$JOB_ID)..." && \
@@ -211,6 +217,7 @@ run-adhoc-query:
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
 	echo "==> Waiting for query to complete..." && \
@@ -250,6 +257,7 @@ run-pipelines:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/run-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
 	echo "==> Waiting for run-pipelines container to start..." && \

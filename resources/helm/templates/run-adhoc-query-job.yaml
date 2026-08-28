@@ -11,6 +11,20 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: pipeline-upload-job
+      {{- if .Values.tls.enableVerification }}
+      initContainers:
+        - name: concatenate-all-ca-trusts
+          image: "{{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - cat /etc/pki/ca-trust/extracted/trusted-ca/* /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt > /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/ca-trust/extracted/trusted-ca
+              readOnly: true
+            - name: trusted-ca-concatenated
+              mountPath: /etc/pki/ca-trust/extracted/pem
+      {{- end }}
       containers:
         - name: adhoc-query
           image: {{ .Values.analysis.image.registry }}/{{ .Values.analysis.image.name }}:{{ .Values.analysis.image.tag }}
@@ -33,10 +47,42 @@ spec:
               value: "{{ .Values.adhocQuery.gitRepo }}"
             - name: GIT_BRANCH
               value: "{{ .Values.adhocQuery.gitBranch }}"
+            {{- if not .Values.tls.enableVerification }}
             - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
               value: "true"
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
+            {{- else }}
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: SSL_CERT_FILE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: AWS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: MLFLOW_TRACKING_SERVER_CERT_PATH
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            {{- end }}
+          {{- if .Values.tls.enableVerification }}
+          volumeMounts:
+            - name: trusted-ca-concatenated
+              mountPath: /etc/pki/ca-trust/extracted/pem
+              readOnly: true
+          {{- end }}
           envFrom:
             - secretRef:
                 name: code-understanding-env
                 optional: true
+      {{- if .Values.tls.enableVerification }}
+      volumes:
+        - name: trusted-ca
+          configMap:
+            name: odh-trusted-ca-bundle
+            items:
+              - key: ca-bundle.crt
+                path: ca-bundle.pem
+              - key: odh-ca-bundle.crt
+                path: odh-ca-bundle.crt
+        - name: trusted-ca-concatenated
+          emptyDir: {}
+      {{- end }}
 {{- end }}

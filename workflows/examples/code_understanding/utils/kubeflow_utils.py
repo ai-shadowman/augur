@@ -107,6 +107,7 @@ def inject_secret_as_env(secret_name: str):
 
         @functools.wraps(component_fn)
         def wrapper(*args, **kwargs):
+            import logging
             task = component_fn(*args, **kwargs)
             try:
                 from kfp import kubernetes
@@ -119,7 +120,21 @@ def inject_secret_as_env(secret_name: str):
                         secret_name=secret_name,
                         secret_key_to_env={k: k for k in keys},
                     )
-
+                try:
+                    # 1. Mount OpenShift's trusted CA bundle where launcher_v2 expects it
+                    kubernetes.use_config_map_as_volume(
+                        task,
+                        config_map_name="odh-trusted-ca-bundle",
+                        mount_path="/etc/pki/ca-trust/extracted/pem/"
+                    )
+                    ca_path = "/etc/pki/ca-trust/extracted/pem/ca-bundle.crt"
+                    task.set_env_variable("GIT_SSL_CAINFO", ca_path)
+                    task.set_env_variable("PIP_CERT", ca_path)
+                    task.set_env_variable("SSL_CERT_FILE", ca_path)
+                    task.set_env_variable("REQUESTS_CA_BUNDLE", ca_path)
+                except Exception as e:
+                    logging.error(f"KFP use_as_configmap failed: {e}")
+                    
             except ImportError:
                 pass
 

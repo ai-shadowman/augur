@@ -49,6 +49,9 @@ pipelineTools:
     name: pipeline-tools
     tag: latest
 
+tls:
+  enableVerification: false
+
 adhocQuery:
   run: false
   graphragDir: "graph_rag_app/source"
