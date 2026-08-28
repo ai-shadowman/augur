@@ -119,6 +119,20 @@ def inject_secret_as_env(secret_name: str):
                         secret_name=secret_name,
                         secret_key_to_env={k: k for k in keys},
                     )
+                # 1. Mount OpenShift's trusted CA bundle where launcher_v2 expects it
+                kubernetes.use_config_map_as_volume(
+                    task,
+                    config_map_name="odh-trusted-ca-bundle",
+                    mount_path="/etc/pki/ca-trust/extracted/pem/",
+                    sub_path="tls-ca-bundle.crt"
+                )
+
+                # 2. Inject environment variables for the container setup phase
+                ca_path = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.crt"
+                task.set_env_variable("GIT_SSL_CAINFO", ca_path)
+                task.set_env_variable("PIP_CERT", ca_path)
+                task.set_env_variable("SSL_CERT_FILE", ca_path)
+                task.set_env_variable("REQUESTS_CA_BUNDLE", ca_path)    
 
             except ImportError:
                 pass
