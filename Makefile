@@ -214,6 +214,9 @@ run-adhoc-query:
 		--set-string adhocQuery.gitRepo="$(GIT_REPO)" \
 		--set-string adhocQuery.gitBranch="$(GIT_BRANCH)" \
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
