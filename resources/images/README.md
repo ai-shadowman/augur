@@ -18,6 +18,15 @@ podman push localhost/data-indexing:latest quay.io/ai-shadowman/data-indexing:la
 cd ..
 ```
 
+## data-analysis
+
+Build from the repository root so the Containerfile can COPY `workflows/examples/code_understanding`.
+
+```bash
+podman build -f resources/images/data-analysis/Containerfile -t data-analysis:latest .
+podman push localhost/data-analysis:latest quay.io/ai-shadowman/data-analysis:latest
+```
+
 ## pipeline-tools
 
 Build from the repository root so the Containerfile can COPY `workflows/examples/code_understanding`.
