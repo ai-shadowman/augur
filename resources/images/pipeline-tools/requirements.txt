@@ -3,3 +3,4 @@ kfp-kubernetes==2.14.3
 mlflow[kubernetes]==3.14.0
 jupyter==1.1.1
 PyYAML==6.0.2
+setuptools>=64

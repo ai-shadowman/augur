@@ -36,6 +36,7 @@ codebleu==0.7.0
 mlflow[kubernetes]==3.14.0
 kfp==2.17.0
 PyYAML==6.0.2
+setuptools>=64
 #chromadb==1.0.15
 #langchain-chroma==0.2.4
 #training-hub

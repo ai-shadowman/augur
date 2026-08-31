@@ -23,3 +23,4 @@ pyvis==0.3.2
 mlflow[kubernetes]==3.14.0
 kfp==2.17.0
 PyYAML==6.0.2
+setuptools>=64
