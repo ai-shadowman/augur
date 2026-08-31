@@ -7,6 +7,8 @@ deployNotebooks: false
 repoUrl: ""
 repoRef: main
 
+pypiMirror: ""
+
 minio:
   rootUser: ""
   rootPassword: ""

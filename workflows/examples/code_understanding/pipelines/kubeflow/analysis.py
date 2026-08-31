@@ -21,7 +21,11 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(
+    base_image=ANALYSIS_BASE_IMAGE,
+    packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
+    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+)
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown],
                                   git_repo: str = "", git_branch: str = "",
                                   multi_repo: bool = False):
@@ -36,7 +40,11 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(
+    base_image=ANALYSIS_BASE_IMAGE,
+    packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
+    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+)
 def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
 

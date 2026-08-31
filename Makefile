@@ -40,6 +40,7 @@ install:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 		--set clusterDomain="$(CLUSTER_DOMAIN)" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}"
 	$(MAKE) apply-secrets
@@ -92,6 +93,7 @@ deploy-notebooks:
 			--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 			--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 			--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+			--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 			--set analysis.image.digestRef="$$ANALYSIS_IMAGE" \
 			--set deployNotebooks=true \
 			-s templates/workbench-notebooks.yaml | oc apply -f -; \
@@ -169,6 +171,7 @@ upload-pipelines:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
@@ -187,6 +190,7 @@ upload-mlflow-assets:
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
@@ -220,6 +224,7 @@ run-adhoc-query:
 		--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
 		--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
+		--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/run-adhoc-query-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
@@ -261,6 +266,7 @@ run-pipelines:
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
+		--set pypiMirror="$$KFP_PIPELINE_PYPI_MIRROR" \
 		-s templates/run-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
 	echo "==> Waiting for run-pipelines container to start..." && \

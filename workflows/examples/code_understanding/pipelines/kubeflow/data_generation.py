@@ -20,7 +20,11 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 ##############################################################################
 
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(
+    base_image=DATA_GENERATION_BASE_IMAGE, 
+    packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
+    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+)
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
 
@@ -40,7 +44,11 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(
+    base_image=DATA_GENERATION_BASE_IMAGE, 
+    packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
+    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+)
 def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset],
                                multi_repo: bool = False):
@@ -90,7 +98,11 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(
+    base_image=DATA_GENERATION_BASE_IMAGE, 
+    packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
+    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+)
 def get_repo_list_op() -> list:
     """Downloads and returns the repo list from the asset loader."""
 
@@ -142,7 +154,7 @@ def _run_pipeline_multi_repo():
     repo_list_task = get_repo_list_op()
 
     with dsl.ParallelFor(items=repo_list_task.output,
-                         parallelism=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
+                         parallelispm=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
 
         _run_pipeline(
             git_repo=repo.git_repo,
