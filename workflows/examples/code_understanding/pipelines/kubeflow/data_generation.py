@@ -14,6 +14,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     subdirectory="workflows/examples/code_understanding",
 )
 
+PYPI_MIRROR = os.getenv("PYPI_MIRROR", "https://pypi.org/simple/")
 
 ##############################################################################
 # Components
@@ -23,7 +24,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @dsl.component(
     base_image=DATA_GENERATION_BASE_IMAGE, 
     packages_to_install=[_AGENTMESH_INSTALLABLE_URL] if _AGENTMESH_INSTALLABLE_URL else None,
-    pip_index_urls=[os.getenv("PYPI_MIRROR")] if os.getenv("PYPI_MIRROR") else None
+    pip_index_urls=[PYPI_MIRROR]
 )
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
