@@ -56,6 +56,10 @@ spec:
               value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
             {{- end }}
           {{- if .Values.tls.enableVerification }}
+            {{- if .Values.pypiMirror }}
+            - name: PYPI_MIRROR
+              value: "{{ .Values.pypiMirror }}"
+            {{- end }}          
           volumeMounts:
             - name: trusted-ca-concatenated
               mountPath: /etc/pki/ca-trust/extracted/pem
