@@ -59,8 +59,10 @@ spec:
               value: "{{ .Values.repoUrl }}"
             - name: AGENTMESH_REPO_REF
               value: "{{ .Values.repoRef }}"
+            {{- if .Values.pypiMirror }}
             - name: PYPI_MIRROR
               value: "{{ .Values.pypiMirror }}"
+            {{- end }}
           {{- if .Values.tls.enableVerification }}
           volumeMounts:
             - name: trusted-ca-concatenated
