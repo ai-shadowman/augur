@@ -145,9 +145,7 @@ build-images:
 	podman push "$$ANALYSIS_IMG" && \
 	\
 	echo "==> Building pipeline-tools image..." && \
-	podman build -f resources/images/pipeline-tools/Containerfile \
-		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
-		-t "$$TOOLS_IMG" . && \
+	podman build -t "$$TOOLS_IMG"  resources/images/pipeline-tools && \
 	echo "==> Pushing pipeline-tools image..." && \
 	podman push "$$TOOLS_IMG"
 
