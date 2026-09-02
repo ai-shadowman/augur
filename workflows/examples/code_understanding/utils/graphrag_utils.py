@@ -348,6 +348,25 @@ class DependencyAnalyzer:
 
                 context_data = None
 
+                from utils.token_tracker import track_tokens
+                usage = getattr(response, "usage", None) or getattr(getattr(response, "output", None), "usage", None)
+                if usage:
+                    p_tok = getattr(usage, "prompt_tokens", 0) or 0
+                    c_tok = getattr(usage, "completion_tokens", 0) or 0
+                    t_tok = getattr(usage, "total_tokens", 0) or (p_tok + c_tok)
+                else:
+                    p_tok = len(question) // 4
+                    c_tok = len(result) // 4
+                    t_tok = p_tok + c_tok
+
+                track_tokens(
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    model=getattr(llm_config, "model", "default_chat_model"),
+                    stage="GraphRAG Chat",
+                )
+
             else:
 
                 if use_global:
@@ -379,6 +398,23 @@ class DependencyAnalyzer:
                         response_type=response_type,
                         query=question,
                     )
+
+                from utils.token_tracker import track_tokens
+                search_stage = "GraphRAG Global Search" if use_global else "GraphRAG Local Search"
+                p_tok = len(question) // 4
+                if isinstance(context_data, dict):
+                    ctx_text = DependencyAnalyzer.extract_context_content(context_data)
+                    p_tok += len(ctx_text) // 4
+                c_tok = len(str(result)) // 4
+                t_tok = p_tok + c_tok
+
+                track_tokens(
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    model=os.getenv("GRAPHRAG_LLM_ID", "graphrag_search"),
+                    stage=search_stage,
+                )
 
 
         except Exception as e:

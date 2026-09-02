@@ -163,6 +163,9 @@ def get_parsed_code_metadata(df, language, config=False):
 
         logging.info("Parsing code metadata...")
 
+        from utils.token_tracker import setup_litellm_token_tracking
+        setup_litellm_token_tracking()
+
         dataset = Dataset.from_pandas(df)
 
         flow_dir = "config_generation" if config else "code_generation"

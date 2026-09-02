@@ -9,8 +9,10 @@ from litellm import completion
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.json_utils import extract_json_from_string
+from utils.token_tracker import setup_litellm_token_tracking
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+setup_litellm_token_tracking()
 
 
 def _llm_kwargs(prefix: str) -> dict:

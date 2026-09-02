@@ -11,8 +11,10 @@ from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similari
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
+from utils.token_tracker import setup_litellm_token_tracking
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+setup_litellm_token_tracking()
 
 
 class MlFlowCustomEvaluator(CustomEvaluator):

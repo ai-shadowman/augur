@@ -2,6 +2,14 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
+from utils.token_tracker import (
+    get_total_tokens,
+    get_total_cost,
+    get_token_summary,
+    display_token_summary,
+    setup_litellm_token_tracking,
+)
+
 
 ##############################################################################
 # Pipeline stage
@@ -19,6 +27,7 @@ class AnalysisPipeline:
         import os
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+        setup_litellm_token_tracking()
 
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
@@ -48,6 +57,7 @@ class AnalysisPipeline:
 
         )
 
+        display_token_summary()
         return report
 
     def run_multi_repo(self):
@@ -163,6 +173,7 @@ class AnalysisPipeline:
         )
 
         print(adhoc_results_header, flush=True)
+        display_token_summary()
         return f"{result}\n\n"
 
 

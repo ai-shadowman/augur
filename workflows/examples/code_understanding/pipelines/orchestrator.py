@@ -98,6 +98,9 @@ def single_repo_pipeline(
             multi_repo=multi_repo,
         )
 
+        from utils.token_tracker import display_token_summary
+        display_token_summary()
+
 
 @dsl.pipeline(name="multi-repo-pipeline")
 def multi_repo_pipeline(
@@ -129,6 +132,9 @@ def multi_repo_pipeline(
         IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path)
 
         AnalysisPipeline().run_multi_repo()
+
+        from utils.token_tracker import display_token_summary
+        display_token_summary()
 
 
 ##############################################################################
