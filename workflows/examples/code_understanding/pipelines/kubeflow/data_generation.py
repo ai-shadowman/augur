@@ -19,6 +19,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 # Components
 ##############################################################################
 
+@inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
@@ -133,7 +134,6 @@ def _run_pipeline(
     )
 
     return gen.outputs["target_dir"]
-
 
 @dsl.pipeline(name="data-generation-multi-repo-pipeline")
 def _run_pipeline_multi_repo():
