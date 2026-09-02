@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks
+---
+# tasks file for upload_pipelines
+
+- name: Get current OpenShift user if not already set
+  ansible.builtin.command: oc whoami
+  register: oc_whoami
+  changed_when: false
+  when: k8s_requester is not defined
+
+- name: Set requester fact if missing
+  ansible.builtin.set_fact:
+    k8s_requester: "{{ oc_whoami.stdout | trim }}"
+  when: k8s_requester is not defined
+
+- name: Wait for ds-pipeline-dspa deployment to be Available
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: ds-pipeline-dspa
+    namespace: "{{ kfp_namespace }}"
+  register: dspa_deployment
+  until:
+    - dspa_deployment.resources is defined
+    - dspa_deployment.resources | length > 0
+    - >-
+      dspa_deployment.resources[0].status.conditions
+      | default([])
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list | length > 0
+  retries: 60
+  delay: 5
+
+- name: Delete existing upload-kubeflow-pipelines job
+  kubernetes.core.k8s:
+    state: absent
+    api_version: batch/v1
+    kind: Job
+    name: upload-kubeflow-pipelines
+    namespace: "{{ kfp_namespace }}"
+
+- name: Render upload-pipelines job template from Helm chart
+  kubernetes.core.helm_template:
+    chart_ref: "{{ helm_chart_path | default('resources/helm') }}"
+    release_name: agent-mesh-for-sw
+    release_namespace: "{{ kfp_namespace }}"
+    show_only:
+      - templates/upload-pipelines-job.yaml
+    release_values:
+      namespace: "{{ kfp_namespace }}"
+      requester: "{{ k8s_requester }}"
+      repoUrl: "{{ git_repo_url }}"
+      repoRef: "{{ git_repo_branch }}"
+      pipelineTools:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_pipeline_tools_image_name }}"
+          tag: "{{ kfp_pipeline_tools_image_tag }}"
+      tls:
+        enableVerification: "{{ enable_tls_verification | default(false) }}"
+  register: helm_pipeline_job
+
+- name: Submit upload-kubeflow-pipelines job
+  kubernetes.core.k8s:
+    state: present
+    namespace: "{{ kfp_namespace }}"
+    definition: "{{ helm_pipeline_job.stdout | from_yaml }}"
+
+...
