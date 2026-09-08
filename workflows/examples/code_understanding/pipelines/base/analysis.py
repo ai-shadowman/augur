@@ -194,6 +194,10 @@ def write_migration_report(graphrag_source_path: str, report_path: str,
     import os
     migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
                                               git_branch=git_branch, multi_repo=multi_repo)
+    if "## LLM Token Usage & Cost Summary" not in migration_report:
+        from utils.token_tracker import format_markdown_summary
+        migration_report += format_markdown_summary()
+
     if dirname := os.path.dirname(report_path):
         os.makedirs(dirname, exist_ok=True)
     with open(report_path, "w") as f:
