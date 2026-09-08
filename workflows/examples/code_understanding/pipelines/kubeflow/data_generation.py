@@ -21,9 +21,13 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--upgrade", "--no-deps", "--user", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
+
+    import sys
+    if "/tmp/pkg" not in sys.path:
+        sys.path.insert(0, "/tmp/pkg")
 
     from pipelines.base.data_generation import prepare_environment
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact, use_ephemeral_space
@@ -41,11 +45,15 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--upgrade", "--no-deps", "--user", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
 def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset],
                                multi_repo: bool = False):
     """Detects languages and generates code metadata for all detected languages."""
+
+    import sys
+    if "/tmp/pkg" not in sys.path:
+        sys.path.insert(0, "/tmp/pkg")
 
     from pipelines.base.data_generation import (
         detect_languages, generate_code_and_meta, generate_git_slug
@@ -91,9 +99,13 @@ def generate_code_and_meta_op(git_repo: str, git_branch: str,
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--upgrade", "--no-deps", "--user", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
 def get_repo_list_op() -> list:
     """Downloads and returns the repo list from the asset loader."""
+
+    import sys
+    if "/tmp/pkg" not in sys.path:
+        sys.path.insert(0, "/tmp/pkg")
 
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.kubeflow_utils import setup_logging
