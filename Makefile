@@ -49,53 +49,6 @@ install:
 		$(MAKE) upload-mlflow-assets; \
 	fi
 	$(MAKE) upload-pipelines
-	$(MAKE) deploy-notebooks
-
-deploy-notebooks:
-	@set -a && . $(ENV_FILE) && set +a && \
-	if oc get notebook data-generation graphrag-indexing -n $$KFP_NAMESPACE 2>/dev/null | grep -q notebook; then \
-		echo "==> Notebooks already exist, skipping deployment."; \
-	else \
-		echo "==> Waiting for data-generation ImageStream to import..." && \
-		until oc get imagestreamtag custom-data-generation:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		DATAGEN_IMAGE="$$(oc get imagestream custom-data-generation -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
-		echo "  image: $$DATAGEN_IMAGE" && \
-		\
-		echo "==> Waiting for graphrag ImageStream to import..." && \
-		until oc get imagestreamtag custom-graphrag:$$KFP_INDEXING_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		GRAPHRAG_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_INDEXING_BASE_IMAGE_TAG" && \
-		echo "  image: $$GRAPHRAG_IMAGE" && \
-		\
-		echo "==> Waiting for analysis ImageStream to import..." && \
-		until oc get imagestreamtag custom-graphrag:$$KFP_ANALYSIS_BASE_IMAGE_TAG -n redhat-ods-applications -o jsonpath='{.image.dockerImageReference}' 2>/dev/null | grep -q '@sha256:'; do sleep 5; done && \
-		ANALYSIS_IMAGE="$$(oc get imagestream custom-graphrag -n redhat-ods-applications -o jsonpath='{.status.dockerImageRepository}'):$$KFP_ANALYSIS_BASE_IMAGE_TAG" && \
-		echo "  image: $$ANALYSIS_IMAGE" && \
-		\
-		echo "==> Waiting for DSPA to be fully reconciled..." && \
-		until oc get datasciencepipelinesapplication dspa -n $$KFP_NAMESPACE \
-			-o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do sleep 5; done && \
-		\
-		echo "==> Deploying notebooks..." && \
-		helm template agent-mesh-for-sw resources/helm \
-			--set namespace="$$KFP_NAMESPACE" \
-			--set requester="$$(oc whoami)" \
-			--set repoUrl="$(GIT_REPO_URL)" \
-			--set repoRef="$(GIT_REPO_BRANCH)" \
-			--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
-			--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
-			--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
-			--set dataGeneration.image.digestRef="$$DATAGEN_IMAGE" \
-			--set graphrag.image.registry="$$KFP_IMAGE_REGISTRY" \
-			--set graphrag.image.name="$$KFP_INDEXING_BASE_IMAGE_NAME" \
-			--set graphrag.image.tag="$$KFP_INDEXING_BASE_IMAGE_TAG" \
-			--set graphrag.image.digestRef="$$GRAPHRAG_IMAGE" \
-			--set analysis.image.registry="$$KFP_IMAGE_REGISTRY" \
-			--set analysis.image.name="$$KFP_ANALYSIS_BASE_IMAGE_NAME" \
-			--set analysis.image.tag="$$KFP_ANALYSIS_BASE_IMAGE_TAG" \
-			--set analysis.image.digestRef="$$ANALYSIS_IMAGE" \
-			--set deployNotebooks=true \
-			-s templates/workbench-notebooks.yaml | oc apply -f -; \
-	fi
 
 apply-secrets:
 	@set -a && . $(ENV_FILE) && set +a && \
