@@ -6,6 +6,8 @@ from utils.token_tracker import (
     get_total_tokens,
     get_total_cost,
     get_token_summary,
+    format_token_summary,
+    format_markdown_summary,
     display_token_summary,
     setup_litellm_token_tracking,
 )
@@ -34,6 +36,9 @@ class AnalysisPipeline:
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
 
         report = asyncio.run(analyzer.generate_migration_report())
+
+        # Append LLM Token Usage & Cost Summary to the bottom of the final report
+        report += format_markdown_summary()
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 

@@ -249,6 +249,22 @@ def reset_token_count() -> None:
     _GLOBAL_TRACKER.reset()
 
 
+def format_token_summary() -> str:
+    """Returns the formatted token and cost summary text block."""
+    return _GLOBAL_TRACKER.format_summary()
+
+
+def format_markdown_summary() -> str:
+    """Returns the token & cost summary formatted as a Markdown section for appending to reports."""
+    return (
+        f"\n\n---\n\n"
+        f"## LLM Token Usage & Cost Summary\n\n"
+        f"```text\n"
+        f"{_GLOBAL_TRACKER.format_summary()}\n"
+        f"```\n"
+    )
+
+
 def display_token_summary() -> None:
     """Prints the formatted token summary to stdout and logs it."""
     _GLOBAL_TRACKER.display_summary()

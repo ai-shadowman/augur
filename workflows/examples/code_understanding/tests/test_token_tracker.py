@@ -13,6 +13,8 @@ from utils.token_tracker import (
     get_total_tokens,
     get_total_cost,
     get_token_summary,
+    format_token_summary,
+    format_markdown_summary,
     reset_token_count,
     display_token_summary,
     setup_litellm_token_tracking,
@@ -78,6 +80,17 @@ class TestTokenTracker(unittest.TestCase):
 
         # Ensure display doesn't raise
         display_token_summary()
+
+    def test_format_markdown_summary(self):
+        track_tokens(prompt_tokens=500, completion_tokens=150, model="gpt-4o", stage="analysis")
+        md_section = format_markdown_summary()
+        self.assertIn("## LLM Token Usage & Cost Summary", md_section)
+        self.assertIn("```text", md_section)
+        self.assertIn("Estimated Total Cost", md_section)
+        self.assertIn("gpt-4o", md_section)
+
+        txt_summary = format_token_summary()
+        self.assertIn("LLM TOKEN USAGE & COST SUMMARY", txt_summary)
 
 
 if __name__ == "__main__":
