@@ -602,7 +602,9 @@ class DependencyAnalyzer:
 
         log_interactive_dependency_graph(self)
 
-        return f"{title}{report}"
+        from utils.token_tracker import format_markdown_summary
+
+        return f"{title}{report}{format_markdown_summary()}"
     
     async def generate_report(self, service_name: str):
 

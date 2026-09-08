@@ -37,8 +37,9 @@ class AnalysisPipeline:
 
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Append LLM Token Usage & Cost Summary to the bottom of the final report
-        report += format_markdown_summary()
+        # Append LLM Token Usage & Cost Summary to the bottom of the final report if not already present
+        if "## LLM Token Usage & Cost Summary" not in report:
+            report += format_markdown_summary()
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
