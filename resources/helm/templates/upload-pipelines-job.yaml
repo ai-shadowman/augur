@@ -39,7 +39,7 @@ spec:
                 echo "Fetching latest code from $AGENTMESH_REPO_URL ($AGENTMESH_REPO_REF)..."
                 rm -rf /tmp/augur && git clone --depth 1 --branch "$AGENTMESH_REPO_REF" "$AGENTMESH_REPO_URL" /tmp/augur
                 cd /tmp/augur
-                pip install --no-deps -e workflows/examples/code_understanding
+                export PYTHONPATH="/tmp/augur/workflows/examples/code_understanding:${PYTHONPATH:-}"
                 workflows/examples/code_understanding/scripts/upload_pipelines.sh
               else
                 workflows/examples/code_understanding/scripts/upload_pipelines.sh
