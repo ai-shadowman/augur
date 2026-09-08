@@ -33,7 +33,17 @@ spec:
           command:
             - sh
             - -c
-            - workflows/examples/code_understanding/scripts/upload_pipelines.sh
+            - |
+              set -e
+              if [ -n "$AGENTMESH_REPO_URL" ]; then
+                echo "Fetching latest code from $AGENTMESH_REPO_URL ($AGENTMESH_REPO_REF)..."
+                rm -rf /tmp/augur && git clone --depth 1 --branch "$AGENTMESH_REPO_REF" "$AGENTMESH_REPO_URL" /tmp/augur
+                cd /tmp/augur
+                pip install --no-deps -e workflows/examples/code_understanding
+                workflows/examples/code_understanding/scripts/upload_pipelines.sh
+              else
+                workflows/examples/code_understanding/scripts/upload_pipelines.sh
+              fi
           workingDir: /opt/app-root/src
           env:
             - name: KFP_HOST
