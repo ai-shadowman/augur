@@ -15,6 +15,7 @@ from utils.token_tracker import (
     get_token_summary,
     format_token_summary,
     format_markdown_summary,
+    insert_token_summary_into_report,
     reset_token_count,
     display_token_summary,
     setup_litellm_token_tracking,
@@ -91,6 +92,67 @@ class TestTokenTracker(unittest.TestCase):
 
         txt_summary = format_token_summary()
         self.assertIn("LLM TOKEN USAGE & COST SUMMARY", txt_summary)
+
+    def test_insert_token_summary_into_report_with_closing_remarks(self):
+        sample_report = (
+            "# Migration Report\n\n"
+            "### Dependency Graph\n\nGraph content\n\n"
+            "## 10. Closing Remarks\n\n"
+            "Migration can proceed safely in phases.\n"
+            "All risks have been evaluated.\n\n"
+            "### Code Migration Plan (JSON)\n\n"
+            '{"plan": []}\n'
+        )
+        result = insert_token_summary_into_report(sample_report)
+        self.assertIn("## 10. Closing Remarks", result)
+        self.assertIn("## LLM Token Usage & Cost Summary", result)
+
+        # Ensure LLM Token Usage & Cost Summary comes AFTER Closing Remarks body and BEFORE Code Migration Plan
+        closing_idx = result.index("All risks have been evaluated.")
+        summary_idx = result.index("## LLM Token Usage & Cost Summary")
+        next_sec_idx = result.index("### Code Migration Plan (JSON)")
+        self.assertTrue(closing_idx < summary_idx < next_sec_idx)
+
+    def test_insert_token_summary_into_report_closing_remarks_at_end(self):
+        sample_report = (
+            "# Migration Report\n\n"
+            "## 10. Closing Remarks\n\n"
+            "Final notes.\n"
+        )
+        result = insert_token_summary_into_report(sample_report)
+        self.assertIn("## 10. Closing Remarks", result)
+        self.assertIn("## LLM Token Usage & Cost Summary", result)
+        self.assertTrue(result.index("Final notes.") < result.index("## LLM Token Usage & Cost Summary"))
+
+    def test_insert_token_summary_relocates_existing_summary(self):
+        sample_report = (
+            "# Migration Report\n\n"
+            "## 10. Closing Remarks\n\n"
+            "Closing words.\n\n"
+            "### Next Section\n\n"
+            "Next content.\n\n"
+            "---\n\n"
+            "## LLM Token Usage & Cost Summary\n\n"
+            "```text\nOLD SUMMARY\n```\n"
+        )
+        result = insert_token_summary_into_report(sample_report)
+        # Should only have one summary
+        self.assertEqual(result.count("## LLM Token Usage & Cost Summary"), 1)
+        closing_idx = result.index("Closing words.")
+        summary_idx = result.index("## LLM Token Usage & Cost Summary")
+        next_sec_idx = result.index("### Next Section")
+        self.assertTrue(closing_idx < summary_idx < next_sec_idx)
+
+    def test_insert_token_summary_into_report_no_closing_remarks(self):
+        sample_report = (
+            "# Migration Report\n\n"
+            "### Summary\n\n"
+            "Content only.\n"
+        )
+        result = insert_token_summary_into_report(sample_report)
+        self.assertIn("## 10. Closing Remarks", result)
+        self.assertIn("## LLM Token Usage & Cost Summary", result)
+        self.assertTrue(result.index("## 10. Closing Remarks") < result.index("## LLM Token Usage & Cost Summary"))
 
 
 if __name__ == "__main__":

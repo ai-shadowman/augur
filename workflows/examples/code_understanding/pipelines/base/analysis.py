@@ -8,6 +8,7 @@ from utils.token_tracker import (
     get_token_summary,
     format_token_summary,
     format_markdown_summary,
+    insert_token_summary_into_report,
     display_token_summary,
     setup_litellm_token_tracking,
 )
@@ -37,9 +38,8 @@ class AnalysisPipeline:
 
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Append LLM Token Usage & Cost Summary to the bottom of the final report if not already present
-        if "## LLM Token Usage & Cost Summary" not in report:
-            report += format_markdown_summary()
+        # Ensure LLM Token Usage & Cost Summary is placed at the end of '## 10. Closing Remarks'
+        report = insert_token_summary_into_report(report)
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
@@ -194,9 +194,7 @@ def write_migration_report(graphrag_source_path: str, report_path: str,
     import os
     migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
                                               git_branch=git_branch, multi_repo=multi_repo)
-    if "## LLM Token Usage & Cost Summary" not in migration_report:
-        from utils.token_tracker import format_markdown_summary
-        migration_report += format_markdown_summary()
+    migration_report = insert_token_summary_into_report(migration_report)
 
     if dirname := os.path.dirname(report_path):
         os.makedirs(dirname, exist_ok=True)
