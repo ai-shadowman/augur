@@ -55,10 +55,14 @@ spec:
             - name: MLFLOW_TRACKING_SERVER_CERT_PATH
               value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
             {{- end }}
-            - name: AGENTMESH_REPO_URL
-              value: "{{ .Values.repoUrl }}"
-            - name: AGENTMESH_REPO_REF
-              value: "{{ .Values.repoRef }}"
+            - name: AUGUR_GIT_REPO_URL
+              value: "{{ .Values.augurRepoUrl }}"
+            - name: AUGUR_GIT_REPO_BRANCH
+              value: "{{ .Values.augurRepoBranch }}"
+            - name: AUGUR_GIT_REPO_USERNAME
+              value: "{{ .Values.augurRepoUsername }}"
+            - name: AUGUR_GIT_REPO_TOKEN
+              value: "{{ .Values.augurRepoToken }}         
           {{- if .Values.tls.enableVerification }}
           volumeMounts:
             - name: trusted-ca-concatenated

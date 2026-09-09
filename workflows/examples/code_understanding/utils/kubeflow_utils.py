@@ -58,6 +58,10 @@ def get_pip_installable_git_url(
     subdirectory: str,
 ) -> str:
     """Returns a pip-installable VCS URL with embedded credentials."""
+    print(
+        f"utils.kubeflow_utils.get_pip_installable_git_url: Username: {git_username} | URL: {repo_url} | Ref: {repo_ref}",
+        file=sys.stdout,
+    )
     return (
         f"git+https://{git_username}:{git_token}"
         f"@{repo_url.removeprefix('https://')}"

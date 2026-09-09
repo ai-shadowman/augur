@@ -1,8 +1,21 @@
+ENV_FILE                ?= ./.env
+-include $(ENV_FILE)
 
-ENV_FILE            	?= ./.env
-GIT_REPO_URL        	:= $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
-GIT_REPO_BRANCH     	:= $(shell git branch --show-current 2>/dev/null)
-CLUSTER_DOMAIN      	:= $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+ifndef AUGUR_GIT_REPO_URL
+    AUGUR_GIT_REPO_URL  := $(shell git remote get-url origin 2>/dev/null | sed 's|^git@\([^:]*\):\(.*\)$$|https://\1/\2|')
+endif
+$(info ==> Using AUGUR_GIT_REPO_URL: $(AUGUR_GIT_REPO_URL))
+
+ifndef AUGUR_GIT_REPO_BRANCH
+    AUGUR_GIT_REPO_BRANCH := $(shell git branch --show-current 2>/dev/null)
+endif
+$(info ==> Using AUGUR_GIT_REPO_BRANCH: $(AUGUR_GIT_REPO_BRANCH))
+
+ifndef CLUSTER_DOMAIN  
+    CLUSTER_DOMAIN      := (shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+endif
+$(info ==> Using CLUSTER_DOMAIN: $(CLUSTER_DOMAIN))
+
 PIPELINE_GIT_REPO   	?=
 PIPELINE_GIT_BRANCH 	?=
 PIPELINE_GIT_REPO_LIST	?=
@@ -23,8 +36,10 @@ install:
 		--create-namespace \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
 		--set minio.image="$$MINIO_IMAGE" \
@@ -52,12 +67,6 @@ install:
 
 apply-secrets:
 	@set -a && . $(ENV_FILE) && set +a && \
-	\
-	echo "==> Applying git-credentials secret..." && \
-	oc create secret generic git-credentials \
-		--from-literal=GIT_USERNAME="$$GIT_USERNAME" \
-		--from-literal=GIT_TOKEN="$$GIT_TOKEN" \
-		-n $$KFP_NAMESPACE --dry-run=client -o yaml | oc apply -f - && \
 	\
 	echo "==> Recreating secret code-understanding-env..." && \
 	oc delete secret code-understanding-env -n $$KFP_NAMESPACE --ignore-not-found=true && \
@@ -117,8 +126,10 @@ upload-pipelines:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
@@ -135,8 +146,10 @@ upload-mlflow-assets:
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
@@ -159,8 +172,10 @@ run-adhoc-query:
 	echo "==> Submitting adhoc query job..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set adhocQuery.run=true \
 		--set-string adhocQuery.jobId="$$JOB_ID" \
 		--set-string adhocQuery.useGlobal="$(if $(GIT_REPO),0,1)" \
@@ -204,8 +219,10 @@ run-pipelines:
 	oc delete job run-pipelines -n $$KFP_NAMESPACE --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
-		--set repoUrl="$(GIT_REPO_URL)" \
-		--set repoRef="$(GIT_REPO_BRANCH)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set runPipelines.run=true \
 		--set-string runPipelines.args="$${ARGS:---single-repo}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \

@@ -4,8 +4,10 @@ kfpHost: ""
 clusterDomain: ""
 deployNotebooks: false
 
-repoUrl: ""
-repoRef: main
+augurRepoUrl: ""
+augurRepoBranch: main
+augurRepoUsername: ""
+augurRepoToken: ""
 
 minio:
   rootUser: ""
