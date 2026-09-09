@@ -70,7 +70,11 @@ apply-secrets:
 	\
 	echo "==> Recreating secret code-understanding-env..." && \
 	oc delete secret code-understanding-env -n $$KFP_NAMESPACE --ignore-not-found=true && \
-	oc create secret generic code-understanding-env --from-env-file $(ENV_FILE) -n $$KFP_NAMESPACE && \
+	oc create secret generic code-understanding-env \
+			--from-env-file $(ENV_FILE) \
+			--from-literal=AUGUR_GIT_REPO_URL="$$AUGUR_GIT_REPO_URL" \
+			--from-literal=AUGUR_GIT_REPO_BRANCH="$$AUGUR_GIT_REPO_BRANCH" \
+			-n $$KFP_NAMESPACE && \
 	\
 	REPO_LIST="$$GIT_REPO_LIST" && \
 	if [ -n "$$PIPELINE_GIT_REPO_LIST" ] && [ -f "$$PIPELINE_GIT_REPO_LIST" ]; then \
