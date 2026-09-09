@@ -2,8 +2,6 @@ import os
 import logging
 from contextlib import contextmanager
 
-import os
-
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 ##############################################################################
@@ -58,6 +56,7 @@ def get_pip_installable_git_url(
     subdirectory: str,
 ) -> str:
     """Returns a pip-installable VCS URL with embedded credentials."""
+    import sys
     print(
         f"utils.kubeflow_utils.get_pip_installable_git_url: Username: {git_username} | URL: {repo_url} | Ref: {repo_ref}",
         file=sys.stdout,
