@@ -38,7 +38,7 @@ metadata:
     opendatahub.io/notebook-image: "true"
   annotations:
     opendatahub.io/notebook-image-name: "{{ .Values.dataGeneration.image.title}}"
-    opendatahub.io/notebook-image-url: "{{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.dataGeneration.image.registry | trimSuffix "/" }}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}"
     opendatahub.io/recommended-accelerators: '[]'
 spec:
   lookupPolicy:
@@ -48,10 +48,10 @@ spec:
       annotations:
         opendatahub.io/notebook-python-dependencies: '[]'
         opendatahub.io/notebook-software: '[]'
-        opendatahub.io/imported-from: {{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}
+        opendatahub.io/imported-from: "{{ .Values.dataGeneration.image.registry | trimSuffix "/" }}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}"
       from:
         kind: DockerImage
-        name: '{{ .Values.dataGeneration.image.registry}}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}'
+        name: '{{ .Values.dataGeneration.image.registry | trimSuffix "/" }}/{{ .Values.dataGeneration.image.name}}:{{ .Values.dataGeneration.image.tag}}'
       importPolicy:
         importMode: Legacy
       referencePolicy:
@@ -68,7 +68,7 @@ metadata:
     opendatahub.io/notebook-image: "true"
   annotations:
     opendatahub.io/notebook-image-name: "{{ .Values.graphrag.image.title}}"
-    opendatahub.io/notebook-image-url: "{{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.graphrag.image.registry | trimSuffix "/" }}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}"
     opendatahub.io/recommended-accelerators: '[]'
 spec:
   lookupPolicy:
@@ -78,10 +78,10 @@ spec:
       annotations:
         opendatahub.io/notebook-python-dependencies: '[]'
         opendatahub.io/notebook-software: '[]'
-        opendatahub.io/imported-from: {{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}
+        opendatahub.io/imported-from: "{{ .Values.graphrag.image.registry | trimSuffix "/" }}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}"
       from:
         kind: DockerImage
-        name: '{{ .Values.graphrag.image.registry}}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}'
+        name: '{{ .Values.graphrag.image.registry | trimSuffix "/" }}/{{ .Values.graphrag.image.name}}:{{ .Values.graphrag.image.tag}}'
       importPolicy:
         importMode: Legacy
       referencePolicy:
@@ -98,7 +98,7 @@ metadata:
     opendatahub.io/notebook-image: "true"
   annotations:
     opendatahub.io/notebook-image-name: "{{ .Values.analysis.image.title}}"
-    opendatahub.io/notebook-image-url: "{{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}"
+    opendatahub.io/notebook-image-url: "{{ .Values.analysis.image.registry | trimSuffix "/" }}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}"
     opendatahub.io/recommended-accelerators: '[]'
 spec:
   lookupPolicy:
@@ -108,10 +108,10 @@ spec:
       annotations:
         opendatahub.io/notebook-python-dependencies: '[]'
         opendatahub.io/notebook-software: '[]'
-        opendatahub.io/imported-from: {{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}
+        opendatahub.io/imported-from: "{{ .Values.analysis.image.registry | trimSuffix "/" }}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}"
       from:
         kind: DockerImage
-        name: '{{ .Values.analysis.image.registry}}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}'
+        name: '{{ .Values.analysis.image.registry | trimSuffix "/" }}/{{ .Values.analysis.image.name}}:{{ .Values.analysis.image.tag}}'
       importPolicy:
         importMode: Legacy
       referencePolicy:

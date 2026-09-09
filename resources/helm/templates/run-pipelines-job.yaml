@@ -14,7 +14,7 @@ spec:
       {{- if .Values.tls.enableVerification }}
       initContainers:
         - name: concatenate-all-ca-trusts
-          image: "{{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
+          image: "{{ .Values.pipelineTools.image.registry | trimSuffix "/" }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
           command: ["/bin/sh", "-c"]
           args:
             - cat /etc/pki/ca-trust/extracted/trusted-ca/* /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt > /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
@@ -27,7 +27,7 @@ spec:
       {{- end }}
       containers:
         - name: run-pipelines
-          image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
+          image: "{{ .Values.pipelineTools.image.registry | trimSuffix "/" }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
           command:
             - sh
             - -c

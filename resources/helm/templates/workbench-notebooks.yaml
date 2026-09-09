@@ -1,6 +1,6 @@
 {{- if .Values.deployNotebooks }}
-{{- $datagen_image := .Values.dataGeneration.image.digestRef | default (printf "%s/%s:%s" .Values.dataGeneration.image.registry .Values.dataGeneration.image.name .Values.dataGeneration.image.tag) }}
-{{- $graphrag_image := .Values.graphrag.image.digestRef | default (printf "%s/%s:%s" .Values.graphrag.image.registry .Values.graphrag.image.name .Values.graphrag.image.tag) }}
+{{- $datagen_image := .Values.dataGeneration.image.digestRef | default (printf "%s/%s:%s" (.Values.dataGeneration.image.registry | trimSuffix "/") .Values.dataGeneration.image.name .Values.dataGeneration.image.tag) }}
+{{- $graphrag_image := .Values.graphrag.image.digestRef | default (printf "%s/%s:%s" (.Values.graphrag.image.registry | trimSuffix "/") .Values.graphrag.image.name .Values.graphrag.image.tag) }}
 ---
 apiVersion: kubeflow.org/v1
 kind: Notebook

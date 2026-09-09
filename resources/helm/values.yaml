@@ -17,7 +17,7 @@ minio:
 dataGeneration:
   image:
     registry: ""
-    name: ""
+    name: "data-generation"
     title: "Agent Mesh - Data Generation"
     tag: latest
     digestRef: ""
@@ -27,7 +27,7 @@ dataGeneration:
 graphrag:
   image:
     registry: ""
-    name: ""
+    name: "data-indexing"
     title: "Agent Mesh - GraphRAG Indexing"
     tag: latest
     digestRef: ""
@@ -37,7 +37,7 @@ graphrag:
 analysis:
   image:
     registry: ""
-    name: ""
+    name: "data-analysis"
     title: "Agent Mesh - Analysis"
     tag: latest
   notebook:
@@ -46,7 +46,7 @@ analysis:
 pipelineTools:
   image:
     registry: ""
-    name: pipeline-tools
+    name: "pipeline-tools"
     tag: latest
 
 tls:

@@ -10,22 +10,32 @@ logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 # Base images
 ##############################################################################
 
-DATA_GENERATION_BASE_IMAGE = (
-    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
-    f"/{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_TAG')}"
+def _build_image_ref(registry: str | None, name: str | None, tag: str | None) -> str:
+    """Builds a normalized container image reference."""
+    reg = (registry or "").strip().rstrip("/")
+    img_name = (name or "").strip().lstrip("/")
+    img_tag = (tag or "latest").strip()
+    if not reg:
+        return f"{img_name}:{img_tag}"
+    return f"{reg}/{img_name}:{img_tag}"
+
+
+DATA_GENERATION_BASE_IMAGE = _build_image_ref(
+    os.getenv('KFP_IMAGE_REGISTRY'),
+    os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_NAME', 'data-generation'),
+    os.getenv('KFP_DATA_GENERATION_BASE_IMAGE_TAG', 'latest'),
 )
 
-INDEXING_BASE_IMAGE = (
-    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
-    f"/{os.getenv('KFP_INDEXING_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_INDEXING_BASE_IMAGE_TAG')}"
+INDEXING_BASE_IMAGE = _build_image_ref(
+    os.getenv('KFP_IMAGE_REGISTRY'),
+    os.getenv('KFP_INDEXING_BASE_IMAGE_NAME', 'data-indexing'),
+    os.getenv('KFP_INDEXING_BASE_IMAGE_TAG', 'latest'),
 )
 
-ANALYSIS_BASE_IMAGE = (
-    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
-    f"/{os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME')}"
-    f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_TAG')}"
+ANALYSIS_BASE_IMAGE = _build_image_ref(
+    os.getenv('KFP_IMAGE_REGISTRY'),
+    os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME', 'data-analysis'),
+    os.getenv('KFP_ANALYSIS_BASE_IMAGE_TAG', 'latest'),
 )
 
 
