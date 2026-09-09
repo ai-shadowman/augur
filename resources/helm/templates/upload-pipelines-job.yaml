@@ -30,6 +30,7 @@ spec:
       containers:
         - name: upload-pipelines
           image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
+          imagePullPolicy: Always
           command:
             - sh
             - -c
