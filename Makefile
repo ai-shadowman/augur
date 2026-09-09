@@ -12,7 +12,7 @@ endif
 $(info ==> Using AUGUR_GIT_REPO_BRANCH: $(AUGUR_GIT_REPO_BRANCH))
 
 ifndef CLUSTER_DOMAIN  
-    CLUSTER_DOMAIN      := (shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+    CLUSTER_DOMAIN      := $(shell oc get ingress.config cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
 endif
 $(info ==> Using CLUSTER_DOMAIN: $(CLUSTER_DOMAIN))
 
