@@ -7,10 +7,10 @@ from kfp.dsl import Dataset, Input, Markdown, Output
 from utils.kubeflow_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
-    git_username=os.getenv("GIT_USERNAME"),
-    git_token=os.getenv("GIT_TOKEN"),
-    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
-    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
+    git_username=os.getenv("AUGUR_GIT_REPO_USERNAME"),
+    git_token=os.getenv("AUGUR_GIT_REPO_TOKEN"),
+    repo_url=os.getenv("AUGUR_GIT_REPO_URL", ""),
+    repo_ref=os.getenv("AUGUR_GIT_REPO_BRANCH", "main"),
     subdirectory="workflows/examples/code_understanding",
 )
 

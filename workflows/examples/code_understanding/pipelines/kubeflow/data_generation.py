@@ -7,20 +7,18 @@ from kfp.dsl import Dataset, Input, Output
 from utils.kubeflow_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
-    git_username=os.getenv("GIT_USERNAME"),
-    git_token=os.getenv("GIT_TOKEN"),
-    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
-    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
+    git_username=os.getenv("AUGUR_GIT_REPO_USERNAME"),
+    git_token=os.getenv("AUGUR_GIT_REPO_TOKEN"),
+    repo_url=os.getenv("AUGUR_GIT_REPO_URL", ""),
+    repo_ref=os.getenv("AUGUR_GIT_REPO_BRANCH", "main"),
     subdirectory="workflows/examples/code_understanding",
 )
-
 
 ##############################################################################
 # Components
 ##############################################################################
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
@@ -40,7 +38,6 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@inject_secret_as_env(secret_name="git-credentials")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def generate_code_and_meta_op(git_repo: str, git_branch: str,
                                source_dir: Input[Dataset], target_dir: Output[Dataset],

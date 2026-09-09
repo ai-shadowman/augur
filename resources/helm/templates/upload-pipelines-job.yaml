@@ -30,6 +30,7 @@ spec:
       containers:
         - name: upload-pipelines
           image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
+          imagePullPolicy: Always
           command:
             - sh
             - -c
@@ -54,11 +55,11 @@ spec:
               value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
             - name: MLFLOW_TRACKING_SERVER_CERT_PATH
               value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: AUGUR_GIT_REPO_URL
+              value: "{{ .Values.augurRepoUrl }}"
+            - name: AUGUR_GIT_REPO_BRANCH
+              value: "{{ .Values.augurRepoBranch }}"
             {{- end }}
-            - name: AGENTMESH_REPO_URL
-              value: "{{ .Values.repoUrl }}"
-            - name: AGENTMESH_REPO_REF
-              value: "{{ .Values.repoRef }}"
           {{- if .Values.tls.enableVerification }}
           volumeMounts:
             - name: trusted-ca-concatenated
