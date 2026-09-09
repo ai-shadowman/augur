@@ -4,15 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Metrics, Output
-from utils.kubeflow_utils import get_pip_installable_git_url, INDEXING_BASE_IMAGE, inject_secret_as_env
-
-_AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
-    git_username=os.getenv("GIT_USERNAME"),
-    git_token=os.getenv("GIT_TOKEN"),
-    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
-    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
-    subdirectory="workflows/examples/code_understanding",
-)
+from utils.kubeflow_utils import INDEXING_BASE_IMAGE, inject_secret_as_env
 
 
 ##############################################################################
@@ -21,14 +13,10 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE)
 def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
                           git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
-
-    import sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
 
     from pipelines.base.indexing import generate_graphrag_index
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
@@ -50,14 +38,10 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE)
 def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Dataset],
                             git_repo: str = "", git_branch: str = "",
                             multi_repo: bool = False):
-
-    import sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
 
     import logging
     import pandas as pd
@@ -86,15 +70,11 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE)
 def run_indexing_multi_repo_op(parent_target_path: str,
                                 graphrag_dir: Output[Dataset],
                                 eval_results: Output[Dataset]):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
-
-    import sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
 
     import pandas as pd
     from pipelines.base.indexing import IndexingPipeline

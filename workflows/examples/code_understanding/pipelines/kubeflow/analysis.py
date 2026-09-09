@@ -4,15 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Markdown, Output
-from utils.kubeflow_utils import ANALYSIS_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
-
-_AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
-    git_username=os.getenv("GIT_USERNAME"),
-    git_token=os.getenv("GIT_TOKEN"),
-    repo_url=os.getenv("AGENTMESH_REPO_URL", ""),
-    repo_ref=os.getenv("AGENTMESH_REPO_REF", "main"),
-    subdirectory="workflows/examples/code_understanding",
-)
+from utils.kubeflow_utils import ANALYSIS_BASE_IMAGE, inject_secret_as_env
 
 
 ##############################################################################
@@ -21,14 +13,10 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=ANALYSIS_BASE_IMAGE)
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown],
                                   git_repo: str = "", git_branch: str = "",
                                   multi_repo: bool = False):
-
-    import sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
 
     from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
@@ -40,13 +28,9 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=["--target", "/tmp/pkg", "--no-deps", _AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=ANALYSIS_BASE_IMAGE)
 def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
-
-    import sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
 
     from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact

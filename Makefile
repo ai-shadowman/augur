@@ -131,17 +131,23 @@ build-images:
 	TOOLS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_PIPELINE_TOOLS_IMAGE_NAME:$$KFP_PIPELINE_TOOLS_IMAGE_TAG" && \
 	\
 	echo "==> Building data generation image..." && \
-	podman build -t "$$DATAGEN_IMG" resources/images/data-generation && \
+	podman build -f resources/images/data-generation/Containerfile \
+		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
+		-t "$$DATAGEN_IMG" . && \
 	echo "==> Pushing data generation image..." && \
 	podman push "$$DATAGEN_IMG" && \
 	\
 	echo "==> Building indexing image..." && \
-	podman build -t "$$INDEX_IMG" resources/images/data-indexing && \
+	podman build -f resources/images/data-indexing/Containerfile \
+		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
+		-t "$$INDEX_IMG" . && \
 	echo "==> Pushing indexing image..." && \
 	podman push "$$INDEX_IMG" && \
 	\
 	echo "==> Building analysis image..." && \
-	podman build -t "$$ANALYSIS_IMG" resources/images/data-indexing && \
+	podman build -f resources/images/data-analysis/Containerfile \
+		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
+		-t "$$ANALYSIS_IMG" . && \
 	echo "==> Pushing analysis image..." && \
 	podman push "$$ANALYSIS_IMG" && \
 	\

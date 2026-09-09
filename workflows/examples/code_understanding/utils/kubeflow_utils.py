@@ -40,9 +40,7 @@ def setup_logging():
     (KFP executor pre-configures them before the component body runs).
     Calling ``setLevel`` on the root logger overrides the level regardless.
     """
-    import logging, sys
-    if "/tmp/pkg" not in sys.path:
-        sys.path.insert(0, "/tmp/pkg")
+    import logging
     _level = os.environ.get('LOGLEVEL', 'INFO').upper()
     logging.basicConfig(level=_level)
     logging.getLogger().setLevel(_level)
