@@ -4,6 +4,8 @@ FROM ${BASE_IMAGE}
 USER 1001
 WORKDIR /opt/app-root/src
 
+ENV PYTHONPATH="/opt/app-root/src/workflows/examples/code_understanding:${PYTHONPATH}"
+
 COPY --chown=1001:0 resources/images/data-analysis/requirements.txt ./requirements.txt
 COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
 

@@ -5,10 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentmesh-code-understanding"
 version = "0.1.0"
-dependencies = []
+dependencies = [
+    "litellm",
+]
 
-[tool.setuptools]
-packages = ["pipelines", "pipelines.base", "pipelines.kubeflow", "utils", "loaders", "flows", "config", "assets"]
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "tests*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "*" = [
@@ -29,4 +33,22 @@ packages = ["pipelines", "pipelines.base", "pipelines.kubeflow", "utils", "loade
     "*.in",
     "*.html",
     "*.parquet",
+    "**/*.sh",
+    "**/*.json",
+    "**/*.jsonl",
+    "**/*.yaml",
+    "**/*.yaml.in",
+    "**/*.toml",
+    "**/*.txt",
+    "**/*.md",
+    "**/*.csv",
+    "**/*.tsv",
+    "**/*.xml",
+    "**/*.jinja",
+    "**/*.jinja2",
+    "**/*.j2",
+    "**/*.in",
+    "**/*.html",
+    "**/*.parquet",
 ]
+

@@ -2,12 +2,29 @@ import functools
 import os
 from abc import ABC, abstractmethod
 
-_DEFAULT_EVAL_DATASET = os.path.normpath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..", "assets", "datasets", "eval", "code_understanding.csv",
-    )
-)
+def _resolve_default_eval_dataset() -> str:
+    candidates = [
+        os.path.normpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "assets", "datasets", "eval", "code_understanding.csv",
+            )
+        ),
+        os.path.normpath(
+            os.path.join(
+                os.environ.get("CODE_UNDERSTANDING_DIR", ""),
+                "assets", "datasets", "eval", "code_understanding.csv",
+            )
+        ),
+        "/opt/app-root/src/workflows/examples/code_understanding/assets/datasets/eval/code_understanding.csv",
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return candidates[0]
+
+
+_DEFAULT_EVAL_DATASET = _resolve_default_eval_dataset()
 
 
 @functools.lru_cache(maxsize=None)

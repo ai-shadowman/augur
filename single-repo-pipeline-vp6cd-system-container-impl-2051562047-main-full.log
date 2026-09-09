@@ -1,0 +1,86 @@
+I0909 17:14:17.735467      17 main.go:66] Setting log level to: '1'
+W0909 17:14:17.995522      17 launcher_v2.go:655] Could not determine retry index from pod annotation, defaulting to 0: argo node-name "single-repo-pipeline-vp6cd.root.graphrag-indexing-pipeline.graphrag-evaluation-op.executor" has no retry index suffix
+[KFP Executor 2026-09-09 17:14:18,408 INFO]: Looking for component `graphrag_evaluation_op` in --component_module_path `/tmp/tmp.Q1MqRqnlt2/ephemeral_component.py`
+[KFP Executor 2026-09-09 17:14:18,408 INFO]: Loading KFP component "graphrag_evaluation_op" from /tmp/tmp.Q1MqRqnlt2/ephemeral_component.py (directory "/tmp/tmp.Q1MqRqnlt2" and module name "ephemeral_component")
+[KFP Executor 2026-09-09 17:14:18,409 INFO]: Got executor_input:
+{
+    "inputs": {
+        "artifacts": {
+            "graphrag_dir": {
+                "artifacts": [
+                    {
+                        "name": "99",
+                        "type": {
+                            "instanceSchema": ""
+                        },
+                        "uri": "s3://demopipelines/single-repo-pipeline/349ebd08-7e8c-40d2-8930-33c928b42a0d/graphrag-indexing-op/e80acb1b-0df6-472d-afc6-9e00a5ed8b07/graphrag_dir",
+                        "metadata": {
+                            "display_name": "graphrag_dir",
+                            "store_session_info": "{\"Provider\":\"s3\",\"Params\":{\"accessKeyKey\":\"AWS_ACCESS_KEY_ID\",\"disableSSL\":\"false\",\"endpoint\":\"https://minio-api-codearcheology-dbrletic.apps.ocp.phn5j.sandbox3516.opentlc.com:443\",\"forcePathStyle\":\"true\",\"fromEnv\":\"false\",\"maxRetries\":\"5\",\"region\":\"us-east-1\",\"secretKeyKey\":\"AWS_SECRET_ACCESS_KEY\",\"secretName\":\"dashboard-dspa-secret\"}}"
+                        }
+                    }
+                ]
+            }
+        },
+        "parameterValues": {
+            "git_branch": "main",
+            "git_repo": "https://github.com/kfrankli/northpolesouthern-train.git",
+            "multi_repo": false
+        }
+    },
+    "outputs": {
+        "artifacts": {
+            "eval_results": {
+                "artifacts": [
+                    {
+                        "name": "eval_results",
+                        "type": {
+                            "schemaTitle": "system.Dataset",
+                            "schemaVersion": "0.0.1"
+                        },
+                        "uri": "s3://demopipelines/single-repo-pipeline/349ebd08-7e8c-40d2-8930-33c928b42a0d/graphrag-evaluation-op/91978399-c54a-4cd1-a16a-12f89b4cf4bf/eval_results"
+                    }
+                ]
+            },
+            "executor-logs": {
+                "artifacts": [
+                    {
+                        "name": "executor-logs",
+                        "type": {
+                            "schemaTitle": "system.Artifact"
+                        },
+                        "uri": "s3://demopipelines/single-repo-pipeline/349ebd08-7e8c-40d2-8930-33c928b42a0d/graphrag-evaluation-op/91978399-c54a-4cd1-a16a-12f89b4cf4bf/executor-logs"
+                    }
+                ]
+            }
+        },
+        "outputFile": "/s3/demopipelines/single-repo-pipeline/349ebd08-7e8c-40d2-8930-33c928b42a0d/graphrag-evaluation-op/91978399-c54a-4cd1-a16a-12f89b4cf4bf/output_metadata.json"
+    }
+}
+/usr/lib64/python3.11/tarfile.py:2303: RuntimeWarning: The default behavior of tarfile extraction has been changed to disallow common exploits (including CVE-2007-4559). By default, absolute/parent paths are disallowed and some mode bits are cleared. See https://access.redhat.com/articles/7004769 for more details.
+  warnings.warn(
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/opt/app-root/lib64/python3.11/site-packages/kfp/dsl/executor_main.py", line 109, in <module>
+    executor_main()
+  File "/opt/app-root/lib64/python3.11/site-packages/kfp/dsl/executor_main.py", line 101, in executor_main
+    output_file = executor.execute()
+                  ^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.11/site-packages/kfp/dsl/executor.py", line 453, in execute
+    result = self.func(**func_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tmp.Q1MqRqnlt2/ephemeral_component.py", line 25, in graphrag_evaluation_op
+    results = evaluate_graphrag_index(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/app-root/lib64/python3.11/site-packages/pipelines/base/indexing.py", line 128, in evaluate_graphrag_index
+    from eval.default_custom_evaluator import DefaultCustomEvaluator
+ModuleNotFoundError: No module named 'eval'
+E0909 17:14:18.938270      17 launcher_v2.go:417] Component failed to execute successfully: exit status 1
+I0909 17:14:18.938321      17 launcher_v2.go:770] outputArtifact in uploadOutputArtifacts call: executor-logs
+I0909 17:14:18.947512      17 object_store.go:213] uploadFile(localFilePath="/s3/demopipelines/single-repo-pipeline/349ebd08-7e8c-40d2-8930-33c928b42a0d/graphrag-evaluation-op/91978399-c54a-4cd1-a16a-12f89b4cf4bf/executor-logs-0", blobFilePath="graphrag-evaluation-op/91978399-c54a-4cd1-a16a-12f89b4cf4bf/executor-logs-0")
+I0909 17:14:19.040585      17 launcher_v2.go:202] publish success.
+I0909 17:14:19.231946      17 client.go:797] Attempting to update DAG state
+F0909 17:14:19.343686      17 main.go:58] failed to execute component: exit status 1
+time="2026-09-09T17:14:19.711Z" level=info msg="sub-process exited" argo=true error="<nil>"
+Error: exit status 1

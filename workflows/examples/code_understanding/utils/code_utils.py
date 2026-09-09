@@ -2,8 +2,6 @@ from collections import defaultdict
 
 from jsonpath_ng import jsonpath, parse
 
-from github import Github
-
 from pygments.lexers import guess_lexer_for_filename
 
 from pygments.util import ClassNotFound

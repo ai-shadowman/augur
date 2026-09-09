@@ -1,0 +1,1 @@
+"""Assets mappings package."""

@@ -3,9 +3,22 @@ import yaml
 from abc import ABC, abstractmethod
 
 
+def _resolve_assets_dir() -> str:
+    """Finds the assets directory, checking package root, environment var, and container paths."""
+    candidates = [
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets")),
+        os.path.normpath(os.path.join(os.environ.get("CODE_UNDERSTANDING_DIR", ""), "assets")),
+        "/opt/app-root/src/workflows/examples/code_understanding/assets",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return candidates[0]
+
+
 class AssetLoader(ABC):
 
-    _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
+    _ASSETS_DIR = _resolve_assets_dir()
     _PROMPTS_DIR = os.path.join(_ASSETS_DIR, "prompts")
 
     RESULTS_PATH_PREFIX_EVAL = "results/evaluations"

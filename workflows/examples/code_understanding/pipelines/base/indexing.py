@@ -50,6 +50,14 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
 
         graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
+        if not os.path.isfile(graphrag_sh):
+            for candidate in [
+                os.path.join(os.environ.get("CODE_UNDERSTANDING_DIR", ""), "pipelines", "graphrag.sh"),
+                "/opt/app-root/src/workflows/examples/code_understanding/pipelines/graphrag.sh",
+            ]:
+                if candidate and os.path.isfile(candidate):
+                    graphrag_sh = candidate
+                    break
 
         proc = subprocess.run(
             ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
