@@ -4,6 +4,9 @@ setup(
     name="agentmesh-code-understanding",
     version="0.1.0",
     packages=find_packages(exclude=["scripts*", "notebooks*", "compiled_pipelines*"]),
+    install_requires=[
+        "litellm",
+    ],
     package_data={
         "": [
             "*.sh",
