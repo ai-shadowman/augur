@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import threading
 from typing import Any, Dict, Optional
 
@@ -264,64 +263,6 @@ def format_markdown_summary() -> str:
         f"{_GLOBAL_TRACKER.format_summary()}\n"
         f"```\n"
     )
-
-
-def _remove_existing_token_summary(report: str) -> str:
-    """Removes any existing '## LLM Token Usage & Cost Summary' section from the report."""
-    pattern = re.compile(
-        r"(?:\n*---\n*)?## LLM Token Usage & Cost Summary\b[\s\S]*?(?:```\s*|\Z)",
-        re.MULTILINE,
-    )
-    return pattern.sub("", report).rstrip()
-
-
-def insert_token_summary_into_report(report: str, summary: Optional[str] = None) -> str:
-    """Inserts the LLM Token Usage & Cost Summary at the end of '## 10. Closing Remarks'.
-
-    If '## 10. Closing Remarks' (or matching Closing Remarks header) exists in the report,
-    the summary is placed at the conclusion of that section (before any subsequent section headers).
-    If no Closing Remarks section is found, '## 10. Closing Remarks' is appended with the summary.
-    If the report already contains an existing token summary, it is relocated to the correct position.
-    """
-    if summary is None:
-        summary = format_markdown_summary()
-
-    # Clean existing summary if already present to prevent duplicates
-    clean_report = _remove_existing_token_summary(report)
-
-    # Patterns to match Closing Remarks header
-    closing_remarks_patterns = [
-        re.compile(r"(?mi)^(#{1,6}\s*10\.\s*Closing\s+Remarks\b.*?)$"),
-        re.compile(r"(?mi)^(#{1,6}\s*Closing\s+Remarks\b.*?)$"),
-        re.compile(r"(?mi)^(10\.\s*Closing\s+Remarks\b.*?)$"),
-        re.compile(r"(?mi)^(#{1,6}\s*10\..*?Closing.*?)$"),
-    ]
-
-    match = None
-    for pattern in closing_remarks_patterns:
-        match = pattern.search(clean_report)
-        if match:
-            break
-
-    # Extract summary content without any leading divider
-    summary_block = summary.strip()
-    content_only = re.sub(r"^---\s*", "", summary_block).strip()
-
-    if match:
-        header_end = match.end()
-        # Look for the start of the next section after the closing remarks header
-        next_section_match = re.search(r"\n(?=#{1,4}\s+\S)", clean_report[header_end:])
-        if next_section_match:
-            insert_pos = header_end + next_section_match.start()
-            section_body = clean_report[:insert_pos].rstrip()
-            remaining_report = clean_report[insert_pos:].lstrip()
-            return f"{section_body}\n\n---\n\n{content_only}\n\n{remaining_report}\n"
-        else:
-            # Closing Remarks is the last section in the report
-            return f"{clean_report.rstrip()}\n\n---\n\n{content_only}\n"
-    else:
-        # No Closing Remarks header found; append section 10 Closing Remarks with summary
-        return f"{clean_report.rstrip()}\n\n---\n\n## 10. Closing Remarks\n\n{content_only}\n"
 
 
 def display_token_summary() -> None:
