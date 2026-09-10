@@ -20,7 +20,11 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Dataset]):
+def prepare_environment_op(git_repo: str, 
+    git_branch: str, 
+    git_username: str, 
+    git_token: str, 
+    source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
 
     from pipelines.base.data_generation import prepare_environment
@@ -34,14 +38,19 @@ def prepare_environment_op(git_repo: str, git_branch: str, source_dir: Output[Da
             target_path=tmp_target,
             git_repo=git_repo,
             git_branch=git_branch,
+            git_username=git_username,
+            git_token=git_token,
         )
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
-def generate_code_and_meta_op(git_repo: str, git_branch: str,
-                               source_dir: Input[Dataset], target_dir: Output[Dataset],
-                               multi_repo: bool = False):
+def generate_code_and_meta_op(
+    git_repo: str, 
+    git_branch: str,
+    source_dir: Input[Dataset], 
+    target_dir: Output[Dataset],
+    multi_repo: bool = False):
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
@@ -102,7 +111,15 @@ def get_repo_list_op() -> list:
     import logging
     logging.info(os.getenv("GIT_REPO_LIST_CONTENTS"))
 
-    return json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
+    repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
+
+    # Ensure missing optional fields exist in every item before sending to KFP ParallelFor
+    for repo in repos:
+        repo.setdefault("git_branch", "main")
+        repo.setdefault("git_username", "")
+        repo.setdefault("git_token", "")
+
+    return repos    
 
     #return DefaultAssetLoader().download("repos/repo_list.json")
 
@@ -115,12 +132,16 @@ def get_repo_list_op() -> list:
 def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
+    git_username: str = "",
+    git_token: str = "",
     multi_repo: bool = False,
 ) -> Dataset:
 
     prep = prepare_environment_op(
         git_repo=git_repo,
         git_branch=git_branch,
+        git_username=git_username,
+        git_token=git_token
     )
 
     gen = generate_code_and_meta_op(
@@ -144,6 +165,8 @@ def _run_pipeline_multi_repo():
         _run_pipeline(
             git_repo=repo.git_repo,
             git_branch=repo.git_branch,
+            git_username=repo.git_username,
+            git_token=repo.git_token,
             multi_repo=True,
         )
 
