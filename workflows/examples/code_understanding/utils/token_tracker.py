@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import threading
 from typing import Any, Dict, Optional
 
@@ -254,15 +255,88 @@ def format_token_summary() -> str:
     return _GLOBAL_TRACKER.format_summary()
 
 
-def format_markdown_summary() -> str:
+def format_markdown_summary(header: str = "## 12. LLM TOKEN USAGE & COST SUMMARY") -> str:
     """Returns the token & cost summary formatted as a Markdown section for appending to reports."""
     return (
         f"\n\n---\n\n"
-        f"## LLM Token Usage & Cost Summary\n\n"
+        f"{header}\n\n"
         f"```text\n"
         f"{_GLOBAL_TRACKER.format_summary()}\n"
         f"```\n"
     )
+
+
+def _remove_existing_token_summary(report: str) -> str:
+    """Removes any existing LLM Token Usage & Cost Summary section from the report."""
+    pattern = re.compile(
+        r"(?:\n*---\n*)?##\s*(?:\d+\.\s*)?LLM\s+TOKEN\s+USAGE\s+&\s+COST\s+SUMMARY\b[\s\S]*?```(?:text)?[\s\S]*?```\s*",
+        re.IGNORECASE,
+    )
+    cleaned = pattern.sub("", report)
+    fallback = re.compile(
+        r"(?:\n*---\n*)?##\s*(?:\d+\.\s*)?LLM\s+TOKEN\s+USAGE\s+&\s+COST\s+SUMMARY\b[\s\S]*$",
+        re.IGNORECASE,
+    )
+    if re.search(r"##\s*(?:\d+\.\s*)?LLM\s+TOKEN\s+USAGE\s+&\s+COST\s+SUMMARY\b", cleaned, re.IGNORECASE):
+        cleaned = fallback.sub("", cleaned)
+    return cleaned.rstrip()
+
+
+def insert_token_summary_into_report(report: str, summary: Optional[str] = None) -> str:
+    """Inserts the LLM Token Usage & Cost Summary section directly after
+    '## 11. Acceptance Criteria' (or before the subsequent major section like
+    '### Code Migration Plan (JSON)'). If 'Acceptance Criteria' is not found,
+    falls back to inserting after 'Characterization Tests Generation Plan' or at the end.
+    """
+    clean_report = _remove_existing_token_summary(report)
+
+    if summary is None:
+        summary = format_markdown_summary()
+
+    summary_block = summary.strip()
+
+    # Find the Acceptance Criteria section (e.g. "## 11. Acceptance Criteria")
+    acceptance_criteria_regex = re.compile(
+        r"(?mi)^(#{1,4}\s*(?:\d+\.\s*)?Acceptance\s+Criteria\b.*?)$"
+    )
+    match = acceptance_criteria_regex.search(clean_report)
+
+    if match:
+        header_end = match.end()
+        # Find the start of the next major section after Acceptance Criteria
+        # e.g., "### Code Migration Plan (JSON)", or another ###/## heading
+        next_heading = re.search(r"\n(?=###\s+\S|##\s+\d+\.)", clean_report[header_end:])
+        if not next_heading:
+            next_heading = re.search(r"\n(?=#{1,4}\s+\S)", clean_report[header_end:])
+
+        if next_heading:
+            insert_pos = header_end + next_heading.start()
+            return (
+                f"{clean_report[:insert_pos].rstrip()}\n\n"
+                f"{summary_block}\n\n"
+                f"{clean_report[insert_pos:].lstrip()}"
+            )
+        else:
+            return f"{clean_report.rstrip()}\n\n{summary_block}\n"
+
+    # Fallback 1: Check for "Characterization Tests Generation Plan"
+    char_plan_regex = re.compile(
+        r"(?mi)^(#{1,4}\s*Characterization[\s\w\-]*Plan\b.*?)$"
+    )
+    char_match = char_plan_regex.search(clean_report)
+    if char_match:
+        # Find next major ### section (e.g. ### Code Migration Plan (JSON))
+        next_heading = re.search(r"\n(?=###\s+\S)", clean_report[char_match.end():])
+        if next_heading:
+            insert_pos = char_match.end() + next_heading.start()
+            return (
+                f"{clean_report[:insert_pos].rstrip()}\n\n"
+                f"{summary_block}\n\n"
+                f"{clean_report[insert_pos:].lstrip()}"
+            )
+
+    # Fallback 2: Append to the end of the report
+    return f"{clean_report.rstrip()}\n\n{summary_block}\n"
 
 
 def display_token_summary() -> None:

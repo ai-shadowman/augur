@@ -15,6 +15,7 @@ from utils.token_tracker import (
     get_token_summary,
     format_token_summary,
     format_markdown_summary,
+    insert_token_summary_into_report,
     reset_token_count,
     display_token_summary,
     setup_litellm_token_tracking,
@@ -84,13 +85,74 @@ class TestTokenTracker(unittest.TestCase):
     def test_format_markdown_summary(self):
         track_tokens(prompt_tokens=500, completion_tokens=150, model="gpt-4o", stage="analysis")
         md_section = format_markdown_summary()
-        self.assertIn("## LLM Token Usage & Cost Summary", md_section)
+        self.assertIn("## 12. LLM TOKEN USAGE & COST SUMMARY", md_section)
         self.assertIn("```text", md_section)
         self.assertIn("Estimated Total Cost", md_section)
         self.assertIn("gpt-4o", md_section)
 
+        # Custom header support
+        custom_md = format_markdown_summary(header="## Custom Cost Header")
+        self.assertIn("## Custom Cost Header", custom_md)
+
         txt_summary = format_token_summary()
         self.assertIn("LLM TOKEN USAGE & COST SUMMARY", txt_summary)
+
+    def test_insert_token_summary_after_acceptance_criteria(self):
+        track_tokens(prompt_tokens=100, completion_tokens=50, model="gpt-4o")
+        report = (
+            "### Characterization Tests Generation Plan\n\n"
+            "## 10. Timeline (Estimated Effort)\nSome timeline details.\n\n"
+            "## 11. Acceptance Criteria  \n- All tests pass.\n- Coverage >= 95%.\n\n"
+            "### Code Migration Plan (JSON)\n```json\n{}\n```"
+        )
+        updated = insert_token_summary_into_report(report)
+        self.assertIn("## 12. LLM TOKEN USAGE & COST SUMMARY", updated)
+        # Verify it appears after Acceptance Criteria but before Code Migration Plan
+        pos_ac = updated.index("## 11. Acceptance Criteria")
+        pos_summary = updated.index("## 12. LLM TOKEN USAGE & COST SUMMARY")
+        pos_json = updated.index("### Code Migration Plan (JSON)")
+        self.assertTrue(pos_ac < pos_summary < pos_json)
+
+    def test_insert_token_summary_with_closing_signature(self):
+        track_tokens(prompt_tokens=100, completion_tokens=50, model="gpt-4o")
+        report = (
+            "### Characterization Tests Generation Plan\n\n"
+            "## 11. Acceptance Criteria  \n\n"
+            "- **All tests pass** on both JDK 1.8 and JDK 11/17.\n\n"
+            "---\n\n"
+            "*Prepared by:* Senior QA Engineer\n"
+            "*Date:* 2026-09-10\n\n"
+            "### Code Migration Plan (JSON)\n```json\n{}\n```"
+        )
+        updated = insert_token_summary_into_report(report)
+        pos_ac = updated.index("## 11. Acceptance Criteria")
+        pos_prep = updated.index("*Prepared by:*")
+        pos_summary = updated.index("## 12. LLM TOKEN USAGE & COST SUMMARY")
+        pos_json = updated.index("### Code Migration Plan (JSON)")
+        self.assertTrue(pos_ac < pos_prep < pos_summary < pos_json)
+
+    def test_insert_token_summary_deduplication(self):
+        track_tokens(prompt_tokens=100, completion_tokens=50, model="gpt-4o")
+        report = (
+            "### Characterization Tests Generation Plan\n\n"
+            "## 11. Acceptance Criteria\nPass all tests.\n\n"
+            "### Code Migration Plan (JSON)\n```json\n{}\n```\n\n"
+            "---\n\n## LLM Token Usage & Cost Summary\n\n```text\nold table\n```"
+        )
+        updated = insert_token_summary_into_report(report)
+        # Should only have one summary, and it should be ## 12. LLM TOKEN USAGE & COST SUMMARY
+        self.assertEqual(updated.count("LLM TOKEN USAGE & COST SUMMARY"), 2)  # once in header, once in ASCII table
+        self.assertNotIn("old table", updated)
+        pos_summary = updated.index("## 12. LLM TOKEN USAGE & COST SUMMARY")
+        pos_json = updated.index("### Code Migration Plan (JSON)")
+        self.assertTrue(pos_summary < pos_json)
+
+    def test_insert_token_summary_fallback_end_of_report(self):
+        track_tokens(prompt_tokens=100, completion_tokens=50, model="gpt-4o")
+        report = "# Simple Report\n\nNo acceptance criteria section here."
+        updated = insert_token_summary_into_report(report)
+        self.assertIn("## 12. LLM TOKEN USAGE & COST SUMMARY", updated)
+        self.assertTrue(updated.endswith("```\n") or updated.endswith("```"))
 
 
 if __name__ == "__main__":
