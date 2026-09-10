@@ -3,7 +3,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
-def clone_from_repo(repo_url, destination_path, branch="master"):
+def clone_from_repo(repo_url, 
+                    destination_path, 
+                    branch: str = "main",
+                    git_username: str = os.environ.get('GIT_USERNAME',""),
+                    git_token: str = os.environ.get('GIT_TOKEN',"")):
     """Clones the given git repo to the specified destination."""
     from git import Repo
     from urllib.parse import urlparse, urlunparse
@@ -12,12 +16,10 @@ def clone_from_repo(repo_url, destination_path, branch="master"):
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-    username = os.environ.get('GIT_USERNAME')
-    token = os.environ.get('GIT_TOKEN')
     updated_repo_url = repo_url
-    if username and token:
+    if git_username and git_token:
         parsed = urlparse(repo_url)
-        updated_repo_url = urlunparse(parsed._replace(netloc=f"{username}:{token}@{parsed.netloc}"))
+        updated_repo_url = urlunparse(parsed._replace(netloc=f"{git_username}:{git_token}@{parsed.netloc}"))
 
     try:
 
@@ -53,7 +55,12 @@ def reset_environment(source_path: str, target_path: str):
     shutil.rmtree(target_path, ignore_errors=True)
 
 
-def prepare_environment(source_path: str, target_path: str, git_repo: str, git_branch: str):
+def prepare_environment(source_path: str, 
+                        target_path: str, 
+                        git_repo: str, 
+                        git_branch: str,
+                        git_username: str = "",
+                        git_token: str = ""):
     """Prepares the environment at the start of the pipeline."""
     import logging
     import os
@@ -66,7 +73,11 @@ def prepare_environment(source_path: str, target_path: str, git_repo: str, git_b
 
         reset_environment(source_path, target_path)
 
-        clone_from_repo(git_repo, source_path, branch=git_branch)
+        clone_from_repo(git_repo, 
+                        source_path, 
+                        branch=git_branch,
+                        git_username=git_username,
+                        git_token=git_token)
 
     except Exception as e:
 
