@@ -1,4 +1,5 @@
 import os
+import re
 import ssl
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
@@ -26,13 +27,16 @@ class DependencyAnalyzer:
 
     GIT_URL_REGEX = r'https?://(?:github|gitlab)\.com/[\w\-\.]+/[\w\-\.]+'
 
-    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False):
+    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False, token_tracker=None):
 
         self.root_dir = root_dir
 
         self.git_slug = git_slug
 
         self.multi_repo = multi_repo
+
+        from utils.token_tracker import TokenCostTracker
+        self.token_tracker = token_tracker or TokenCostTracker()
 
         self._setup_configuration()
 
@@ -348,6 +352,14 @@ class DependencyAnalyzer:
 
                 context_data = None
 
+                p_tokens = getattr(getattr(response, "metrics", None), "prompt_tokens", None)
+                o_tokens = getattr(getattr(response, "metrics", None), "output_tokens", None)
+                if p_tokens is None:
+                    p_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.chat_model)
+                if o_tokens is None:
+                    o_tokens = self.token_tracker.count_tokens(result, model=self.token_tracker.chat_model)
+                self.token_tracker.track_chat(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
+
             else:
 
                 if use_global:
@@ -365,6 +377,18 @@ class DependencyAnalyzer:
                         dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
                     )
 
+                    p_tokens = None
+                    o_tokens = None
+                    if isinstance(context_data, dict):
+                        p_tokens = context_data.get("prompt_tokens")
+                        o_tokens = context_data.get("output_tokens")
+                    if p_tokens is None:
+                        ctx_str = str(context_data) if context_data is not None else ""
+                        p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
+                    if o_tokens is None:
+                        o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
+                    self.token_tracker.track_global_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
+
                 else:
 
                     result, context_data = await api.local_search(
@@ -379,6 +403,21 @@ class DependencyAnalyzer:
                         response_type=response_type,
                         query=question,
                     )
+
+                    embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
+                    self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
+
+                    p_tokens = None
+                    o_tokens = None
+                    if isinstance(context_data, dict):
+                        p_tokens = context_data.get("prompt_tokens")
+                        o_tokens = context_data.get("output_tokens")
+                    if p_tokens is None:
+                        ctx_str = str(context_data) if context_data is not None else ""
+                        p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
+                    if o_tokens is None:
+                        o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
+                    self.token_tracker.track_local_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
 
 
         except Exception as e:
@@ -566,7 +605,20 @@ class DependencyAnalyzer:
 
         log_interactive_dependency_graph(self)
 
-        return f"{title}{report}"
+        token_summary_section = self.token_tracker.format_markdown_section()
+
+        # Place the token usage table above the Code Migration Plan (JSON) section
+        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+        if match:
+            idx = match.start()
+            final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
+            return f"{title}{final_report}"
+
+        return f"{title}{report}{token_summary_section}"
+
+    def get_token_usage_summary(self) -> str:
+        """Returns the formatted ASCII token usage and cost summary table."""
+        return self.token_tracker.format_summary()
     
     async def generate_report(self, service_name: str):
 

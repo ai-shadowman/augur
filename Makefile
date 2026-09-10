@@ -110,7 +110,9 @@ build-images:
 	podman push "$$INDEX_IMG" && \
 	\
 	echo "==> Building analysis image..." && \
-	podman build -t "$$ANALYSIS_IMG" resources/images/data-indexing && \
+	podman build -f resources/images/data-analysis/Containerfile \
+		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
+		-t "$$ANALYSIS_IMG" . && \
 	echo "==> Pushing analysis image..." && \
 	podman push "$$ANALYSIS_IMG" && \
 	\
