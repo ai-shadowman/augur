@@ -199,7 +199,31 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 plan_pos = report.index("### Code Migration Plan (JSON)")
                 self.assertLess(summary_pos, plan_pos)
 
+    def test_prepare_settings_empty_tokens_fallback(self):
+        """Verify that prepare_settings replaces empty or missing tokens with 'EMPTY' to prevent Pydantic validation failures."""
+        import tempfile
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            template_path = os.path.join(tmp_dir, "settings.yaml.in")
+            with open(template_path, "w") as f:
+                f.write("chat_key: ${GRAPHRAG_LLM_TOKEN}\nembed_key: ${EMBED_LLM_TOKEN}\n")
+
+            mock_loader = MagicMock()
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+                 patch.dict(os.environ, {"GRAPHRAG_LLM_TOKEN": "", "EMBED_LLM_TOKEN": ""}):
+
+                DependencyAnalyzer.prepare_settings(template_dir=tmp_dir, output_dir=tmp_dir)
+
+                output_path = os.path.join(tmp_dir, "settings.yaml")
+                with open(output_path) as f:
+                    content = f.read()
+
+                self.assertIn("chat_key: EMPTY", content)
+                self.assertIn("embed_key: EMPTY", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

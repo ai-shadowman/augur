@@ -495,15 +495,23 @@ class DependencyAnalyzer:
         template_path = f"{template_dir}/settings.yaml.in"
         output_path = f"{output_dir}/settings.yaml"
 
-        logging.info("Preparing settings...")
-
         try:
+            env = dict(os.environ)
+            # GraphRAG's Pydantic validator requires a non-empty string for api_key when
+            # auth_type is api_key. For endpoints that do not require auth (e.g. vLLM),
+            # or if the token is empty, provide a non-empty fallback so validation passes.
+            if not env.get("GRAPHRAG_LLM_TOKEN"):
+                logging.warning("GRAPHRAG_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
+                env["GRAPHRAG_LLM_TOKEN"] = "EMPTY"
+            if not env.get("EMBED_LLM_TOKEN"):
+                logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
+                env["EMBED_LLM_TOKEN"] = "EMPTY"
 
             with open(template_path) as f:
                 content = string.Template(f.read())
 
             with open(output_path, "w") as f:
-                f.write(content.substitute(os.environ))
+                f.write(content.substitute(env))
 
         except KeyError as keyerr:
             raise ValueError(f"Required environment variable {keyerr} is not set")
