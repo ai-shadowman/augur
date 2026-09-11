@@ -1,0 +1,165 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks
+---
+# tasks file for deploy_notebooks
+
+- name: Check if workbench notebooks already exist
+  kubernetes.core.k8s_info:
+    kind: Notebook
+    namespace: "{{ kfp_namespace }}"
+  register: existing_notebooks
+
+- name: Skip notebook deployment if notebooks are already present
+  ansible.builtin.debug:
+    msg: "Notebooks already exist in namespace {{ kfp_namespace }}, skipping deployment."
+  when: existing_notebooks.resources | length > 0
+
+- name: Deploy workbench notebooks block
+  when: existing_notebooks.resources | length == 0
+  block:
+    - name: Get current OpenShift user if not set
+      ansible.builtin.command: oc whoami
+      register: oc_whoami
+      changed_when: false
+      when: k8s_requester is not defined
+
+    - name: Set requester fact if missing
+      ansible.builtin.set_fact:
+        k8s_requester: "{{ oc_whoami.stdout | trim }}"
+      when: k8s_requester is not defined
+
+    # --- 1. Data Generation ImageStream ---
+    - name: Wait for custom-data-generation ImageStreamTag to import SHA256 digest
+      kubernetes.core.k8s_info:
+        api_version: image.openshift.io/v1
+        kind: ImageStreamTag
+        name: "custom-data-generation:{{ kfp_data_generation_base_image_tag }}"
+        namespace: redhat-ods-applications
+      register: datagen_ist
+      until:
+        - datagen_ist.resources is defined
+        - datagen_ist.resources | length > 0
+        - datagen_ist.resources[0].image.dockerImageReference is defined
+        - "'@sha256:' in datagen_ist.resources[0].image.dockerImageReference"
+      retries: 60
+      delay: 5
+
+    - name: Get custom-data-generation ImageStream repository
+      kubernetes.core.k8s_info:
+        api_version: image.openshift.io/v1
+        kind: ImageStream
+        name: custom-data-generation
+        namespace: redhat-ods-applications
+      register: datagen_is
+
+    - name: Set datagen_image digest reference fact
+      ansible.builtin.set_fact:
+        datagen_image: "{{ datagen_is.resources[0].status.dockerImageRepository }}:{{ kfp_data_generation_base_image_tag }}"
+
+    # --- 2. GraphRAG ImageStream ---
+    - name: Wait for custom-graphrag (indexing) ImageStreamTag to import SHA256 digest
+      kubernetes.core.k8s_info:
+        api_version: image.openshift.io/v1
+        kind: ImageStreamTag
+        name: "custom-graphrag:{{ kfp_indexing_base_image_tag }}"
+        namespace: redhat-ods-applications
+      register: graphrag_ist
+      until:
+        - graphrag_ist.resources is defined
+        - graphrag_ist.resources | length > 0
+        - graphrag_ist.resources[0].image.dockerImageReference is defined
+        - "'@sha256:' in graphrag_ist.resources[0].image.dockerImageReference"
+      retries: 60
+      delay: 5
+
+    - name: Get custom-graphrag ImageStream repository
+      kubernetes.core.k8s_info:
+        api_version: image.openshift.io/v1
+        kind: ImageStream
+        name: custom-graphrag
+        namespace: redhat-ods-applications
+      register: graphrag_is
+
+    - name: Set graphrag_image digest reference fact
+      ansible.builtin.set_fact:
+        graphrag_image: "{{ graphrag_is.resources[0].status.dockerImageRepository }}:{{ kfp_indexing_base_image_tag }}"
+
+    # --- 3. Analysis ImageStream ---
+    - name: Wait for custom-graphrag (analysis) ImageStreamTag to import SHA256 digest
+      kubernetes.core.k8s_info:
+        api_version: image.openshift.io/v1
+        kind: ImageStreamTag
+        name: "custom-graphrag:{{ kfp_analysis_base_image_tag }}"
+        namespace: redhat-ods-applications
+      register: analysis_ist
+      until:
+        - analysis_ist.resources is defined
+        - analysis_ist.resources | length > 0
+        - analysis_ist.resources[0].image.dockerImageReference is defined
+        - "'@sha256:' in analysis_ist.resources[0].image.dockerImageReference"
+      retries: 60
+      delay: 5
+
+    - name: Set analysis_image digest reference fact
+      ansible.builtin.set_fact:
+        analysis_image: "{{ graphrag_is.resources[0].status.dockerImageRepository }}:{{ kfp_analysis_base_image_tag }}"
+
+    # --- 4. Wait for DSPA Reconciliation ---
+    - name: Wait for DataSciencePipelinesApplication (dspa) to be Ready
+      kubernetes.core.k8s_info:
+        kind: DataSciencePipelinesApplication
+        name: dspa
+        namespace: "{{ kfp_namespace }}"
+      register: dspa_cr
+      until:
+        - dspa_cr.resources is defined
+        - dspa_cr.resources | length > 0
+        - >-
+          dspa_cr.resources[0].status.conditions
+          | default([])
+          | selectattr('type', 'equalto', 'Ready')
+          | selectattr('status', 'equalto', 'True')
+          | list | length > 0
+      retries: 60
+      delay: 5
+
+    # --- 5. Render & Deploy ---
+    - name: Render workbench notebooks template from Helm chart
+      kubernetes.core.helm_template:
+        chart_ref: "{{ helm_chart_path | default('resources/helm') }}"
+        release_name: agent-mesh-for-sw
+        release_namespace: "{{ kfp_namespace }}"
+        show_only:
+          - templates/workbench-notebooks.yaml
+        release_values:
+          namespace: "{{ kfp_namespace }}"
+          requester: "{{ k8s_requester }}"
+          repoUrl: "{{ git_repo_url }}"
+          repoRef: "{{ git_repo_branch }}"
+          deployNotebooks: true
+          dataGeneration:
+            image:
+              registry: "{{ kfp_image_registry }}"
+              name: "{{ kfp_data_generation_base_image_name }}"
+              tag: "{{ kfp_data_generation_base_image_tag }}"
+              digestRef: "{{ datagen_image }}"
+          graphrag:
+            image:
+              registry: "{{ kfp_image_registry }}"
+              name: "{{ kfp_indexing_base_image_name }}"
+              tag: "{{ kfp_indexing_base_image_tag }}"
+              digestRef: "{{ graphrag_image }}"
+          analysis:
+            image:
+              registry: "{{ kfp_image_registry }}"
+              name: "{{ kfp_analysis_base_image_name }}"
+              tag: "{{ kfp_analysis_base_image_tag }}"
+              digestRef: "{{ analysis_image }}"
+      register: helm_notebooks
+
+    - name: Deploy workbench notebooks
+      kubernetes.core.k8s:
+        state: present
+        namespace: "{{ kfp_namespace }}"
+        definition: "{{ helm_notebooks.stdout | from_yaml }}"
+
+...
