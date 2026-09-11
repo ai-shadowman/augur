@@ -92,6 +92,9 @@ apply-secrets:
 		--type=merge \
 		-p "{\"stringData\":{\"MLFLOW_WORKSPACE\":\"$$KFP_NAMESPACE\"}}"
 
+update-secrets:
+	$(MAKE) apply-secrets
+
 build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
 	DATAGEN_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_DATA_GENERATION_BASE_IMAGE_NAME:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
