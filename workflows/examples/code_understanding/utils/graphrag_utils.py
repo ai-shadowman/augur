@@ -1,6 +1,7 @@
 import os
 import re
 import ssl
+import math
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
     _orig_create_default_context = ssl.create_default_context
@@ -383,11 +384,21 @@ class DependencyAnalyzer:
                         p_tokens = context_data.get("prompt_tokens")
                         o_tokens = context_data.get("output_tokens")
                     if p_tokens is None:
-                        ctx_str = str(context_data) if context_data is not None else ""
+                        ctx_content = self.extract_context_content(context_data)
+                        ctx_str = ctx_content if ctx_content else (str(context_data) if context_data is not None else "")
                         p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
                     if o_tokens is None:
                         o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
-                    self.token_tracker.track_global_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
+
+                    actual_calls = 1
+                    if isinstance(context_data, dict):
+                        reports_df = context_data.get("reports", pd.DataFrame())
+                        if isinstance(reports_df, pd.DataFrame) and not reports_df.empty and "full_content" in reports_df.columns:
+                            total_chars = reports_df["full_content"].dropna().astype(str).str.len().sum()
+                            estimated_batches = max(1, math.ceil(total_chars / 24000))
+                            actual_calls = estimated_batches + 1
+
+                    self.token_tracker.track_global_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=actual_calls)
 
                 else:
 
@@ -413,7 +424,8 @@ class DependencyAnalyzer:
                         p_tokens = context_data.get("prompt_tokens")
                         o_tokens = context_data.get("output_tokens")
                     if p_tokens is None:
-                        ctx_str = str(context_data) if context_data is not None else ""
+                        ctx_content = self.extract_context_content(context_data)
+                        ctx_str = ctx_content if ctx_content else (str(context_data) if context_data is not None else "")
                         p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
                     if o_tokens is None:
                         o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
@@ -597,7 +609,13 @@ class DependencyAnalyzer:
 
                 bypass_index = prompt_path.startswith("analysis/migration-report/enhanced")
 
-                use_global = self.multi_repo or meta.get('search_mode') != 'local'
+                search_mode = meta.get('search_mode')
+                if search_mode == 'local':
+                    use_global = False
+                elif search_mode == 'global':
+                    use_global = True
+                else:
+                    use_global = self.multi_repo
 
                 result = await self.query_with_llm(prompt,
                                                    bypass_index=bypass_index,
@@ -615,14 +633,15 @@ class DependencyAnalyzer:
 
         token_summary_section = self.token_tracker.format_markdown_section()
 
-        # Place the token usage table above the Code Migration Plan (JSON) section
-        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+        # Place the token usage table above the Code Migration Plan (JSON) section,
+        # or preceding a detailed migration plan / recommended order if JSON plan is skipped
+        match = re.search(r'(#+\s*(?:Code\s+Migration\s+Plan\s*\(?JSON\)?|Detailed\s+Migration\s+Plan|Recommended\s+Migration\s+Order))', report, re.IGNORECASE)
         if match:
             idx = match.start()
             final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
             return f"{title}{final_report}"
 
-        return f"{title}{report}{token_summary_section}"
+        return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""

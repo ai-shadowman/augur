@@ -69,7 +69,7 @@ class AnalysisPipeline:
             asset_tags={"multi_repo": True, "category": "indexing"},
         )
 
-        self.run(graphrag_source_path=graphrag_source_path, multi_repo=True)
+        return self.run(graphrag_source_path=graphrag_source_path, multi_repo=True)
 
     def run_adhoc_query(
         self,

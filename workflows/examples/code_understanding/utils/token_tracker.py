@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from typing import Optional, Dict, Any
 
@@ -261,3 +262,129 @@ class TokenCostTracker:
     def reset(self):
         """Resets all recorded usage metrics."""
         self.records.clear()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes tracker records and config to a dictionary."""
+        return {
+            "chat_model": self.chat_model,
+            "embed_model": self.embed_model,
+            "chat_prompt_price": self.chat_prompt_price,
+            "chat_output_price": self.chat_output_price,
+            "embed_prompt_price": self.embed_prompt_price,
+            "embed_output_price": self.embed_output_price,
+            "records": self.records,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TokenCostTracker":
+        """Reconstructs a TokenCostTracker from a dictionary."""
+        tracker = cls(
+            chat_model=data.get("chat_model"),
+            embed_model=data.get("embed_model"),
+            chat_prompt_price=data.get("chat_prompt_price"),
+            chat_output_price=data.get("chat_output_price"),
+            embed_prompt_price=data.get("embed_prompt_price"),
+        )
+        tracker.records = data.get("records", {})
+        return tracker
+
+    def save_to_file(self, filepath: str):
+        """Saves tracker state to a JSON file."""
+        dirname = os.path.dirname(filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load_from_file(cls, filepath: str) -> "TokenCostTracker":
+        """Loads tracker state from a JSON file."""
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+    def merge(self, other: "TokenCostTracker"):
+        """Merges metrics from another TokenCostTracker instance into this one."""
+        if not other or not isinstance(other, TokenCostTracker):
+            return
+        for source, r in other.records.items():
+            if source not in self.records:
+                self.records[source] = {
+                    "calls": 0,
+                    "prompt_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "cost": 0.0,
+                }
+            rec = self.records[source]
+            rec["calls"] += r.get("calls", 0)
+            rec["prompt_tokens"] += r.get("prompt_tokens", 0)
+            rec["output_tokens"] += r.get("output_tokens", 0)
+            rec["total_tokens"] += r.get("total_tokens", 0)
+            rec["cost"] += r.get("cost", 0.0)
+
+    def enable_litellm_callbacks(self, category: str = "LiteLLM"):
+        """Registers a callback with litellm.success_callback to intercept and track
+        all direct LiteLLM invocations (e.g. from sdg_hub, custom evaluators).
+        """
+        if not HAS_LITELLM or litellm is None:
+            logging.debug("LiteLLM not available; skipping callback registration.")
+            return
+
+        def _litellm_success_handler(kwargs, completion_response, start_time, end_time):
+            try:
+                model = kwargs.get("model") or getattr(completion_response, "model", self.chat_model)
+                usage = getattr(completion_response, "usage", None)
+                p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+                o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+
+                response_cost = kwargs.get("response_cost")
+                if response_cost is None:
+                    response_cost = getattr(completion_response, "_response_cost", None)
+
+                source = f"{category} ({model})"
+                self.track(
+                    source=source,
+                    calls=1,
+                    prompt_tokens=p_tokens,
+                    output_tokens=o_tokens,
+                    cost=response_cost,
+                    model=model,
+                )
+            except Exception as e:
+                logging.debug(f"Error in litellm success callback: {e}")
+
+        self._litellm_callback = _litellm_success_handler
+
+        if not hasattr(litellm, "success_callback") or litellm.success_callback is None:
+            litellm.success_callback = []
+        if _litellm_success_handler not in litellm.success_callback:
+            litellm.success_callback.append(_litellm_success_handler)
+
+    def disable_litellm_callbacks(self):
+        """Unregisters the callback from litellm.success_callback."""
+        if not HAS_LITELLM or litellm is None or not hasattr(self, "_litellm_callback"):
+            return
+        if hasattr(litellm, "success_callback") and isinstance(litellm.success_callback, list):
+            if self._litellm_callback in litellm.success_callback:
+                litellm.success_callback.remove(self._litellm_callback)
+
+    def log_to_mlflow(self, run_id: Optional[str] = None):
+        """Logs aggregated token counts and costs to active MLflow run."""
+        try:
+            import mlflow
+            totals = self.get_totals()
+            metrics = {
+                "llm_total_calls": totals["total_calls"],
+                "llm_total_prompt_tokens": totals["total_prompt_tokens"],
+                "llm_total_output_tokens": totals["total_output_tokens"],
+                "llm_total_tokens": totals["total_tokens"],
+                "llm_total_cost": totals["total_cost"],
+            }
+            if run_id:
+                with mlflow.start_run(run_id=run_id):
+                    mlflow.log_metrics(metrics)
+            else:
+                mlflow.log_metrics(metrics)
+        except Exception as e:
+            logging.debug(f"MLflow metric logging skipped or failed: {e}")

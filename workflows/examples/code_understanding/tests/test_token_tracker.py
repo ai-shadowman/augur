@@ -223,6 +223,108 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 self.assertIn("embed_key: EMPTY", content)
 
 
+    def test_token_tracker_serialization_and_merge(self):
+        """Verify saving to file, loading from file, and merging tracker states."""
+        import tempfile
+        tracker1 = TokenCostTracker()
+        tracker1.track_chat(prompt_tokens=100, output_tokens=50, calls=1)
+
+        tracker2 = TokenCostTracker()
+        tracker2.track_global_search(prompt_tokens=200, output_tokens=80, calls=2)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = os.path.join(tmp_dir, "token_tracker.json")
+            tracker1.save_to_file(file_path)
+
+            loaded = TokenCostTracker.load_from_file(file_path)
+            self.assertEqual(loaded.get_totals()["total_calls"], 1)
+            self.assertEqual(loaded.get_totals()["total_prompt_tokens"], 100)
+
+            loaded.merge(tracker2)
+            totals = loaded.get_totals()
+            self.assertEqual(totals["total_calls"], 3)
+            self.assertEqual(totals["total_prompt_tokens"], 300)
+            self.assertEqual(totals["total_output_tokens"], 130)
+
+    def test_litellm_callbacks(self):
+        """Verify that LiteLLM callback records calls properly."""
+        from utils.token_tracker import HAS_LITELLM, litellm
+        tracker = TokenCostTracker()
+        tracker.enable_litellm_callbacks(category="Data Generation (sdg_hub)")
+
+        if HAS_LITELLM and litellm is not None:
+            self.assertIn(tracker._litellm_callback, litellm.success_callback)
+
+            # Simulate a LiteLLM callback invocation
+            mock_response = MagicMock()
+            mock_response.model = "test-model"
+            mock_response.usage.prompt_tokens = 40
+            mock_response.usage.completion_tokens = 20
+            mock_response._response_cost = 0.001
+
+            tracker._litellm_callback(
+                kwargs={"model": "test-model", "response_cost": 0.001},
+                completion_response=mock_response,
+                start_time=0,
+                end_time=1,
+            )
+
+            self.assertIn("Data Generation (sdg_hub) (test-model)", tracker.records)
+            self.assertEqual(tracker.records["Data Generation (sdg_hub) (test-model)"]["calls"], 1)
+            self.assertEqual(tracker.records["Data Generation (sdg_hub) (test-model)"]["prompt_tokens"], 40)
+
+            tracker.disable_litellm_callbacks()
+            self.assertNotIn(tracker._litellm_callback, litellm.success_callback)
+
+    def test_multi_repo_search_mode_resolution(self):
+        """Verify that multi_repo respects explicit search_mode metadata."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'), \
+             patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value=set()), \
+             patch('utils.visualization_utils.log_interactive_dependency_graph'):
+
+            analyzer = DependencyAnalyzer(multi_repo=True)
+
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.side_effect = lambda path: 0 if "enhanced" in path else 2
+            mock_loader.download_prompt.side_effect = [
+                ("prompt 0", {"title": "### Dependency Graph", "search_mode": "local", "skip_prompt": None}),
+                ("prompt 1", {"title": "### High-Level Summary", "skip_prompt": None}),
+            ]
+
+            calls_recorded = []
+
+            async def fake_query(prompt, bypass_index=False, use_global=True):
+                calls_recorded.append({"prompt": prompt, "use_global": use_global})
+                return "Query Result"
+
+            analyzer.query_with_llm = fake_query
+
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+                asyncio.run(analyzer.generate_migration_report())
+
+            # Prompt 0 declared search_mode: local -> use_global must be False even with multi_repo=True
+            self.assertFalse(calls_recorded[0]["use_global"])
+            # Prompt 1 had no search_mode -> use_global must be True for multi_repo
+            self.assertTrue(calls_recorded[1]["use_global"])
+
+    def test_analysis_pipeline_run_multi_repo_returns_report(self):
+        """Verify that AnalysisPipeline.run_multi_repo returns the report."""
+        from pipelines.base.analysis import AnalysisPipeline
+        pipeline = AnalysisPipeline()
+
+        with patch('loaders.default_asset_loader.DefaultAssetLoader'), \
+             patch('utils.loader_utils.download_result_directory'), \
+             patch.object(pipeline, 'run', return_value="# Migration Report Content") as mock_run:
+            result = pipeline.run_multi_repo()
+            self.assertEqual(result, "# Migration Report Content")
+            mock_run.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
 
