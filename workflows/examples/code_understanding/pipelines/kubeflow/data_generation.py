@@ -29,17 +29,26 @@ def prepare_environment_op(git_repo: str,
 
     from pipelines.base.data_generation import prepare_environment
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact, use_ephemeral_space
+    from utils.metrics_tracker import PipelineMetricsTracker
     setup_logging()
 
     with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
-
-        prepare_environment(
-            source_path=tmp_source,
-            target_path=tmp_target,
+        tracker = PipelineMetricsTracker("single-repo-pipeline", multi_repo=False)
+        tracker.start_stage("Data Generation")
+        with tracker.track_step("prepare_environment", stage="Data Generation"):
+            prepare_environment(
+                source_path=tmp_source,
+                target_path=tmp_target,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                git_username=git_username,
+                git_token=git_token,
+            )
+        tracker.save_and_log(
+            target_dir=tmp_source,
             git_repo=git_repo,
             git_branch=git_branch,
-            git_username=git_username,
-            git_token=git_token,
+            multi_repo=False,
         )
 
 
@@ -57,32 +66,65 @@ def generate_code_and_meta_op(
         detect_languages, generate_code_and_meta, generate_git_slug
     )
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
+    from utils.metrics_tracker import PipelineMetricsTracker
     setup_logging()
 
     import logging
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
+        default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+        tracker = PipelineMetricsTracker.load_or_create(
+            search_paths=[tmp_source],
+            pipeline_name=default_name,
+            multi_repo=multi_repo,
+            git_repo=git_repo,
+            git_branch=git_branch,
+        )
+        tracker.start_stage("Data Generation")
 
         try:
 
             from pipelines.base.data_generation import load_external_data
 
-            external_metadata = load_external_data(tmp_source)
+            with tracker.track_step("load_external_data", stage="Data Generation"):
+                external_metadata = load_external_data(tmp_source)
 
-            languages = detect_languages(tmp_source)
+            with tracker.track_step("detect_languages", stage="Data Generation"):
+                languages = detect_languages(tmp_source)
 
             for language in languages:
 
                 for config in [False, True]:
 
-                    generate_code_and_meta(
-                        git_repo=git_repo, git_branch=git_branch,
-                        language=language, source_path=tmp_source, target_path=tmp_target,
-                        config=config, multi_repo=multi_repo,
-                        external_metadata=external_metadata,
-                    )
+                    step_desc = f"generate_code_and_meta ({language}{' config' if config else ''})"
+                    with tracker.track_step(
+                        step_desc,
+                        stage="Data Generation",
+                        details={"language": language, "config": config},
+                    ):
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=tmp_source, target_path=tmp_target,
+                            config=config, multi_repo=multi_repo,
+                            external_metadata=external_metadata,
+                        )
+
+            tracker.stop_stage("Data Generation", status="COMPLETED")
+            tracker.save_and_log(
+                target_dir=tmp_target,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
 
         except Exception as e:
+            tracker.stop_stage("Data Generation", status="FAILED", error_message=str(e))
+            tracker.save_and_log(
+                target_dir=tmp_target,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
 
             if type(e).__name__ == "RateLimitError" or "429" in str(e):
                 logging.error(

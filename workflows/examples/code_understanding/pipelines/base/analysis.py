@@ -26,8 +26,29 @@ class AnalysisPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            tracker = PipelineMetricsTracker("analysis-pipeline", multi_repo=multi_repo)
+            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=[graphrag_source_path],
+                pipeline_name=default_name,
+                multi_repo=multi_repo,
+                git_repo=git_repo,
+                git_branch=git_branch,
+            )
             own_tracker = True
+            tracker.start_stage("Analysis")
+        else:
+            prior_tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=[graphrag_source_path],
+                pipeline_name=tracker.pipeline_name,
+                multi_repo=multi_repo,
+                git_repo=git_repo,
+                git_branch=git_branch,
+            )
+            if prior_tracker and prior_tracker.stages:
+                for st_name in prior_tracker.stages:
+                    if st_name not in tracker.stages:
+                        tracker.merge(prior_tracker)
+                        break
             tracker.start_stage("Analysis")
 
         try:
@@ -60,6 +81,13 @@ class AnalysisPipeline:
                 tracker.stop_pipeline(status="COMPLETED")
                 tracker.log_summary()
 
+            tracker.save_and_log(
+                target_dir=graphrag_source_path,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
+
             return report
 
         except Exception as e:
@@ -78,14 +106,18 @@ class AnalysisPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
+
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            tracker = PipelineMetricsTracker("multi-repo-analysis", multi_repo=True)
+            tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=[graphrag_source_path],
+                pipeline_name="multi-repo-pipeline",
+                multi_repo=True,
+            )
             own_tracker = True
             tracker.start_stage("Analysis")
-
-        graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
         logging.info("Downloading multi-repo GraphRAG index...")
         with tracker.track_step("download_graphrag_index", stage="Analysis"):

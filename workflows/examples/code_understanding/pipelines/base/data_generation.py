@@ -542,7 +542,14 @@ class DataGenerationPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            tracker = PipelineMetricsTracker(f"data-generation-{git_slug}", multi_repo=multi_repo)
+            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=[source_path, target_path],
+                pipeline_name=default_name,
+                multi_repo=multi_repo,
+                git_repo=git_repo,
+                git_branch=git_branch,
+            )
             own_tracker = True
             tracker.start_stage("Data Generation")
             if multi_repo:
@@ -585,6 +592,13 @@ class DataGenerationPipeline:
                 tracker.stop_stage("Data Generation", status="COMPLETED")
                 tracker.stop_pipeline(status="COMPLETED")
                 tracker.log_summary()
+
+            tracker.save_and_log(
+                target_dir=target_path,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
 
             result = {
                 "git_slug": git_slug,

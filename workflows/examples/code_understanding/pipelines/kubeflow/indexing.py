@@ -28,14 +28,33 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 
     from pipelines.base.indexing import generate_graphrag_index
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
+    from utils.metrics_tracker import PipelineMetricsTracker
     setup_logging()
 
     with read_from_input_artifact(codebase_dir) as tmp_codebase, \
          write_to_output_artifact(graphrag_dir) as tmp_graphrag:
 
-        generate_graphrag_index(
-            codebase_path=tmp_codebase,
-            graphrag_source_path=tmp_graphrag,
+        default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+        tracker = PipelineMetricsTracker.load_or_create(
+            search_paths=[tmp_codebase],
+            pipeline_name=default_name,
+            multi_repo=multi_repo,
+            git_repo=git_repo,
+            git_branch=git_branch,
+        )
+        tracker.start_stage("Indexing")
+        with tracker.track_step("generate_graphrag_index", stage="Indexing"):
+            generate_graphrag_index(
+                codebase_path=tmp_codebase,
+                graphrag_source_path=tmp_graphrag,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
+
+        tracker.stop_stage("Indexing", status="COMPLETED")
+        tracker.save_and_log(
+            target_dir=tmp_graphrag,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
@@ -54,6 +73,7 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     import logging
     import pandas as pd
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
+    from utils.metrics_tracker import PipelineMetricsTracker
     setup_logging()
 
     if not git_repo or multi_repo:
@@ -64,9 +84,26 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     from pipelines.base.indexing import evaluate_graphrag_index
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
+        default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+        tracker = PipelineMetricsTracker.load_or_create(
+            search_paths=[tmp_graphrag],
+            pipeline_name=default_name,
+            multi_repo=multi_repo,
+            git_repo=git_repo,
+            git_branch=git_branch,
+        )
+        tracker.start_stage("Indexing")
+        with tracker.track_step("evaluate_graphrag_index", stage="Indexing"):
+            results = evaluate_graphrag_index(
+                graphrag_source_path=tmp_graphrag,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
 
-        results = evaluate_graphrag_index(
-            graphrag_source_path=tmp_graphrag,
+        tracker.stop_stage("Indexing", status="COMPLETED")
+        tracker.save_and_log(
+            target_dir=tmp_graphrag,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,

@@ -162,7 +162,14 @@ class IndexingPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            tracker = PipelineMetricsTracker("indexing-pipeline", multi_repo=multi_repo)
+            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=[codebase_path, graphrag_source_path],
+                pipeline_name=default_name,
+                multi_repo=multi_repo,
+                git_repo=git_repo,
+                git_branch=git_branch,
+            )
             own_tracker = True
             tracker.start_stage("Indexing")
 
@@ -215,6 +222,16 @@ class IndexingPipeline:
             tracker.stop_pipeline(status="COMPLETED")
             tracker.log_summary()
 
+        if tracker:
+            if not own_tracker and tracker.stages.get("Indexing") and tracker.stages["Indexing"].status == "running":
+                tracker.stop_stage("Indexing", status="COMPLETED")
+            tracker.save_and_log(
+                target_dir=graphrag_source_path,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
+
         return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
                 "status": "success", "fail_message": "",
                 "metrics": tracker.to_dict() if tracker else {}}
@@ -257,6 +274,10 @@ class IndexingPipeline:
             tracker.stop_stage("Indexing", status="COMPLETED" if result.get("status") == "success" else "FAILED")
             tracker.stop_pipeline(status="COMPLETED" if result.get("status") == "success" else "FAILED")
             tracker.log_summary()
+            tracker.save_and_log(
+                target_dir=graphrag_source_path,
+                multi_repo=True,
+            )
 
         if result.get("status") != "success":
             raise Exception(f"GraphRAG indexing failed: {result.get('fail_message', '')}")

@@ -374,22 +374,24 @@ class TestPipelineStagesIntegration(unittest.TestCase):
     def test_indexing_pipeline_run_with_metrics(self, mock_gen, mock_eval):
         from pipelines.base.indexing import IndexingPipeline
 
-        tracker = PipelineMetricsTracker("idx-test")
-        with tracker.track_pipeline():
-            with tracker.track_stage("Indexing"):
-                res = IndexingPipeline().run(
-                    codebase_path="target/test",
-                    graphrag_source_path="graph_rag_app/source",
-                    git_repo="https://github.com/example/repo",
-                    git_branch="main",
-                    metrics_tracker=tracker,
-                )
+        with tempfile.TemporaryDirectory() as tmp_codebase, \
+             tempfile.TemporaryDirectory() as tmp_graphrag:
+            tracker = PipelineMetricsTracker("idx-test")
+            with tracker.track_pipeline():
+                with tracker.track_stage("Indexing"):
+                    res = IndexingPipeline().run(
+                        codebase_path=tmp_codebase,
+                        graphrag_source_path=tmp_graphrag,
+                        git_repo="https://github.com/example/repo",
+                        git_branch="main",
+                        metrics_tracker=tracker,
+                    )
 
-        self.assertEqual(res["status"], "success")
-        stage = tracker.stages["Indexing"]
-        step_names = [s.name for s in stage.steps]
-        self.assertIn("generate_graphrag_index", step_names)
-        self.assertIn("evaluate_graphrag_index", step_names)
+            self.assertEqual(res["status"], "success")
+            stage = tracker.stages["Indexing"]
+            step_names = [s.name for s in stage.steps]
+            self.assertIn("generate_graphrag_index", step_names)
+            self.assertIn("evaluate_graphrag_index", step_names)
 
     @patch("utils.graphrag_utils.DependencyAnalyzer")
     def test_analysis_pipeline_run_with_metrics(self, mock_analyzer_cls):
@@ -400,21 +402,22 @@ class TestPipelineStagesIntegration(unittest.TestCase):
         mock_analyzer.generate_migration_report.return_value = asyncio.sleep(0, result="# Migration Report")
         mock_analyzer_cls.return_value = mock_analyzer
 
-        tracker = PipelineMetricsTracker("analysis-test")
-        with tracker.track_pipeline():
-            with tracker.track_stage("Analysis"):
-                report = AnalysisPipeline().run(
-                    graphrag_source_path="graph_rag_app/source",
-                    git_repo="https://github.com/example/repo",
-                    git_branch="main",
-                    metrics_tracker=tracker,
-                )
+        with tempfile.TemporaryDirectory() as tmp_graphrag:
+            tracker = PipelineMetricsTracker("analysis-test")
+            with tracker.track_pipeline():
+                with tracker.track_stage("Analysis"):
+                    report = AnalysisPipeline().run(
+                        graphrag_source_path=tmp_graphrag,
+                        git_repo="https://github.com/example/repo",
+                        git_branch="main",
+                        metrics_tracker=tracker,
+                    )
 
-        self.assertEqual(report, "# Migration Report")
-        stage = tracker.stages["Analysis"]
-        step_names = [s.name for s in stage.steps]
-        self.assertIn("generate_migration_report", step_names)
-        self.assertIn("log_results", step_names)
+            self.assertEqual(report, "# Migration Report")
+            stage = tracker.stages["Analysis"]
+            step_names = [s.name for s in stage.steps]
+            self.assertIn("generate_migration_report", step_names)
+            self.assertIn("log_results", step_names)
 
 
 class TestOrchestratorIntegration(unittest.TestCase):
@@ -602,6 +605,150 @@ class TestReportMetricsTablePlacement(unittest.TestCase):
             self.assertTrue(report.rstrip().endswith("```"))
 
 
+class TestCrossStagePipelineMetrics(unittest.TestCase):
+    """Test cross-stage persistence, deserialization, merging, and in-flight duration."""
+
+    def test_in_flight_duration_calculation(self):
+        """Verify that an in-flight step or stage calculates active elapsed duration."""
+        import time
+        tracker = PipelineMetricsTracker("active-test")
+        tracker.start_pipeline()
+        tracker.start_stage("Analysis")
+        step = tracker.start_step("generate_migration_report", stage="Analysis")
+
+        time.sleep(0.05)
+
+        # In-flight duration without finalize_running
+        self.assertEqual(step.duration, 0.0)
+        self.assertGreater(step.get_duration(finalize_running=True), 0.04)
+
+        # Stage and tracker total duration
+        stage = tracker.stages["Analysis"]
+        self.assertGreater(stage.get_duration(finalize_running=True), 0.04)
+        self.assertGreater(tracker.get_total_duration(finalize_running=True), 0.04)
+
+        # Formatted markdown table should NOT show 0.00s for active stage/step
+        md_table = tracker.format_markdown_table(finalize_running=True)
+        self.assertIn("Stage: Analysis", md_table)
+        self.assertIn("generate_migration_report", md_table)
+        self.assertNotIn("0.00s", md_table)
+
+        # ASCII summary table
+        summary_table = tracker.format_summary_table(finalize_running=True)
+        self.assertIn("[STAGE] Analysis", summary_table)
+        self.assertIn("generate_migration_report", summary_table)
+        self.assertNotIn("0.00s", summary_table)
+
+    def test_serialization_and_file_round_trip(self):
+        """Test to_dict, from_dict, save_to_file, load_from_file."""
+        tracker = PipelineMetricsTracker("roundtrip-test", multi_repo=True)
+        tracker.start_pipeline()
+        tracker.start_stage("Data Generation")
+        with tracker.track_app("service-one", git_branch="main"):
+            with tracker.track_step("prepare_environment", stage="Data Generation", app="service-one"):
+                pass
+        tracker.stop_stage("Data Generation", status="COMPLETED")
+
+        tracker.start_stage("Indexing")
+        with tracker.track_step("generate_graphrag_index", stage="Indexing"):
+            pass
+        tracker.stop_stage("Indexing", status="COMPLETED")
+        tracker.stop_pipeline(status="COMPLETED")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "pipeline_metrics.json")
+            tracker.save_to_file(filepath)
+            self.assertTrue(os.path.exists(filepath))
+
+            loaded = PipelineMetricsTracker.load_from_file(filepath)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.pipeline_name, "roundtrip-test")
+            self.assertTrue(loaded.multi_repo)
+            self.assertIn("Data Generation", loaded.stages)
+            self.assertIn("Indexing", loaded.stages)
+            self.assertIn("service-one", loaded.apps)
+            self.assertEqual(len(loaded.steps), 2)
+
+    def test_cross_stage_simulated_workflow(self):
+        """Simulate single-repo 3-stage Kubeflow flow across distinct processes/directories."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        with tempfile.TemporaryDirectory() as stage1_dir, \
+             tempfile.TemporaryDirectory() as stage2_dir, \
+             tempfile.TemporaryDirectory() as stage3_dir:
+
+            # Stage 1: Data Generation container
+            t1 = PipelineMetricsTracker.load_or_create([stage1_dir], pipeline_name="single-repo-pipeline")
+            t1.start_stage("Data Generation")
+            with t1.track_step("prepare_environment", stage="Data Generation"):
+                pass
+            with t1.track_step("generate_code_and_meta", stage="Data Generation"):
+                pass
+            t1.stop_stage("Data Generation", status="COMPLETED")
+            t1.save_to_file(os.path.join(stage1_dir, "pipeline_metrics.json"))
+
+            # Stage 2: Indexing container (reads stage1_dir, outputs to stage2_dir)
+            t2 = PipelineMetricsTracker.load_or_create([stage1_dir], pipeline_name="single-repo-pipeline")
+            self.assertIn("Data Generation", t2.stages)
+            t2.start_stage("Indexing")
+            with t2.track_step("generate_graphrag_index", stage="Indexing"):
+                pass
+            with t2.track_step("evaluate_graphrag_index", stage="Indexing"):
+                pass
+            t2.stop_stage("Indexing", status="COMPLETED")
+            t2.save_to_file(os.path.join(stage2_dir, "pipeline_metrics.json"))
+
+            # Stage 3: Analysis container (reads stage2_dir)
+            t3 = PipelineMetricsTracker.load_or_create([stage2_dir], pipeline_name="single-repo-pipeline")
+            self.assertIn("Data Generation", t3.stages)
+            self.assertIn("Indexing", t3.stages)
+            t3.start_stage("Analysis")
+
+            # Run DependencyAnalyzer inside Analysis stage
+            with t3.track_step("generate_migration_report", stage="Analysis"):
+                with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+                     patch.object(DependencyAnalyzer, '_setup_search'), \
+                     patch.object(DependencyAnalyzer, '_setup_prompts'), \
+                     patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo1"}), \
+                     patch('utils.visualization_utils.log_interactive_dependency_graph'):
+
+                    analyzer = DependencyAnalyzer(stage2_dir, metrics_tracker=t3)
+
+                    mock_loader = MagicMock()
+                    mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
+                    mock_loader.download_prompt.side_effect = [
+                        ("prompt 1", {"title": "### System Architecture Summary", "skip_prompt": None}),
+                        ("prompt 2", {"title": "### Recommended Migration Order", "skip_prompt": None}),
+                    ]
+
+                    orig_loader = DefaultAssetLoaderMock.return_value
+                    DefaultAssetLoaderMock.return_value = mock_loader
+                    try:
+                        with patch.object(analyzer, 'query_with_llm', side_effect=["Arch summary.", "Migration order."]):
+                            report = asyncio.run(analyzer.generate_migration_report())
+                    finally:
+                        DefaultAssetLoaderMock.return_value = orig_loader
+
+            # Final check on report content
+            self.assertIn("### Pipeline Execution Metrics Summary", report)
+            self.assertIn("[STAGE] Data Generation", report)
+            self.assertIn("prepare_environment", report)
+            self.assertIn("generate_code_and_meta", report)
+            self.assertIn("[STAGE] Indexing", report)
+            self.assertIn("generate_graphrag_index", report)
+            self.assertIn("evaluate_graphrag_index", report)
+            self.assertIn("[STAGE] Analysis", report)
+            self.assertIn("generate_migration_report", report)
+
+            # Check that generate_migration_report step is present and status is COMPLETED
+            lines = report.splitlines()
+            analysis_step_line = [l for l in lines if "generate_migration_report" in l]
+            self.assertTrue(len(analysis_step_line) > 0)
+            self.assertIn("COMPLETED", analysis_step_line[0])
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
