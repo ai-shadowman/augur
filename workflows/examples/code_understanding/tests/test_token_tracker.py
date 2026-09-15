@@ -324,6 +324,41 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertEqual(result, "# Migration Report Content")
             mock_run.assert_called_once()
 
+    def test_multi_repo_token_table_placed_at_end(self):
+        """Verify that in multi-repo mode, the LLM token summary table is placed at the very end of the report."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'), \
+             patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo1"}), \
+             patch('utils.visualization_utils.log_interactive_dependency_graph'):
+
+            analyzer = DependencyAnalyzer(multi_repo=True)
+
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.side_effect = lambda path: 0 if "enhanced" in path else 3
+            mock_loader.download_prompt.side_effect = [
+                ("prompt 0", {"title": "### Dependency Graph", "skip_prompt": None}),
+                ("prompt 1", {"title": "### High-Level Summary", "skip_prompt": None}),
+                ("prompt 2", {"title": "### Recommended Migration Order", "skip_prompt": None}),
+            ]
+
+            async def fake_query(prompt, bypass_index=False, use_global=True):
+                return "Section body content"
+
+            analyzer.query_with_llm = fake_query
+
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+                report = asyncio.run(analyzer.generate_migration_report())
+
+            self.assertIn("### LLM Token Usage & Cost Summary", report)
+            rec_pos = report.index("### Recommended Migration Order")
+            summary_pos = report.index("### LLM Token Usage & Cost Summary")
+            self.assertGreater(summary_pos, rec_pos)
+            self.assertTrue(report.rstrip().endswith("```"))
+
 
 if __name__ == "__main__":
     unittest.main()

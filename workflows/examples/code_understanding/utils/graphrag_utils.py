@@ -633,9 +633,12 @@ class DependencyAnalyzer:
 
         token_summary_section = self.token_tracker.format_markdown_section()
 
-        # Place the token usage table above the Code Migration Plan (JSON) section,
-        # or preceding a detailed migration plan / recommended order if JSON plan is skipped
-        match = re.search(r'(#+\s*(?:Code\s+Migration\s+Plan\s*\(?JSON\)?|Detailed\s+Migration\s+Plan|Recommended\s+Migration\s+Order))', report, re.IGNORECASE)
+        # For multi-repo runs, place the token usage table at the end of the summary / report
+        if self.multi_repo:
+            return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+
+        # Place the token usage table above the Code Migration Plan (JSON) section
+        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
         if match:
             idx = match.start()
             final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
