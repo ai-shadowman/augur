@@ -10,66 +10,101 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 class AnalysisPipeline:
 
     def run(self, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
-            multi_repo: bool = False):
+            multi_repo: bool = False, metrics_tracker=None):
         """Generates a migration report from the GraphRAG index and returns the result."""
         import asyncio, logging
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
         import os
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker("analysis-pipeline", multi_repo=multi_repo)
+            own_tracker = True
+            tracker.start_stage("Analysis")
 
-        report = asyncio.run(analyzer.generate_migration_report())
+        try:
 
-        result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
+            with tracker.track_step("generate_migration_report", stage="Analysis"):
+                analyzer = DependencyAnalyzer(
+                    graphrag_source_path,
+                    git_slug=git_slug or "",
+                    multi_repo=multi_repo,
+                    metrics_tracker=tracker,
+                )
+                report = asyncio.run(analyzer.generate_migration_report())
 
-        DefaultAssetLoader().log_results(
+            result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
-            result_file,
+            with tracker.track_step("log_results", stage="Analysis"):
+                DefaultAssetLoader().log_results(
+                    result_file,
+                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    ),
+                    content=report,
+                    tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "analysis"},
+                )
 
-            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+            if own_tracker:
+                tracker.stop_stage("Analysis", status="COMPLETED")
+                tracker.stop_pipeline(status="COMPLETED")
+                tracker.log_summary()
 
-                DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+            return report
 
-                git_slug=git_slug,
+        except Exception as e:
+            if own_tracker:
+                tracker.stop_stage("Analysis", status="FAILED", error_message=str(e))
+                tracker.stop_pipeline(status="FAILED", error_message=str(e))
+                tracker.log_summary()
+            raise
 
-                multi_repo=multi_repo,
-
-            ),
-
-            content=report,
-
-            tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "analysis"},
-
-        )
-
-        return report
-
-    def run_multi_repo(self):
+    def run_multi_repo(self, metrics_tracker=None):
         """Runs migration report generation across the combined multi-repo GraphRAG index."""
         import os, logging
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_result_directory
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker("multi-repo-analysis", multi_repo=True)
+            own_tracker = True
+            tracker.start_stage("Analysis")
 
         graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
         logging.info("Downloading multi-repo GraphRAG index...")
-        download_result_directory(
-            git_slug=None,
-            download_dir=os.path.join(graphrag_source_path, "output"),
-            results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
-            multi_repo=True,
-            asset_tags={"multi_repo": True, "category": "indexing"},
-        )
+        with tracker.track_step("download_graphrag_index", stage="Analysis"):
+            download_result_directory(
+                git_slug=None,
+                download_dir=os.path.join(graphrag_source_path, "output"),
+                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+                multi_repo=True,
+                asset_tags={"multi_repo": True, "category": "indexing"},
+            )
 
-        return self.run(graphrag_source_path=graphrag_source_path, multi_repo=True)
+        report = self.run(graphrag_source_path=graphrag_source_path, multi_repo=True, metrics_tracker=tracker)
+
+        if own_tracker:
+            tracker.stop_stage("Analysis", status="COMPLETED")
+            tracker.stop_pipeline(status="COMPLETED")
+            tracker.log_summary()
+
+        return report
 
     def run_adhoc_query(
         self,
@@ -172,11 +207,12 @@ class AnalysisPipeline:
 
 def write_migration_report(graphrag_source_path: str, report_path: str,
                            git_repo: str = "", git_branch: str = "",
-                           multi_repo: bool = False):
+                           multi_repo: bool = False, metrics_tracker=None):
     """Run the migration report and write the result to report_path."""
     import os
     migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
-                                              git_branch=git_branch, multi_repo=multi_repo)
+                                              git_branch=git_branch, multi_repo=multi_repo,
+                                              metrics_tracker=metrics_tracker)
     if dirname := os.path.dirname(report_path):
         os.makedirs(dirname, exist_ok=True)
     with open(report_path, "w") as f:

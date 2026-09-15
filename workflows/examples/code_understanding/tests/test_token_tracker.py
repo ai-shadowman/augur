@@ -8,6 +8,16 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+for mod_name in [
+    "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
+    "mlflow", "mlflow.tracking", "pandas", "networkx", "matplotlib", "matplotlib.pyplot",
+    "pyvis", "pyvis.network"
+]:
+    if mod_name not in sys.modules:
+        m = MagicMock()
+        m.__path__ = []
+        sys.modules[mod_name] = m
+
 from utils.token_tracker import TokenCostTracker
 
 
@@ -193,11 +203,14 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 report = asyncio.run(analyzer.generate_migration_report())
 
                 self.assertIn("### LLM Token Usage & Cost Summary", report)
+                self.assertIn("### Pipeline Execution Metrics Summary", report)
                 self.assertIn("### Code Migration Plan (JSON)", report)
 
                 summary_pos = report.index("### LLM Token Usage & Cost Summary")
+                metrics_pos = report.index("### Pipeline Execution Metrics Summary")
                 plan_pos = report.index("### Code Migration Plan (JSON)")
-                self.assertLess(summary_pos, plan_pos)
+                self.assertLess(summary_pos, metrics_pos)
+                self.assertLess(metrics_pos, plan_pos)
 
     def test_prepare_settings_empty_tokens_fallback(self):
         """Verify that prepare_settings replaces empty or missing tokens with 'EMPTY' to prevent Pydantic validation failures."""
@@ -354,9 +367,12 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 report = asyncio.run(analyzer.generate_migration_report())
 
             self.assertIn("### LLM Token Usage & Cost Summary", report)
+            self.assertIn("### Pipeline Execution Metrics Summary", report)
             rec_pos = report.index("### Recommended Migration Order")
             summary_pos = report.index("### LLM Token Usage & Cost Summary")
+            metrics_pos = report.index("### Pipeline Execution Metrics Summary")
             self.assertGreater(summary_pos, rec_pos)
+            self.assertGreater(metrics_pos, summary_pos)
             self.assertTrue(report.rstrip().endswith("```"))
 
 

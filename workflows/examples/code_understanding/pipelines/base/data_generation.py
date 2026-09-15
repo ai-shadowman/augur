@@ -529,37 +529,69 @@ def detect_languages(source_path: str) -> list:
 class DataGenerationPipeline:
 
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
-            multi_repo: bool = False):
+            multi_repo: bool = False, metrics_tracker=None):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback, logging
         import os
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         git_slug = generate_git_slug(git_repo, git_branch)
 
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker(f"data-generation-{git_slug}", multi_repo=multi_repo)
+            own_tracker = True
+            tracker.start_stage("Data Generation")
+            if multi_repo:
+                tracker.start_app(git_slug, git_repo=git_repo, git_branch=git_branch)
+
         try:
 
-            prepare_environment(source_path=source_path, target_path=target_path,
-                                git_repo=git_repo, git_branch=git_branch)
+            with tracker.track_step("prepare_environment", stage="Data Generation", app=git_slug if multi_repo else None):
+                prepare_environment(source_path=source_path, target_path=target_path,
+                                    git_repo=git_repo, git_branch=git_branch)
 
-            languages = detect_languages(source_path)
+            with tracker.track_step("detect_languages", stage="Data Generation", app=git_slug if multi_repo else None):
+                languages = detect_languages(source_path)
 
-            external_metadata = load_external_data(source_path)
+            with tracker.track_step("load_external_data", stage="Data Generation", app=git_slug if multi_repo else None):
+                external_metadata = load_external_data(source_path)
 
             for language in languages:
 
                 for config in [False, True]:
 
-                    generate_code_and_meta(
-                        git_repo=git_repo, git_branch=git_branch,
-                        language=language, source_path=source_path, target_path=target_path,
-                        config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                    )
+                    step_desc = f"generate_code_and_meta ({language}{' config' if config else ''})"
+                    with tracker.track_step(
+                        step_desc,
+                        stage="Data Generation",
+                        app=git_slug if multi_repo else None,
+                        details={"language": language, "config": config},
+                    ):
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=source_path, target_path=target_path,
+                            config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                        )
 
             logging.info("Data generation pipeline complete.")
 
-            result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}
+            if own_tracker:
+                if multi_repo:
+                    tracker.stop_app(git_slug, status="COMPLETED")
+                tracker.stop_stage("Data Generation", status="COMPLETED")
+                tracker.stop_pipeline(status="COMPLETED")
+                tracker.log_summary()
+
+            result = {
+                "git_slug": git_slug,
+                "status": "complete",
+                "fail_message": "",
+                "metrics": tracker.to_dict(),
+            }
 
         except Exception as e:
 
@@ -569,22 +601,42 @@ class DataGenerationPipeline:
 
             logging.error(error_message)
 
+            if own_tracker:
+                if multi_repo:
+                    tracker.stop_app(git_slug, status="FAILED", error_message=str(e))
+                tracker.stop_stage("Data Generation", status="FAILED", error_message=str(e))
+                tracker.stop_pipeline(status="FAILED", error_message=str(e))
+                tracker.log_summary()
+
             reset_environment(source_path, target_path)
 
-            result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
+            result = {
+                "git_slug": git_slug,
+                "status": "error",
+                "fail_message": error_message,
+                "metrics": tracker.to_dict() if tracker else {},
+            }
 
         return result
 
-    def run_multi_repo(self, git_repos: list):
+    def run_multi_repo(self, git_repos: list, metrics_tracker=None):
         """Runs run for each repository in git_repos and returns a list of status dicts."""
         import logging
         from utils import code_utils
         import os
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
         parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
+
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker("multi-repo-data-generation", multi_repo=True)
+            own_tracker = True
+            tracker.start_stage("Data Generation")
 
         pipeline_results = []
 
@@ -602,11 +654,19 @@ class DataGenerationPipeline:
 
             logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
 
-            result = self.run(git_repo=git_repo, git_branch=git_branch,
-                              source_path=source_path, target_path=target_path,
-                              multi_repo=True)
+            with tracker.track_app(repo_slug, git_repo=git_repo, git_branch=git_branch):
+                result = self.run(
+                    git_repo=git_repo, git_branch=git_branch,
+                    source_path=source_path, target_path=target_path,
+                    multi_repo=True, metrics_tracker=tracker,
+                )
 
             pipeline_results.append(result)
+
+        if own_tracker:
+            tracker.stop_stage("Data Generation", status="COMPLETED")
+            tracker.stop_pipeline(status="COMPLETED")
+            tracker.log_summary()
 
         return pipeline_results
 

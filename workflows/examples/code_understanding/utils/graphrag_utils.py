@@ -27,8 +27,14 @@ class DependencyAnalyzer:
     """Query GraphRAG for dependency analysis"""
 
     GIT_URL_REGEX = r'https?://(?:github|gitlab)\.com/[\w\-\.]+/[\w\-\.]+'
+    SYSTEM_PROMPT_DATA_EXTRACTION = ""
+    SYSTEM_PROMPT_RHEL_ADMIN = ""
+    SYSTEM_PROMPT_CHARACTERIZATION_TESTS = ""
+    POST_AMBLE = ""
+    RHEL_8to10_CONTEXT = ""
 
-    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False, token_tracker=None):
+    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False,
+                 token_tracker=None, metrics_tracker=None):
 
         self.root_dir = root_dir
 
@@ -38,6 +44,12 @@ class DependencyAnalyzer:
 
         from utils.token_tracker import TokenCostTracker
         self.token_tracker = token_tracker or TokenCostTracker()
+
+        from utils.metrics_tracker import PipelineMetricsTracker
+        self.metrics_tracker = metrics_tracker or PipelineMetricsTracker(
+            "multi-repo-pipeline" if multi_repo else "single-repo-pipeline",
+            multi_repo=multi_repo,
+        )
 
         self._setup_configuration()
 
@@ -632,23 +644,36 @@ class DependencyAnalyzer:
         log_interactive_dependency_graph(self)
 
         token_summary_section = self.token_tracker.format_markdown_section()
+        metrics_summary_section = (
+            self.metrics_tracker.format_markdown_section()
+            if self.metrics_tracker
+            else ""
+        )
 
-        # For multi-repo runs, place the token usage table at the end of the summary / report
+        combined_tables = token_summary_section.strip()
+        if metrics_summary_section:
+            combined_tables += f"\n\n{metrics_summary_section.strip()}"
+
+        # For multi-repo runs, place the tables at the end of the summary / report
         if self.multi_repo:
-            return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+            return f"{title}{report.rstrip()}\n\n{combined_tables}\n"
 
-        # Place the token usage table above the Code Migration Plan (JSON) section
+        # Place the tables above the Code Migration Plan (JSON) section
         match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
         if match:
             idx = match.start()
-            final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
+            final_report = report[:idx] + combined_tables + "\n\n" + report[idx:]
             return f"{title}{final_report}"
 
-        return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+        return f"{title}{report.rstrip()}\n\n{combined_tables}\n"
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""
         return self.token_tracker.format_summary()
+
+    def get_pipeline_metrics_summary(self) -> str:
+        """Returns the formatted ASCII pipeline execution metrics summary table."""
+        return self.metrics_tracker.format_summary_table() if self.metrics_tracker else ""
     
     async def generate_report(self, service_name: str):
 

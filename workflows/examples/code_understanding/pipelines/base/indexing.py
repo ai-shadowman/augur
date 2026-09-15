@@ -150,20 +150,29 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
 class IndexingPipeline:
 
-    def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
-            multi_repo: bool = False):
+    def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
+            multi_repo: bool = False, metrics_tracker=None):
         """Generates a GraphRAG index and returns a status dict."""
         import traceback, logging
         import os
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker("indexing-pipeline", multi_repo=multi_repo)
+            own_tracker = True
+            tracker.start_stage("Indexing")
+
         try:
 
-            generate_graphrag_index(codebase_path=codebase_path,
-                                    graphrag_source_path=graphrag_source_path,
-                                    git_repo=git_repo, git_branch=git_branch,
-                                    multi_repo=multi_repo)
+            with tracker.track_step("generate_graphrag_index", stage="Indexing"):
+                generate_graphrag_index(codebase_path=codebase_path,
+                                        graphrag_source_path=graphrag_source_path,
+                                        git_repo=git_repo, git_branch=git_branch,
+                                        multi_repo=multi_repo)
 
             logging.info("GraphRAG index generation complete.")
 
@@ -175,8 +184,14 @@ class IndexingPipeline:
 
             logging.error(error_message)
 
+            if own_tracker:
+                tracker.stop_stage("Indexing", status="FAILED", error_message=str(e))
+                tracker.stop_pipeline(status="FAILED", error_message=str(e))
+                tracker.log_summary()
+
             return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
-                    "status": "fail", "fail_message": error_message}
+                    "status": "fail", "fail_message": error_message,
+                    "metrics": tracker.to_dict() if tracker else {}}
 
         if multi_repo:
 
@@ -186,24 +201,39 @@ class IndexingPipeline:
 
             try:
 
-                evaluate_graphrag_index(graphrag_source_path=graphrag_source_path,
-                                        git_repo=git_repo, git_branch=git_branch,
-                                        multi_repo=False)
+                with tracker.track_step("evaluate_graphrag_index", stage="Indexing"):
+                    evaluate_graphrag_index(graphrag_source_path=graphrag_source_path,
+                                            git_repo=git_repo, git_branch=git_branch,
+                                            multi_repo=False)
 
             except Exception as e:
 
                 logging.warning(f"GraphRAG index evaluation failed: {e}")
 
-        return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
-                "status": "success", "fail_message": ""}
+        if own_tracker:
+            tracker.stop_stage("Indexing", status="COMPLETED")
+            tracker.stop_pipeline(status="COMPLETED")
+            tracker.log_summary()
 
-    def run_multi_repo(self, parent_target_path: str, graphrag_source_path: str = None):
+        return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
+                "status": "success", "fail_message": "",
+                "metrics": tracker.to_dict() if tracker else {}}
+
+    def run_multi_repo(self, parent_target_path: str, graphrag_source_path: str = None, metrics_tracker=None):
         """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
         import os, logging
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_code_metadata_directories
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+
+        tracker = metrics_tracker
+        own_tracker = False
+        if tracker is None:
+            tracker = PipelineMetricsTracker("multi-repo-indexing", multi_repo=True)
+            own_tracker = True
+            tracker.start_stage("Indexing")
 
         if graphrag_source_path is None:
             graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
@@ -211,7 +241,8 @@ class IndexingPipeline:
         #git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
         git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS")) or []
 
-        download_code_metadata_directories(git_repos, parent_target_path)
+        with tracker.track_step("download_code_metadata", stage="Indexing"):
+            download_code_metadata_directories(git_repos, parent_target_path)
 
         result = self.run(
             codebase_path=parent_target_path,
@@ -219,10 +250,18 @@ class IndexingPipeline:
             git_repo="",
             git_branch="",
             multi_repo=True,
+            metrics_tracker=tracker,
         )
+
+        if own_tracker:
+            tracker.stop_stage("Indexing", status="COMPLETED" if result.get("status") == "success" else "FAILED")
+            tracker.stop_pipeline(status="COMPLETED" if result.get("status") == "success" else "FAILED")
+            tracker.log_summary()
 
         if result.get("status") != "success":
             raise Exception(f"GraphRAG indexing failed: {result.get('fail_message', '')}")
+
+        return result
 
 
 ##############################################################################

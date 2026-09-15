@@ -67,6 +67,7 @@ def single_repo_pipeline(
     else:
 
         from pipelines.base.data_generation import generate_git_slug
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         git_slug = generate_git_slug(git_repo, git_branch)
         source_path = f"{parent_source_path}/{git_slug}"
@@ -75,28 +76,60 @@ def single_repo_pipeline(
             os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), git_slug
         )
 
-        DataGenerationPipeline().run(
-            git_repo=git_repo,
-            git_branch=git_branch,
-            source_path=source_path,
-            target_path=target_path,
-            multi_repo=multi_repo,
-        )
+        tracker = PipelineMetricsTracker("single-repo-pipeline", multi_repo=multi_repo)
 
-        IndexingPipeline().run(
-            codebase_path=target_path,
-            graphrag_source_path=graphrag_source_path,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            multi_repo=multi_repo,
-        )
+        with tracker.track_pipeline():
 
-        AnalysisPipeline().run(
-            graphrag_source_path=graphrag_source_path,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            multi_repo=multi_repo,
-        )
+            with tracker.track_stage("Data Generation"):
+                DataGenerationPipeline().run(
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                    source_path=source_path,
+                    target_path=target_path,
+                    multi_repo=multi_repo,
+                    metrics_tracker=tracker,
+                )
+
+            with tracker.track_stage("Indexing"):
+                IndexingPipeline().run(
+                    codebase_path=target_path,
+                    graphrag_source_path=graphrag_source_path,
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                    multi_repo=multi_repo,
+                    metrics_tracker=tracker,
+                )
+
+            with tracker.track_stage("Analysis"):
+                AnalysisPipeline().run(
+                    graphrag_source_path=graphrag_source_path,
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                    multi_repo=multi_repo,
+                    metrics_tracker=tracker,
+                )
+
+        tracker.log_summary()
+
+        metrics_file = f"pipeline_metrics_{git_slug}.json" if git_slug else "pipeline_metrics.json"
+        tracker.save_to_file(metrics_file)
+
+        try:
+            from loaders.default_asset_loader import DefaultAssetLoader
+            DefaultAssetLoader().log_results(
+                metrics_file,
+                artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+                    git_slug=git_slug,
+                    multi_repo=False,
+                ),
+                content=json.dumps(tracker.to_dict(), indent=2),
+                tags={"git_slug": git_slug, "category": "metrics"},
+            )
+        except Exception:
+            pass
+
+        tracker.log_to_mlflow()
 
 
 @dsl.pipeline(name="multi-repo-pipeline")
@@ -120,15 +153,44 @@ def multi_repo_pipeline(
     else:
 
         from loaders.default_asset_loader import DefaultAssetLoader
+        from utils.metrics_tracker import PipelineMetricsTracker
 
         #git_repos = DefaultAssetLoader().download("repos/repo_list.json")
-        git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
+        git_repos_env = os.getenv("GIT_REPO_LIST_CONTENTS")
+        git_repos = json.loads(git_repos_env) if git_repos_env else []
 
-        DataGenerationPipeline().run_multi_repo(git_repos)
+        tracker = PipelineMetricsTracker("multi-repo-pipeline", multi_repo=True)
 
-        IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path)
+        with tracker.track_pipeline():
 
-        AnalysisPipeline().run_multi_repo()
+            with tracker.track_stage("Data Generation"):
+                DataGenerationPipeline().run_multi_repo(git_repos, metrics_tracker=tracker)
+
+            with tracker.track_stage("Indexing"):
+                IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path, metrics_tracker=tracker)
+
+            with tracker.track_stage("Analysis"):
+                AnalysisPipeline().run_multi_repo(metrics_tracker=tracker)
+
+        tracker.log_summary()
+
+        metrics_file = "pipeline_metrics_multi_repo.json"
+        tracker.save_to_file(metrics_file)
+
+        try:
+            DefaultAssetLoader().log_results(
+                metrics_file,
+                artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+                    multi_repo=True,
+                ),
+                content=json.dumps(tracker.to_dict(), indent=2),
+                tags={"multi_repo": True, "category": "metrics"},
+            )
+        except Exception:
+            pass
+
+        tracker.log_to_mlflow()
 
 
 ##############################################################################
@@ -136,11 +198,37 @@ def multi_repo_pipeline(
 ##############################################################################
 
 if __name__ == "__main__":
+    import argparse
 
-    compile_all_and_exit({
-        "data_generation": DataGenerationPipeline.run,
-        "single_repo":     single_repo_pipeline,
-        "multi_repo":      multi_repo_pipeline,
-        "indexing":        IndexingPipeline.run,
-        "analysis":        AnalysisPipeline.run,
-    })
+    if os.getenv("PIPELINE_COMPILE_ONLY"):
+
+        compile_all_and_exit({
+            "data_generation": DataGenerationPipeline.run,
+            "single_repo":     single_repo_pipeline,
+            "multi_repo":      multi_repo_pipeline,
+            "indexing":        IndexingPipeline.run,
+            "analysis":        AnalysisPipeline.run,
+        })
+
+    else:
+
+        parser = argparse.ArgumentParser(description="Run or compile pipelines.")
+        parser.add_argument("--single-repo", action="store_true", help="Run single-repo pipeline")
+        parser.add_argument("--multi-repo", action="store_true", help="Run multi-repo pipeline")
+        parser.add_argument("--compile", action="store_true", help="Compile pipelines to YAML")
+        args = parser.parse_args()
+
+        if args.compile:
+            compile_all_and_exit({
+                "data_generation": DataGenerationPipeline.run,
+                "single_repo":     single_repo_pipeline,
+                "multi_repo":      multi_repo_pipeline,
+                "indexing":        IndexingPipeline.run,
+                "analysis":        AnalysisPipeline.run,
+            })
+        elif args.single_repo:
+            single_repo_pipeline()
+        elif args.multi_repo:
+            multi_repo_pipeline()
+        else:
+            parser.print_help()
