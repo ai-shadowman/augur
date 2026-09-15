@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentmesh-code-understanding"
 version = "0.1.0"
+dependencies = [
+    "litellm",
+]
 
 [tool.setuptools.packages.find]
 namespaces = true

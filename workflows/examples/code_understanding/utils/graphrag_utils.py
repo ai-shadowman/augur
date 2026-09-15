@@ -1,5 +1,7 @@
 import os
+import re
 import ssl
+import math
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
     _orig_create_default_context = ssl.create_default_context
@@ -26,13 +28,16 @@ class DependencyAnalyzer:
 
     GIT_URL_REGEX = r'https?://(?:github|gitlab)\.com/[\w\-\.]+/[\w\-\.]+'
 
-    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False):
+    def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False, token_tracker=None):
 
         self.root_dir = root_dir
 
         self.git_slug = git_slug
 
         self.multi_repo = multi_repo
+
+        from utils.token_tracker import TokenCostTracker
+        self.token_tracker = token_tracker or TokenCostTracker()
 
         self._setup_configuration()
 
@@ -348,6 +353,14 @@ class DependencyAnalyzer:
 
                 context_data = None
 
+                p_tokens = getattr(getattr(response, "metrics", None), "prompt_tokens", None)
+                o_tokens = getattr(getattr(response, "metrics", None), "output_tokens", None)
+                if p_tokens is None:
+                    p_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.chat_model)
+                if o_tokens is None:
+                    o_tokens = self.token_tracker.count_tokens(result, model=self.token_tracker.chat_model)
+                self.token_tracker.track_chat(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
+
             else:
 
                 if use_global:
@@ -365,6 +378,28 @@ class DependencyAnalyzer:
                         dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
                     )
 
+                    p_tokens = None
+                    o_tokens = None
+                    if isinstance(context_data, dict):
+                        p_tokens = context_data.get("prompt_tokens")
+                        o_tokens = context_data.get("output_tokens")
+                    if p_tokens is None:
+                        ctx_content = self.extract_context_content(context_data)
+                        ctx_str = ctx_content if ctx_content else (str(context_data) if context_data is not None else "")
+                        p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
+                    if o_tokens is None:
+                        o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
+
+                    actual_calls = 1
+                    if isinstance(context_data, dict):
+                        reports_df = context_data.get("reports", pd.DataFrame())
+                        if isinstance(reports_df, pd.DataFrame) and not reports_df.empty and "full_content" in reports_df.columns:
+                            total_chars = reports_df["full_content"].dropna().astype(str).str.len().sum()
+                            estimated_batches = max(1, math.ceil(total_chars / 24000))
+                            actual_calls = estimated_batches + 1
+
+                    self.token_tracker.track_global_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=actual_calls)
+
                 else:
 
                     result, context_data = await api.local_search(
@@ -379,6 +414,22 @@ class DependencyAnalyzer:
                         response_type=response_type,
                         query=question,
                     )
+
+                    embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
+                    self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
+
+                    p_tokens = None
+                    o_tokens = None
+                    if isinstance(context_data, dict):
+                        p_tokens = context_data.get("prompt_tokens")
+                        o_tokens = context_data.get("output_tokens")
+                    if p_tokens is None:
+                        ctx_content = self.extract_context_content(context_data)
+                        ctx_str = ctx_content if ctx_content else (str(context_data) if context_data is not None else "")
+                        p_tokens = self.token_tracker.count_tokens(f"{question}\n{ctx_str}", model=self.token_tracker.chat_model)
+                    if o_tokens is None:
+                        o_tokens = self.token_tracker.count_tokens(str(result), model=self.token_tracker.chat_model)
+                    self.token_tracker.track_local_search(prompt_tokens=p_tokens, output_tokens=o_tokens, calls=1)
 
 
         except Exception as e:
@@ -456,15 +507,23 @@ class DependencyAnalyzer:
         template_path = f"{template_dir}/settings.yaml.in"
         output_path = f"{output_dir}/settings.yaml"
 
-        logging.info("Preparing settings...")
-
         try:
+            env = dict(os.environ)
+            # GraphRAG's Pydantic validator requires a non-empty string for api_key when
+            # auth_type is api_key. For endpoints that do not require auth (e.g. vLLM),
+            # or if the token is empty, provide a non-empty fallback so validation passes.
+            if not env.get("GRAPHRAG_LLM_TOKEN"):
+                logging.warning("GRAPHRAG_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
+                env["GRAPHRAG_LLM_TOKEN"] = "EMPTY"
+            if not env.get("EMBED_LLM_TOKEN"):
+                logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
+                env["EMBED_LLM_TOKEN"] = "EMPTY"
 
             with open(template_path) as f:
                 content = string.Template(f.read())
 
             with open(output_path, "w") as f:
-                f.write(content.substitute(os.environ))
+                f.write(content.substitute(env))
 
         except KeyError as keyerr:
             raise ValueError(f"Required environment variable {keyerr} is not set")
@@ -550,7 +609,13 @@ class DependencyAnalyzer:
 
                 bypass_index = prompt_path.startswith("analysis/migration-report/enhanced")
 
-                use_global = self.multi_repo or meta.get('search_mode') != 'local'
+                search_mode = meta.get('search_mode')
+                if search_mode == 'local':
+                    use_global = False
+                elif search_mode == 'global':
+                    use_global = True
+                else:
+                    use_global = self.multi_repo
 
                 result = await self.query_with_llm(prompt,
                                                    bypass_index=bypass_index,
@@ -566,7 +631,24 @@ class DependencyAnalyzer:
 
         log_interactive_dependency_graph(self)
 
-        return f"{title}{report}"
+        token_summary_section = self.token_tracker.format_markdown_section()
+
+        # For multi-repo runs, place the token usage table at the end of the summary / report
+        if self.multi_repo:
+            return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+
+        # Place the token usage table above the Code Migration Plan (JSON) section
+        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+        if match:
+            idx = match.start()
+            final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
+            return f"{title}{final_report}"
+
+        return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+
+    def get_token_usage_summary(self) -> str:
+        """Returns the formatted ASCII token usage and cost summary table."""
+        return self.token_tracker.format_summary()
     
     async def generate_report(self, service_name: str):
 
