@@ -504,11 +504,20 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         )
 
 
-def generate_git_slug(git_repo: str, git_branch: str) -> str:
+def generate_git_slug(git_repo: str, git_branch: str = "main") -> str:
     """Returns a filesystem-safe slug derived from the repo URL and branch."""
-    from utils import code_utils
-
-    return code_utils.generate_slug_from_repo(git_repo, git_branch)
+    if not git_repo:
+        return ""
+    try:
+        from utils import code_utils
+        return code_utils.generate_slug_from_repo(git_repo, git_branch or "main")
+    except Exception:
+        from urllib.parse import urlparse
+        path = urlparse(str(git_repo).strip()).path.strip("/")
+        parts = path.removesuffix(".git").split("/")
+        if len(parts) >= 2:
+            return f"{parts[-2]}-{parts[-1]}-{git_branch or 'main'}"[:255]
+        return f"{str(git_repo).replace('/', '-')}-{git_branch or 'main'}"[:255]
 
 
 def detect_languages(source_path: str) -> list:

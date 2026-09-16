@@ -7,6 +7,7 @@ name = "agentmesh-code-understanding"
 version = "0.1.0"
 dependencies = [
     "litellm",
+    "pygments",
 ]
 
 [tool.setuptools.packages.find]

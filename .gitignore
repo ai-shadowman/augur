@@ -27,3 +27,5 @@ workflows/examples/code_understanding/graph_rag_app/
 **/compiled_pipelines/
 workflows/examples/code_understanding/target/
 *pipeline_metrics*.json
+mlflow.db
+mlruns/

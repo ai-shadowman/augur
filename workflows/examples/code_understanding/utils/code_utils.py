@@ -1,33 +1,30 @@
 from collections import defaultdict
-
-from jsonpath_ng import jsonpath, parse
-
-from github import Github
-
-from pygments.lexers import guess_lexer_for_filename
-
-from pygments.util import ClassNotFound
-
 from urllib.parse import urlparse
-
 import logging
-
 import os
-
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from loaders.default_asset_loader import DefaultAssetLoader
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 CODE_METADATA_DIR = ".code_metadata"
 
+_MAPPINGS = None
+
 
 def _load_mappings():
     """Loads language mappings from the language_mappings.json file."""
+    from loaders.default_asset_loader import DefaultAssetLoader
     return DefaultAssetLoader().download("mappings/language_mappings.json")
+
+
+def _get_mappings():
+    global _MAPPINGS
+    if _MAPPINGS is None:
+        _MAPPINGS = _load_mappings()
+    return _MAPPINGS
+
 
 def _extract_git_owner_and_repo(git_url: str):
     """
@@ -44,16 +41,15 @@ def _extract_git_owner_and_repo(git_url: str):
 
     parts = path.removesuffix(".git").split("/")
 
-    if len(parts) < 2:
-        raise ValueError(
-            f"Could not extract owner and repo from URL: {git_url}")
+    if len(parts) >= 2:
+        return tuple(parts[-2:])
+    elif len(parts) == 1 and parts[0]:
+        return ("repo", parts[0])
+    return ("repo", git_url.strip().replace("/", "-"))
 
-    return tuple(parts[-2:])
-
-_MAPPINGS = _load_mappings()
 
 def get_file_extensions_for_language(language):
-    mappings = _MAPPINGS["file_extensions"]
+    mappings = _get_mappings()["file_extensions"]
 
     if language not in mappings:
         raise ValueError(f"Language={language} has not been mapped")
@@ -62,7 +58,7 @@ def get_file_extensions_for_language(language):
 
 
 def get_config_file_extensions_for_language(language):
-    mappings = _MAPPINGS["config_file_extensions"]
+    mappings = _get_mappings()["config_file_extensions"]
 
     language = language.strip().lower()
 
@@ -73,7 +69,7 @@ def get_config_file_extensions_for_language(language):
 
 
 def get_comment_delimiters_for_file_extension(file_extension):
-    mappings = _MAPPINGS["comment_delimiters_by_extension"]
+    mappings = _get_mappings()["comment_delimiters_by_extension"]
 
     if file_extension not in mappings:
         raise ValueError(f"File extension={file_extension} has not been mapped")
@@ -105,7 +101,7 @@ def process_large_code_file(abs_path: str, source_path: str):
 
 def get_exclude_dirs_for_language(language):
 
-    mappings = _MAPPINGS["exclude_dirs"]
+    mappings = _get_mappings()["exclude_dirs"]
 
     language = language.strip().lower()
 
@@ -116,7 +112,7 @@ def get_exclude_dirs_for_language(language):
 
 
 def get_comment_delimiters_for_language(language):
-    mappings = _MAPPINGS["comment_delimiters_by_language"]
+    mappings = _get_mappings()["comment_delimiters_by_language"]
 
     if language not in mappings:
         raise ValueError(f"Language={language} has not been mapped")
@@ -134,13 +130,20 @@ def get_detected_languages_for_repo(code_dir: str):
     Returns:
         list[str]: Deduplicated list of detected language keys.
     """
+    try:
+        from pygments.lexers import guess_lexer_for_filename
+        from pygments.util import ClassNotFound
+    except ImportError:
+        logging.warning("pygments is not installed, cannot detect languages by lexer.")
+        return []
+
     languages = set()
 
     visited = defaultdict(int)
 
     threshold = 3
 
-    mappings = _MAPPINGS["pygments_mappings"]
+    mappings = _get_mappings()["pygments_mappings"]
 
     all_files = [os.path.join(root, f) for root, _, files in
                  os.walk(code_dir) for f in files]
@@ -190,6 +193,11 @@ def generate_slug_from_repo(repo_url: str, repo_branch: str = "master"):
 
     Returns: A slug generated from the repository URL and branch name.
     """
-    owner, repo_name = _extract_git_owner_and_repo(repo_url)
-
-    return f"{owner}-{repo_name}-{repo_branch}"[:255]
+    if not repo_url:
+        return ""
+    try:
+        owner, repo_name = _extract_git_owner_and_repo(repo_url)
+        return f"{owner}-{repo_name}-{repo_branch}"[:255]
+    except Exception:
+        clean = repo_url.strip().replace("https://", "").replace("http://", "").replace("/", "-")
+        return f"{clean}-{repo_branch}"[:255]

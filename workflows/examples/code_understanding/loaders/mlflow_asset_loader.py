@@ -106,18 +106,33 @@ class MlFlowAssetLoader(AssetLoader):
         """Finds and downloads matching artifacts across multiple MLflow runs matching tags."""
         try:
             client = MlflowClient()
-            experiment = client.get_experiment_by_name(experiment_name)
-            if not experiment:
+            experiments = []
+            if isinstance(experiment_name, (list, tuple, set)):
+                for en in experiment_name:
+                    exp = client.get_experiment_by_name(en)
+                    if exp:
+                        experiments.append(exp)
+            elif experiment_name == self.RESULT_ASSET_EXPERIMENT:
+                for en in [self.RESULT_ASSET_EXPERIMENT, self.RESULT_DIRECTORY_ASSET_EXPERIMENT]:
+                    exp = client.get_experiment_by_name(en)
+                    if exp:
+                        experiments.append(exp)
+            else:
+                exp = client.get_experiment_by_name(experiment_name)
+                if exp:
+                    experiments.append(exp)
+
+            if not experiments:
                 return []
 
             filter_conditions = []
             for k, v in (tags or {}).items():
-                if v:
+                if v is not None and v != "":
                     filter_conditions.append(f"tags.\"{k}\" = '{v}'")
             filter_string = " AND ".join(filter_conditions)
 
             runs = client.search_runs(
-                experiment_ids=[experiment.experiment_id],
+                experiment_ids=[e.experiment_id for e in experiments],
                 filter_string=filter_string,
                 order_by=["attributes.start_time DESC"],
                 max_results=max_runs,
