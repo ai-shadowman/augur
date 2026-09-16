@@ -27,9 +27,9 @@ class DefaultAssetLoader(AssetLoader):
         return self._loader.download_dir(asset_dir_path, download_dir, **kwargs)
 
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
-                    content: str = None):
+                    content: str = None, **kwargs):
 
-        return self._loader.log_results(results_path, artifact_path, tags, content)
+        return self._loader.log_results(results_path, artifact_path, tags, content, **kwargs)
 
     def upload_all_assets(self, assets_dir: str):
 
@@ -46,3 +46,10 @@ class DefaultAssetLoader(AssetLoader):
     def num_prompts(self, prompt_prefix: str) -> int:
 
         return self._loader.num_prompts(prompt_prefix)
+
+    def download_matching_artifacts(self, *args, **kwargs) -> list:
+
+        if hasattr(self._loader, "download_matching_artifacts"):
+            return self._loader.download_matching_artifacts(*args, **kwargs)
+        return []
+

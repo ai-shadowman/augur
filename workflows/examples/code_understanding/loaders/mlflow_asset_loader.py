@@ -83,6 +83,8 @@ class MlFlowAssetLoader(AssetLoader):
                 filters.append(f"tags.\"pipeline\" = '{tags['pipeline']}'")
             if tags.get("git_slug"):
                 filters.append(f"tags.\"git_slug\" = '{tags['git_slug']}'")
+            if tags.get("stage"):
+                filters.append(f"tags.\"stage\" = '{tags['stage']}'")
         filter_string = " AND ".join(filters)
 
         existing = client.search_runs(
@@ -147,6 +149,7 @@ class MlFlowAssetLoader(AssetLoader):
                             with open(local_path, "r", encoding="utf-8") as f:
                                 data = json.load(f) if local_path.endswith(".json") else f.read()
                                 results.append(data)
+                                break
                 except Exception as run_err:
                     logging.debug(f"Error checking artifacts for run {run.info.run_id}: {run_err}")
             return results
@@ -257,12 +260,12 @@ class MlFlowAssetLoader(AssetLoader):
             raise e
 
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
-                    content: str = None):
+                    content: str = None, experiment_name: str = None, **kwargs):
         """Logs pipeline output artifacts to a new MLflow run."""
         try:
             is_dir = os.path.isdir(results_path)
 
-            if os.path.dirname(results_path):
+            if not is_dir and os.path.dirname(results_path):
 
                 os.makedirs(os.path.dirname(results_path), exist_ok=True)
 
@@ -274,7 +277,8 @@ class MlFlowAssetLoader(AssetLoader):
 
             client = MlflowClient()
 
-            experiment_name = self.RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self.RESULT_ASSET_EXPERIMENT
+            if not experiment_name:
+                experiment_name = self.RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self.RESULT_ASSET_EXPERIMENT
 
             experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 

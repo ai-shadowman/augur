@@ -1051,6 +1051,235 @@ class TestCrossStagePipelineMetrics(unittest.TestCase):
                 self.assertIn("generate_graphrag_index", {s.name for s in tracker.steps})
 
 
+    def test_default_asset_loader_delegation(self):
+        """Verify DefaultAssetLoader delegates download_matching_artifacts to underlying loader."""
+        file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "loaders", "default_asset_loader.py"))
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        code_sanitized = (
+            code.replace("from .asset_loader import AssetLoader", "")
+            .replace("from .local_asset_loader import LocalAssetLoader", "")
+            .replace("from .mlflow_asset_loader import MlFlowAssetLoader", "")
+        )
+        class MockAssetLoader:
+            pass
+        exec_scope = {
+            "os": os,
+            "AssetLoader": MockAssetLoader,
+            "LocalAssetLoader": MagicMock,
+            "MlFlowAssetLoader": MagicMock,
+        }
+        exec(code_sanitized, exec_scope)
+        RealDAL = exec_scope["DefaultAssetLoader"]
+
+        dal = RealDAL()
+        mock_inner = MagicMock()
+        mock_inner.download_matching_artifacts.return_value = [{"pipeline_name": "test"}]
+        dal._loader = mock_inner
+
+        res = dal.download_matching_artifacts(experiment_name="test-exp", tags={"category": "metrics"})
+        mock_inner.download_matching_artifacts.assert_called_once_with(
+            experiment_name="test-exp", tags={"category": "metrics"}
+        )
+        self.assertEqual(res, [{"pipeline_name": "test"}])
+
+    def test_save_and_log_bundles_all_files_in_single_run(self):
+        """Verify save_and_log writes all candidate files and logs them in a single call with correct tags."""
+        tracker = PipelineMetricsTracker("graphrag-analysis-pipeline")
+        tracker.start_stage("Analysis")
+        tracker.stop_stage("Analysis")
+
+        mock_loader = MagicMock()
+        logged_files = []
+        logged_tags = {}
+        logged_exp = None
+        def fake_log_results(results_path, **kwargs):
+            nonlocal logged_exp, logged_tags
+            logged_exp = kwargs.get("experiment_name")
+            logged_tags = kwargs.get("tags", {})
+            if os.path.isdir(results_path):
+                logged_files.extend(os.listdir(results_path))
+        mock_loader.log_results.side_effect = fake_log_results
+
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            tracker.save_and_log(
+                git_repo="https://github.com/org/repo.git",
+                git_branch="main",
+            )
+
+            # Ensure log_results was called exactly once (bundling all files)
+            self.assertEqual(mock_loader.log_results.call_count, 1)
+
+            # Verify all expected candidate files exist in the logged directory
+            self.assertIn("pipeline_metrics.json", logged_files)
+            self.assertIn("pipeline_metrics_org-repo-main.json", logged_files)
+            self.assertIn("pipeline_metrics_graphrag-analysis-pipeline_org-repo-main.json", logged_files)
+
+            # Verify tags attached to the single run
+            self.assertEqual(logged_tags["pipeline"], "graphrag-analysis-pipeline")
+            self.assertEqual(logged_tags["git_slug"], "org-repo-main")
+            self.assertEqual(logged_tags["latest"], "true")
+            self.assertEqual(logged_tags["stage"], "Analysis")
+
+    def test_start_stage_purges_stale_steps_for_active_stage(self):
+        """Verify that starting a stage resets it fresh, purging stale steps from prior runs
+        while preserving prerequisite stages and their steps."""
+        tracker = PipelineMetricsTracker("single-repo-pipeline")
+
+        # Simulate prior stages loaded from data-generation and indexing
+        dg_stage = StageMetric("Data Generation", started_at="2026-09-16 14:00:00", stopped_at="2026-09-16 14:02:00", duration=120.0, status="COMPLETED")
+        dg_step = StepMetric("prepare_environment", stage="Data Generation", duration=120.0, status="COMPLETED")
+        dg_stage.steps.append(dg_step)
+        tracker.stages["Data Generation"] = dg_stage
+        tracker.steps.append(dg_step)
+
+        idx_stage = StageMetric("Indexing", started_at="2026-09-16 14:02:00", stopped_at="2026-09-16 14:05:00", duration=180.0, status="COMPLETED")
+        idx_step = StepMetric("generate_graphrag_index", stage="Indexing", duration=180.0, status="COMPLETED")
+        idx_stage.steps.append(idx_step)
+        tracker.stages["Indexing"] = idx_stage
+        tracker.steps.append(idx_step)
+
+        # Simulate stale Analysis stage loaded from an earlier run (e.g. from 13:44:59)
+        old_analysis = StageMetric("Analysis", started_at="2026-09-16 13:44:59", stopped_at="2026-09-16 13:44:59", duration=0.11, status="COMPLETED")
+        stale_step = StepMetric("log_results", stage="Analysis", started_at="2026-09-16 13:44:59", stopped_at="2026-09-16 13:44:59", duration=0.11, status="COMPLETED")
+        old_analysis.steps.append(stale_step)
+        tracker.stages["Analysis"] = old_analysis
+        tracker.steps.append(stale_step)
+
+        # Now start Analysis fresh for the current run
+        tracker.start_stage("Analysis")
+
+        # The stale step 'log_results' for Analysis should be completely removed
+        self.assertNotIn(stale_step, tracker.steps)
+        self.assertNotIn("log_results", [s.name for s in tracker.steps if s.stage == "Analysis"])
+
+        # Prerequisite steps and stages MUST remain intact
+        self.assertIn("Data Generation", tracker.stages)
+        self.assertIn("Indexing", tracker.stages)
+        self.assertIn(dg_step, tracker.steps)
+        self.assertIn(idx_step, tracker.steps)
+
+        # Now execute current step
+        with tracker.track_step("generate_migration_report", stage="Analysis"):
+            pass
+        tracker.stop_stage("Analysis")
+
+        analysis_step_names = [s.name for s in tracker.steps if s.stage == "Analysis"]
+        self.assertEqual(analysis_step_names, ["generate_migration_report"])
+
+    def test_merge_and_total_duration_cross_day_gap_protection(self):
+        """Verify that when stages took 5 minutes total, but started_at and stopped_at
+        span across days (14+ hours) from historical runs, total_duration reflects actual stage time."""
+        tracker = PipelineMetricsTracker("single-repo-pipeline")
+        tracker.started_at = "2026-09-15 22:52:39"
+        tracker.stopped_at = "2026-09-16 13:44:59"
+
+        # Stages totaling ~5 minutes (300 seconds)
+        s1 = StageMetric("Data Generation", duration=120.0, status="COMPLETED")
+        s2 = StageMetric("Indexing", duration=180.0, status="COMPLETED")
+        tracker.stages["Data Generation"] = s1
+        tracker.stages["Indexing"] = s2
+
+        dur = tracker.get_total_duration()
+        # Should be 300s (5m), NOT 53540s (14h 52m)
+        self.assertAlmostEqual(dur, 300.0, delta=1.0)
+
+        # Stopping the pipeline should also record 300s, not 14 hours
+        final_dur = tracker.stop_pipeline()
+        self.assertAlmostEqual(final_dur, 300.0, delta=1.0)
+
+    def test_end_to_end_subparts_migration_report_output(self):
+        """End-to-end test verifying that subparts data-generation and graphrag-indexing
+        are loaded, merged into Analysis, and accurately displayed in the final migration report."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        # 1. Simulate data-generation subpart
+        dg = PipelineMetricsTracker("data-generation-pipeline")
+        dg.start_stage("Data Generation")
+        with dg.track_step("extract_code_entities", stage="Data Generation"):
+            time.sleep(0.01)
+        dg.stop_stage("Data Generation")
+
+        # 2. Simulate graphrag-indexing subpart
+        idx = PipelineMetricsTracker("graphrag-indexing-pipeline")
+        idx.start_stage("Indexing")
+        with idx.track_step("build_knowledge_graph", stage="Indexing"):
+            time.sleep(0.01)
+        idx.stop_stage("Indexing")
+
+        # 3. Mock loader to return these subparts
+        mock_loader = MagicMock()
+        mock_loader.download_matching_artifacts.return_value = [
+            dg.to_dict(),
+            idx.to_dict(),
+        ]
+
+        with tempfile.TemporaryDirectory() as empty_dir:
+            # 4. Analysis pipeline loads or creates tracker
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+                tracker = PipelineMetricsTracker.load_or_create(
+                    search_paths=[empty_dir],
+                    pipeline_name="single-repo-pipeline",
+                    git_repo="https://github.com/myorg/myrepo.git",
+                    git_branch="main",
+                )
+
+            # Prerequisite stages must be present
+            self.assertIn("Data Generation", tracker.stages)
+            self.assertIn("Indexing", tracker.stages)
+
+            # 5. Analysis starts its stage and step
+            tracker.start_stage("Analysis")
+            with tracker.track_step("generate_migration_report", stage="Analysis"):
+                time.sleep(0.01)
+
+                # 6. Generate migration report
+                with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+                     patch.object(DependencyAnalyzer, '_setup_search'), \
+                     patch.object(DependencyAnalyzer, '_setup_prompts'), \
+                     patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value=set()), \
+                     patch.object(DependencyAnalyzer, '_community_level_for_multi_repo', return_value=0), \
+                     patch('utils.visualization_utils.log_interactive_dependency_graph'):
+
+                    analyzer = DependencyAnalyzer(
+                        empty_dir,
+                        git_slug="myorg-myrepo-main",
+                        metrics_tracker=tracker,
+                    )
+
+                    mock_dl = MagicMock()
+                    mock_dl.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
+                    mock_dl.download_prompt.side_effect = [
+                        ("p1", {"title": "### System Architecture Summary", "skip_prompt": None}),
+                        ("p2", {"title": "### Code Migration Plan (JSON)", "skip_prompt": None}),
+                    ]
+
+                    orig_loader = DefaultAssetLoaderMock.return_value
+                    DefaultAssetLoaderMock.return_value = mock_dl
+                    try:
+                        with patch.object(analyzer, 'query_with_llm', side_effect=["Arch summary.", "```json\n{}\n```"]):
+                            report = asyncio.run(analyzer.generate_migration_report())
+                    finally:
+                        DefaultAssetLoaderMock.return_value = orig_loader
+
+                    # 7. Assertions on report table
+                    self.assertIn("PIPELINE EXECUTION METRICS", report)
+                    self.assertIn("[STAGE] Data Generation", report)
+                    self.assertIn("extract_code_entities", report)
+                    self.assertIn("[STAGE] Indexing", report)
+                    self.assertIn("build_knowledge_graph", report)
+                    self.assertIn("[STAGE] Analysis", report)
+                    self.assertIn("generate_migration_report", report)
+
+                    # Table placement checks
+                    token_pos = report.index("### LLM Token Usage & Cost Summary")
+                    metrics_pos = report.index("### Pipeline Execution Metrics Summary")
+                    plan_pos = report.index("### Code Migration Plan (JSON)")
+                    self.assertGreater(metrics_pos, token_pos)
+                    self.assertLess(metrics_pos, plan_pos)
+
+
 if __name__ == "__main__":
     unittest.main()
 

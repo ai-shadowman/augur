@@ -76,17 +76,22 @@ class StepMetric:
         stage: Optional[str] = None,
         app: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
+        started_at: Optional[str] = None,
+        stopped_at: Optional[str] = None,
+        duration: float = 0.0,
+        status: str = "running",
+        error_message: str = "",
     ):
         self.name = name
         self.stage = stage
         self.app = app
-        self.started_at: str = _current_timestamp()
-        self.stopped_at: Optional[str] = None
+        self.started_at: str = started_at or _current_timestamp()
+        self.stopped_at: Optional[str] = stopped_at
         self._start_perf: float = time.perf_counter()
-        self.duration: float = 0.0
-        self.status: str = "running"
+        self.duration: float = duration
+        self.status: str = status
         self.details: Dict[str, Any] = details or {}
-        self.error_message: str = ""
+        self.error_message: str = error_message
 
     def complete(self, status: str = "COMPLETED", error_message: str = "") -> float:
         """Stops the timer and marks step status."""
@@ -204,16 +209,24 @@ class AppMetric:
 class StageMetric:
     """Represents metrics for a pipeline stage (e.g. Data Generation, Indexing, Analysis)."""
 
-    def __init__(self, name: str):
+    def __init__(
+        self,
+        name: str,
+        started_at: Optional[str] = None,
+        stopped_at: Optional[str] = None,
+        duration: float = 0.0,
+        status: str = "running",
+        error_message: str = "",
+    ):
         self.name = name
-        self.started_at: str = _current_timestamp()
-        self.stopped_at: Optional[str] = None
+        self.started_at: str = started_at or _current_timestamp()
+        self.stopped_at: Optional[str] = stopped_at
         self._start_perf: float = time.perf_counter()
-        self.duration: float = 0.0
-        self.status: str = "running"
+        self.duration: float = duration
+        self.status: str = status
         self.steps: List[StepMetric] = []
         self.apps: Dict[str, AppMetric] = {}
-        self.error_message: str = ""
+        self.error_message: str = error_message
 
     def complete(self, status: str = "COMPLETED", error_message: str = "") -> float:
         self.stopped_at = _current_timestamp()
@@ -308,12 +321,15 @@ class PipelineMetricsTracker:
         sub_sum = max(stage_sum, step_sum)
 
         if self.status != "running":
-            if self.total_duration > 0.0:
-                return max(self.total_duration, sub_sum)
             if sub_sum > 0.0:
+                if self.total_duration > 0.0 and self.total_duration <= sub_sum + 300:
+                    return max(self.total_duration, sub_sum)
                 return sub_sum
             if self.started_at and self.stopped_at:
-                return _duration_between_timestamps(self.started_at, self.stopped_at)
+                ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
+                if self.total_duration > 0.0 and self.total_duration <= ts_diff:
+                    return self.total_duration
+                return ts_diff
             return self.total_duration
 
         if finalize_running:
@@ -321,9 +337,11 @@ class PipelineMetricsTracker:
             if hasattr(self, "_start_perf") and self._start_perf:
                 perf_elapsed = max(0.0, time.perf_counter() - self._start_perf)
             ts_elapsed = _duration_between_timestamps(self.started_at, self.stopped_at or _current_timestamp())
-            return max(perf_elapsed, sub_sum, ts_elapsed)
+            if sub_sum > 0.0:
+                return max(sub_sum, perf_elapsed)
+            return max(perf_elapsed, ts_elapsed)
 
-        return max(self.total_duration, sub_sum)
+        return sub_sum if sub_sum > 0.0 else self.total_duration
 
     def start_pipeline(self, pipeline_name: Optional[str] = None, multi_repo: Optional[bool] = None):
         """Starts or resets pipeline timing."""
@@ -345,8 +363,15 @@ class PipelineMetricsTracker:
         perf_elapsed = max(0.0, time.perf_counter() - self._start_perf) if (hasattr(self, "_start_perf") and self._start_perf > 0.0) else 0.0
         stage_sum = sum(s.get_duration() for s in self.stages.values())
         step_sum = sum(s.get_duration() for s in self.steps)
+        sub_sum = max(stage_sum, step_sum)
         ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
-        self.total_duration = max(stage_sum, step_sum, ts_diff, perf_elapsed)
+        if sub_sum > 0.0:
+            if ts_diff <= sub_sum + 300:
+                self.total_duration = max(sub_sum, ts_diff, perf_elapsed)
+            else:
+                self.total_duration = max(sub_sum, perf_elapsed)
+        else:
+            self.total_duration = max(ts_diff, perf_elapsed)
         self.status = status
         if error_message:
             self.error_message = error_message
@@ -374,6 +399,11 @@ class PipelineMetricsTracker:
 
     def start_stage(self, stage_name: str) -> StageMetric:
         """Starts tracking a pipeline stage."""
+        if stage_name in self.stages and self.stages[stage_name].status != "running":
+            # If the stage was previously loaded from a completed or stale run, reset it fresh
+            self.stages.pop(stage_name, None)
+            self.steps = [s for s in self.steps if s.stage != stage_name]
+
         if stage_name in self.stages:
             stage = self.stages[stage_name]
             stage.status = "running"
@@ -381,7 +411,18 @@ class PipelineMetricsTracker:
         else:
             stage = StageMetric(stage_name)
             self.stages[stage_name] = stage
+
         self._active_stage = stage_name
+        self.status = "running"
+        self.stopped_at = None
+
+        # Ensure pipeline started_at matches the earliest known stage
+        valid_starts = [s.started_at for s in self.stages.values() if s.started_at]
+        if valid_starts:
+            self.started_at = min(valid_starts)
+        else:
+            self.started_at = stage.started_at
+
         logging.info(f"-- [STAGE START] {stage_name} at {stage.started_at} --")
         return stage
 
@@ -398,7 +439,11 @@ class PipelineMetricsTracker:
         if stage.apps:
             sub_sum = max(sub_sum, sum(a.get_duration() for a in stage.apps.values()))
         ts_diff = _duration_between_timestamps(stage.started_at, stage.stopped_at)
-        stage.duration = max(stage.duration, perf_elapsed, sub_sum, ts_diff)
+        expected_dur = max(sub_sum, perf_elapsed)
+        if expected_dur > 0.0 and ts_diff > expected_dur + 300:
+            stage.duration = max(stage.duration, expected_dur)
+        else:
+            stage.duration = max(stage.duration, perf_elapsed, sub_sum, ts_diff)
         stage.status = status
         if error_message:
             stage.error_message = error_message
@@ -569,8 +614,12 @@ class PipelineMetricsTracker:
         """Formats the entire pipeline execution metrics into an ASCII summary table."""
         lines = []
 
-        status_str = "COMPLETED" if (self.status == "running" and finalize_running) else self.status
-        stop_str = (self.stopped_at or _current_timestamp()) if finalize_running else (self.stopped_at or "In Progress")
+        if self.status == "running":
+            status_str = "COMPLETED" if finalize_running else "running"
+            stop_str = (self.stopped_at or _current_timestamp()) if finalize_running else "In Progress"
+        else:
+            status_str = self.status
+            stop_str = self.stopped_at or "-"
         total_dur = self.get_total_duration(finalize_running=finalize_running)
 
         lines.append("=" * border_width)
@@ -1039,17 +1088,18 @@ class PipelineMetricsTracker:
         """Merges another tracker's stages, apps, and steps into this tracker."""
         if not other:
             return
-        if other.started_at and (not self.started_at or other.started_at < self.started_at):
-            self.started_at = other.started_at
-        if other.stopped_at and (not self.stopped_at or other.stopped_at > self.stopped_at):
-            if self.status != "running":
-                self.stopped_at = other.stopped_at
 
         for stage_name, other_stage in other.stages.items():
             if stage_name not in self.stages:
+                # If this tracker is actively running stage_name, do not import a completed stage
+                if self._active_stage == stage_name:
+                    continue
                 self.stages[stage_name] = other_stage
             else:
                 cur_stage = self.stages[stage_name]
+                # If cur_stage is currently running, do not import older steps into it
+                if cur_stage.status == "running" or self._active_stage == stage_name:
+                    continue
                 cur_steps_by_name = {s.name: s for s in cur_stage.steps}
                 for s in other_stage.steps:
                     if s.name not in cur_steps_by_name:
@@ -1096,8 +1146,24 @@ class PipelineMetricsTracker:
 
         cur_step_keys = {(s.stage, s.app, s.name) for s in self.steps}
         for s in other.steps:
+            if s.stage == self._active_stage:
+                continue
             if (s.stage, s.app, s.name) not in cur_step_keys:
                 self.steps.append(s)
+
+        # Update pipeline started_at from earliest valid stage
+        valid_starts = [s.started_at for s in self.stages.values() if s.started_at]
+        if valid_starts:
+            self.started_at = min(valid_starts)
+        elif other.started_at and (not self.started_at or other.started_at < self.started_at):
+            self.started_at = other.started_at
+
+        if self.status != "running":
+            valid_stops = [s.stopped_at for s in self.stages.values() if s.stopped_at]
+            if valid_stops:
+                self.stopped_at = max(valid_stops)
+            elif other.stopped_at and (not self.stopped_at or other.stopped_at > self.stopped_at):
+                self.stopped_at = other.stopped_at
 
         self.total_duration = self.get_total_duration()
 
@@ -1231,11 +1297,6 @@ class PipelineMetricsTracker:
                                 res = loader.download(cap, download_dir=tmp_dir, experiment_name=exp_name, asset_tags=asset_tags)
                             except Exception:
                                 pass
-                        if not res:
-                            try:
-                                res = loader.download(cap, download_dir=tmp_dir)
-                            except Exception:
-                                pass
 
                         asset_tracker = None
                         if isinstance(res, dict):
@@ -1255,27 +1316,60 @@ class PipelineMetricsTracker:
 
             # If loader has download_matching_artifacts, use it to fetch all matching metric assets
             if hasattr(loader, "download_matching_artifacts"):
-                query_tags = {"category": "metrics"}
-                if git_slug:
-                    query_tags["git_slug"] = git_slug
-                elif multi_repo:
-                    query_tags["multi_repo"] = "True"
-                try:
-                    matching_assets = loader.download_matching_artifacts(
-                        experiment_name=exp_name,
-                        tags=query_tags,
-                    )
-                    for item in matching_assets:
-                        if isinstance(item, dict):
-                            t = cls.from_dict(item)
-                            if tracker is None:
-                                tracker = t
-                            else:
-                                tracker.merge(t)
-                except Exception as e:
-                    logging.debug(f"Error calling download_matching_artifacts: {e}")
+                # Prerequisite sub-pipelines
+                subparts_to_query = [
+                    sp for sp in KNOWN_PIPELINE_SUBPARTS
+                    if sp != pipeline_name
+                ]
+                if pipeline_name in ("single-repo-pipeline", "multi-repo-pipeline"):
+                    subparts_to_query.append(pipeline_name)
 
-            # Also check candidate asset paths across all known subparts and general files
+                for sp in subparts_to_query:
+                    q_tags = {"category": "metrics", "pipeline": sp}
+                    if git_slug:
+                        q_tags["git_slug"] = git_slug
+                    elif multi_repo:
+                        q_tags["multi_repo"] = "True"
+                    try:
+                        matching_assets = loader.download_matching_artifacts(
+                            experiment_name=exp_name,
+                            tags=q_tags,
+                            max_runs=1,
+                        )
+                        for item in matching_assets:
+                            if isinstance(item, dict):
+                                t = cls.from_dict(item)
+                                if tracker is None:
+                                    tracker = t
+                                else:
+                                    tracker.merge(t)
+                    except Exception as e:
+                        logging.debug(f"Error calling download_matching_artifacts for {sp}: {e}")
+
+                # General query if tracker still empty
+                if tracker is None:
+                    query_tags = {"category": "metrics"}
+                    if git_slug:
+                        query_tags["git_slug"] = git_slug
+                    elif multi_repo:
+                        query_tags["multi_repo"] = "True"
+                    try:
+                        matching_assets = loader.download_matching_artifacts(
+                            experiment_name=exp_name,
+                            tags=query_tags,
+                            max_runs=1,
+                        )
+                        for item in matching_assets:
+                            if isinstance(item, dict):
+                                t = cls.from_dict(item)
+                                if tracker is None:
+                                    tracker = t
+                                else:
+                                    tracker.merge(t)
+                    except Exception as e:
+                        logging.debug(f"Error calling general download_matching_artifacts: {e}")
+
+            # Also check candidate asset paths across all known subparts with explicit tags
             artifact_path = loader.get_log_results_artifact_path(
                 loader.RESULTS_PATH_PREFIX_PIPELINES,
                 git_slug=git_slug,
@@ -1288,11 +1382,12 @@ class PipelineMetricsTracker:
             elif multi_repo:
                 base_tags["multi_repo"] = "True"
 
-            tag_sets = [base_tags]
+            tag_sets = []
             for subpart in KNOWN_PIPELINE_SUBPARTS:
-                stags = dict(base_tags)
-                stags["pipeline"] = subpart
-                tag_sets.append(stags)
+                if subpart != pipeline_name:
+                    stags = dict(base_tags)
+                    stags["pipeline"] = subpart
+                    tag_sets.append(stags)
 
             asset_filenames = ["pipeline_metrics.json"]
             if git_slug:
@@ -1376,31 +1471,41 @@ class PipelineMetricsTracker:
 
         try:
             from loaders.default_asset_loader import DefaultAssetLoader
+            from loaders.mlflow_asset_loader import MlFlowAssetLoader
             loader = DefaultAssetLoader()
             artifact_path = loader.get_log_results_artifact_path(
                 loader.RESULTS_PATH_PREFIX_PIPELINES,
                 git_slug=git_slug,
                 multi_repo=multi_repo,
             ) if hasattr(loader, "get_log_results_artifact_path") else None
+            active_stg = self._active_stage or (list(self.stages.keys())[-1] if self.stages else "")
             tags = {
                 "category": "metrics",
                 "pipeline": self.pipeline_name,
                 "git_slug": git_slug or "",
                 "multi_repo": str(multi_repo),
+                "stage": active_stg,
                 "latest": "true",
             }
-            loader.log_results(
-                res_filename,
-                artifact_path=artifact_path,
-                content=json.dumps(self.to_dict(), indent=2),
-                tags=tags,
-            )
-            if pipe_res_filename and pipe_res_filename != res_filename:
+
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_metrics_dir:
+                metrics_json = json.dumps(self.to_dict(), indent=2)
+                # Write all candidate filenames so any filename lookup succeeds
+                all_fns = {"pipeline_metrics.json", res_filename}
+                if pipe_res_filename:
+                    all_fns.add(pipe_res_filename)
+                for fn in all_fns:
+                    with open(os.path.join(temp_metrics_dir, fn), "w", encoding="utf-8") as f:
+                        f.write(metrics_json)
+
+                # Log directory in a single MLflow run to RESULT_ASSET_EXPERIMENT
+                exp_name = getattr(MlFlowAssetLoader, "RESULT_ASSET_EXPERIMENT", "augur-result-assets")
                 loader.log_results(
-                    pipe_res_filename,
+                    temp_metrics_dir,
                     artifact_path=artifact_path,
-                    content=json.dumps(self.to_dict(), indent=2),
                     tags=tags,
+                    experiment_name=exp_name,
                 )
         except Exception as e:
             logging.debug(f"Failed to log metrics to DefaultAssetLoader: {e}")

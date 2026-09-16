@@ -66,7 +66,7 @@ class AssetLoader(ABC):
 
     @abstractmethod
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
-                    content: str = None):
+                    content: str = None, **kwargs):
         """Logs pipeline output artifacts for the current run.
 
         Args:
@@ -114,3 +114,16 @@ class AssetLoader(ABC):
         Returns:
             The count of matching prompts.
         """
+
+    @abstractmethod
+    def download_matching_artifacts(self, artifact_filename: str = None, **kwargs) -> list:
+        """Finds and downloads matching artifacts across runs matching tags or filenames.
+
+        Args:
+            artifact_filename: Optional filename to match.
+            **kwargs: Additional criteria such as tags or experiment name.
+
+        Returns:
+            List of downloaded asset contents (dicts or strings).
+        """
+

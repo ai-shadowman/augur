@@ -83,9 +83,18 @@ class LocalAssetLoader(AssetLoader):
             raise e
 
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
-                    content: str = None):
-        """Writes content to results_path if provided. No remote logging step."""
-        if content is not None and not os.path.isdir(results_path):
+                    content: str = None, **kwargs):
+        """Writes content to results_path if provided, or copies directory to asset_base_uri."""
+        if os.path.isdir(results_path):
+            try:
+                target_asset = os.path.join(self.asset_base_uri, artifact_path) if artifact_path else self.asset_base_uri
+                os.makedirs(target_asset, exist_ok=True)
+                shutil.copytree(results_path, target_asset, dirs_exist_ok=True)
+            except Exception as e:
+                logging.debug(f"Failed to mirror result directory to asset_base_uri: {e}")
+            return
+
+        if content is not None:
             dir_name = os.path.dirname(results_path)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
