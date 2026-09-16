@@ -8,6 +8,20 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+# Provide mock stubs for container dependencies when running in local environments
+for pkg_name in [
+    "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
+    "pandas", "yaml", "mlflow", "mlflow.tracking", "requests", "deepeval",
+    "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm"
+]:
+    if pkg_name not in sys.modules:
+        m = MagicMock()
+        m.__path__ = []
+        sys.modules[pkg_name] = m
+
+import loaders.default_asset_loader
+import utils.visualization_utils
+import telemetry.default_custom_telemetry
 from utils.token_tracker import TokenCostTracker
 
 
@@ -359,8 +373,51 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertGreater(summary_pos, rec_pos)
             self.assertTrue(report.rstrip().endswith("```"))
 
+    def test_singleton_get_instance_and_reset(self):
+        """Verify TokenCostTracker.get_instance() and reset_instance() behavior."""
+        inst1 = TokenCostTracker.get_instance()
+        inst2 = TokenCostTracker.get_instance()
+        self.assertIs(inst1, inst2)
+
+        inst1.track_chat(prompt_tokens=10, output_tokens=5)
+        self.assertEqual(inst2.get_totals()["total_calls"], 1)
+
+        inst3 = TokenCostTracker.reset_instance()
+        self.assertIsNot(inst1, inst3)
+        self.assertEqual(inst3.get_totals()["total_calls"], 0)
+
+    def test_enable_telemetry_decorator(self):
+        """Verify @enable_telemetry decorator invokes DefaultCustomTelemetry.track()."""
+        from utils.otel_utils import enable_telemetry
+
+        called = []
+
+        @enable_telemetry
+        def sample_func(x):
+            called.append(x)
+            return x * 2
+
+        with patch('telemetry.default_custom_telemetry.DefaultCustomTelemetry.track') as mock_track:
+            result = sample_func(5)
+            self.assertEqual(result, 10)
+            self.assertEqual(called, [5])
+            mock_track.assert_called_once()
+
+    def test_dependency_analyzer_uses_singleton_by_default(self):
+        """Verify DependencyAnalyzer defaults to TokenCostTracker.get_instance()."""
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        singleton = TokenCostTracker.reset_instance()
+
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'):
+            analyzer = DependencyAnalyzer()
+            self.assertIs(analyzer.token_tracker, singleton)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

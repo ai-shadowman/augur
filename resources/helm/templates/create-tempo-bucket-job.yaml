@@ -1,0 +1,29 @@
+{{- if .Values.otel.createBucket }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-tempo-bucket
+  namespace: {{ .Values.otel.namespace }}
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: {{ .Values.minio.mcImage }}
+          command:
+            - sh
+            - -c
+            - |
+              until mc alias set minio {{ .Values.minio.endpoint }} "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"; do
+                echo "MinIO not ready, retrying in 5s..."; sleep 5;
+              done
+              mc mb --ignore-existing minio/{{ .Values.otel.tempo.bucket }}
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.rootPassword | quote }}
+{{- end }}

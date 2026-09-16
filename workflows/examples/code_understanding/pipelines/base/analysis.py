@@ -3,12 +3,16 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
+from utils.otel_utils import enable_telemetry
+
+
 ##############################################################################
 # Pipeline stage
 ##############################################################################
 
 class AnalysisPipeline:
 
+    @enable_telemetry
     def run(self, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
             multi_repo: bool = False):
         """Generates a migration report from the GraphRAG index and returns the result."""
@@ -16,7 +20,6 @@ class AnalysisPipeline:
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
-        import os
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -25,6 +28,11 @@ class AnalysisPipeline:
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
 
         report = asyncio.run(analyzer.generate_migration_report())
+
+        try:
+            analyzer.token_tracker.log_to_mlflow()
+        except Exception as e:
+            logging.debug(f"Failed to log token metrics to MLflow: {e}")
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
@@ -71,6 +79,7 @@ class AnalysisPipeline:
 
         return self.run(graphrag_source_path=graphrag_source_path, multi_repo=True)
 
+    @enable_telemetry
     def run_adhoc_query(
         self,
         question: str,
@@ -86,7 +95,6 @@ class AnalysisPipeline:
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
-        import os
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -130,6 +138,11 @@ class AnalysisPipeline:
             use_global=use_global,
             response_type="Multiple Paragraphs, plain text, no markdown formatting",
         ))
+
+        try:
+            analyzer.token_tracker.log_to_mlflow()
+        except Exception as e:
+            logging.debug(f"Failed to log token metrics to MLflow: {e}")
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 

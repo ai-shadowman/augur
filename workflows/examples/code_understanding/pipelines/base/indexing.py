@@ -4,13 +4,18 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
+from utils.otel_utils import enable_telemetry
+
+
+@enable_telemetry
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
     """Generates a GraphRAG index from the provided codebase."""
-    import json, os, lancedb, shutil, traceback, subprocess, tracemalloc, nest_asyncio, logging
+    import lancedb, shutil, traceback, tracemalloc, nest_asyncio, logging
     from loaders.default_asset_loader import DefaultAssetLoader
     from pipelines.base.data_generation import generate_git_slug
     from utils.graphrag_utils import DependencyAnalyzer
+    from pipelines.graphrag import run_graphrag
 
     tracemalloc.start()
 
@@ -25,8 +30,6 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
     try:
 
         logging.info("Starting process...")
-
-        graph_rag_config_path = f"{graphrag_source_path}/settings.yaml"
 
         os.makedirs(f"{graphrag_source_path}/input", exist_ok=True)
 
@@ -49,19 +52,13 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
 
-        graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
+        run_graphrag(graphrag_source_path)
 
-        proc = subprocess.run(
-            ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
-            check=False, capture_output=True, text=True
-        )
-
-        if proc.returncode != 0:
-            raise Exception(
-                f"GraphRAG indexing failed (exit {proc.returncode}):\n"
-                f"STDOUT: {proc.stdout}\n"
-                f"STDERR: {proc.stderr}"
-            )
+        try:
+            from utils.token_tracker import TokenCostTracker
+            TokenCostTracker.get_instance().log_to_mlflow()
+        except Exception as e:
+            logging.debug(f"Failed to log token metrics to MLflow: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
@@ -117,6 +114,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         )
 
 
+@enable_telemetry
 def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch: str,
                             multi_repo: bool = False):
     """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""

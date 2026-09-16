@@ -37,7 +37,13 @@ class DependencyAnalyzer:
         self.multi_repo = multi_repo
 
         from utils.token_tracker import TokenCostTracker
-        self.token_tracker = token_tracker or TokenCostTracker()
+        self.token_tracker = token_tracker or TokenCostTracker.get_instance()
+
+        self.SYSTEM_PROMPT_DATA_EXTRACTION = ""
+        self.SYSTEM_PROMPT_RHEL_ADMIN = ""
+        self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS = ""
+        self.POST_AMBLE = ""
+        self.RHEL_8to10_CONTEXT = ""
 
         self._setup_configuration()
 

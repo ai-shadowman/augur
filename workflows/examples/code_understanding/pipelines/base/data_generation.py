@@ -3,6 +3,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
+from utils.otel_utils import enable_telemetry
+
+
 def clone_from_repo(repo_url, 
                     destination_path, 
                     branch: str = "main",
@@ -12,7 +15,6 @@ def clone_from_repo(repo_url,
     from git import Repo
     from urllib.parse import urlparse, urlunparse
     import logging
-    import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -411,6 +413,7 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
         raise e
 
 
+@enable_telemetry
 def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                             source_path: str, target_path: str, config: bool = False,
                             multi_repo: bool = False, external_metadata: dict = None):
@@ -419,7 +422,6 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils import code_utils
     import shutil
-    import os
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -528,11 +530,11 @@ def detect_languages(source_path: str) -> list:
 
 class DataGenerationPipeline:
 
+    @enable_telemetry
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
             multi_repo: bool = False):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback, logging
-        import os
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 

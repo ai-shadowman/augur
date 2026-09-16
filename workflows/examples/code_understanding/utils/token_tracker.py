@@ -22,6 +22,21 @@ class TokenCostTracker:
     DEFAULT_EMBED_PROMPT_PRICE = float(os.getenv("EMBED_PRICE_PER_PROMPT_TOKEN", "0.0000002"))
     DEFAULT_EMBED_OUTPUT_PRICE = 0.0
 
+    _global_instance: Optional["TokenCostTracker"] = None
+
+    @classmethod
+    def get_instance(cls) -> "TokenCostTracker":
+        """Returns the shared global TokenCostTracker instance."""
+        if cls._global_instance is None:
+            cls._global_instance = cls()
+        return cls._global_instance
+
+    @classmethod
+    def reset_instance(cls) -> "TokenCostTracker":
+        """Resets and returns the singleton instance."""
+        cls._global_instance = cls()
+        return cls._global_instance
+
     def __init__(
         self,
         chat_model: Optional[str] = None,
@@ -85,7 +100,9 @@ class TokenCostTracker:
         if HAS_LITELLM and litellm is not None:
             try:
                 # Use litellm token counter
-                return litellm.token_counter(model=target_model, text=text)
+                val = litellm.token_counter(model=target_model, text=text)
+                if isinstance(val, (int, float)):
+                    return int(val)
             except Exception as e:
                 logging.debug(f"litellm.token_counter error for model {target_model}: {e}")
 
@@ -331,6 +348,11 @@ class TokenCostTracker:
             logging.debug("LiteLLM not available; skipping callback registration.")
             return
 
+        if hasattr(self, "_litellm_callback") and self._litellm_callback is not None:
+            if hasattr(litellm, "success_callback") and isinstance(litellm.success_callback, list):
+                if self._litellm_callback in litellm.success_callback:
+                    return
+
         def _litellm_success_handler(kwargs, completion_response, start_time, end_time):
             try:
                 model = kwargs.get("model") or getattr(completion_response, "model", self.chat_model)
@@ -356,7 +378,7 @@ class TokenCostTracker:
 
         self._litellm_callback = _litellm_success_handler
 
-        if not hasattr(litellm, "success_callback") or litellm.success_callback is None:
+        if not hasattr(litellm, "success_callback") or not isinstance(litellm.success_callback, list):
             litellm.success_callback = []
         if _litellm_success_handler not in litellm.success_callback:
             litellm.success_callback.append(_litellm_success_handler)
@@ -368,6 +390,7 @@ class TokenCostTracker:
         if hasattr(litellm, "success_callback") and isinstance(litellm.success_callback, list):
             if self._litellm_callback in litellm.success_callback:
                 litellm.success_callback.remove(self._litellm_callback)
+        self._litellm_callback = None
 
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs aggregated token counts and costs to active MLflow run."""
