@@ -541,23 +541,48 @@ class DataGenerationPipeline:
         git_slug = generate_git_slug(git_repo, git_branch)
 
         try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
 
-            prepare_environment(source_path=source_path, target_path=target_path,
-                                git_repo=git_repo, git_branch=git_branch)
+        try:
+            if dur_tracker:
+                with dur_tracker.measure(stage="Data Generation", step="Prepare Environment"):
+                    prepare_environment(source_path=source_path, target_path=target_path,
+                                        git_repo=git_repo, git_branch=git_branch)
 
-            languages = detect_languages(source_path)
+                with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
+                    languages = detect_languages(source_path)
 
-            external_metadata = load_external_data(source_path)
+                external_metadata = load_external_data(source_path)
 
-            for language in languages:
+                with dur_tracker.measure(stage="Data Generation", step="Generate Code Metadata"):
+                    for language in languages:
+                        for config in [False, True]:
+                            generate_code_and_meta(
+                                git_repo=git_repo, git_branch=git_branch,
+                                language=language, source_path=source_path, target_path=target_path,
+                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                            )
+            else:
+                prepare_environment(source_path=source_path, target_path=target_path,
+                                    git_repo=git_repo, git_branch=git_branch)
+                languages = detect_languages(source_path)
+                external_metadata = load_external_data(source_path)
+                for language in languages:
+                    for config in [False, True]:
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=source_path, target_path=target_path,
+                            config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                        )
 
-                for config in [False, True]:
-
-                    generate_code_and_meta(
-                        git_repo=git_repo, git_branch=git_branch,
-                        language=language, source_path=source_path, target_path=target_path,
-                        config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                    )
+            if dur_tracker:
+                try:
+                    dur_tracker.log_to_mlflow()
+                except Exception as e:
+                    logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
             logging.info("Data generation pipeline complete.")
 

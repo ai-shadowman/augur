@@ -35,30 +35,51 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         os.makedirs(f"{graphrag_source_path}/output", exist_ok=True)
 
-        DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
 
-        from utils.prompt_utils import prepare_indexing_config
+        if dur_tracker:
+            with dur_tracker.measure(stage="Indexing", step="Prepare Config and Inputs"):
+                DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
+                from utils.prompt_utils import prepare_indexing_config
+                logging.info("Preparing GraphRAG config files...")
+                prepare_indexing_config(graphrag_source_path,
+                                        git_slug=git_slug or "",
+                                        git_repo=git_repo or "",
+                                        multi_repo=multi_repo)
+                logging.info("Copying source code to GraphRAG directory...")
+                shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
 
-        logging.info("Preparing GraphRAG config files...")
-
-        prepare_indexing_config(graphrag_source_path,
-                                git_slug=git_slug or "",
-                                git_repo=git_repo or "",
-                                multi_repo=multi_repo)
-
-        logging.info("Copying source code to GraphRAG directory...")
-
-        shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-
-        logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
-
-        run_graphrag(graphrag_source_path)
+            logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
+            with dur_tracker.measure(stage="Indexing", step="Build GraphRAG Index"):
+                run_graphrag(graphrag_source_path)
+        else:
+            DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
+            from utils.prompt_utils import prepare_indexing_config
+            logging.info("Preparing GraphRAG config files...")
+            prepare_indexing_config(graphrag_source_path,
+                                    git_slug=git_slug or "",
+                                    git_repo=git_repo or "",
+                                    multi_repo=multi_repo)
+            logging.info("Copying source code to GraphRAG directory...")
+            shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
+            logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
+            run_graphrag(graphrag_source_path)
 
         try:
             from utils.token_tracker import TokenCostTracker
             TokenCostTracker.get_instance().log_to_mlflow()
         except Exception as e:
             logging.debug(f"Failed to log token metrics to MLflow: {e}")
+
+        if dur_tracker:
+            try:
+                dur_tracker.log_to_mlflow()
+            except Exception as e:
+                logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
@@ -128,10 +149,25 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
     logging.info("Starting GraphRAG index evaluation...")
 
     try:
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
 
-        results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
-                                                                 git_repo, git_branch,
-                                                                 multi_repo=multi_repo)
+        if dur_tracker:
+            with dur_tracker.measure(stage="Indexing", step="Evaluate Index"):
+                results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
+                                                                         git_repo, git_branch,
+                                                                         multi_repo=multi_repo)
+                try:
+                    dur_tracker.log_to_mlflow()
+                except Exception as e:
+                    logging.debug(f"Failed to log duration metrics to MLflow: {e}")
+        else:
+            results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
+                                                                     git_repo, git_branch,
+                                                                     multi_repo=multi_repo)
 
         logging.info("GraphRAG index evaluation complete.")
 

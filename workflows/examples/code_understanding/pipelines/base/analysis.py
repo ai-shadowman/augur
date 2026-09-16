@@ -27,12 +27,28 @@ class AnalysisPipeline:
 
         analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
 
-        report = asyncio.run(analyzer.generate_migration_report())
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
+
+        if dur_tracker:
+            with dur_tracker.measure(stage="Analysis", step="Generate Migration Report"):
+                report = asyncio.run(analyzer.generate_migration_report())
+        else:
+            report = asyncio.run(analyzer.generate_migration_report())
 
         try:
             analyzer.token_tracker.log_to_mlflow()
         except Exception as e:
             logging.debug(f"Failed to log token metrics to MLflow: {e}")
+
+        if dur_tracker:
+            try:
+                dur_tracker.log_to_mlflow()
+            except Exception as e:
+                logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
@@ -132,17 +148,38 @@ class AnalysisPipeline:
             postamble += (" Include ALL the git repo urls that you can find."
                           " Group git repositories by their git repo url.")
 
-        result = asyncio.run(analyzer.query_with_llm(
-            question + postamble,
-            retry_count=retry_count,
-            use_global=use_global,
-            response_type="Multiple Paragraphs, plain text, no markdown formatting",
-        ))
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
+
+        if dur_tracker:
+            with dur_tracker.measure(stage="Analysis", step="Adhoc Query"):
+                result = asyncio.run(analyzer.query_with_llm(
+                    question + postamble,
+                    retry_count=retry_count,
+                    use_global=use_global,
+                    response_type="Multiple Paragraphs, plain text, no markdown formatting",
+                ))
+        else:
+            result = asyncio.run(analyzer.query_with_llm(
+                question + postamble,
+                retry_count=retry_count,
+                use_global=use_global,
+                response_type="Multiple Paragraphs, plain text, no markdown formatting",
+            ))
 
         try:
             analyzer.token_tracker.log_to_mlflow()
         except Exception as e:
             logging.debug(f"Failed to log token metrics to MLflow: {e}")
+
+        if dur_tracker:
+            try:
+                dur_tracker.log_to_mlflow()
+            except Exception as e:
+                logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 

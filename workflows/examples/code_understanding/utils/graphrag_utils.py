@@ -639,18 +639,28 @@ class DependencyAnalyzer:
 
         token_summary_section = self.token_tracker.format_markdown_section()
 
-        # For multi-repo runs, place the token usage table at the end of the summary / report
-        if self.multi_repo:
-            return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+        try:
+            from utils.duration_tracker import DurationTracker
+            duration_section = DurationTracker.get_instance().format_markdown_section()
+        except Exception:
+            duration_section = ""
 
-        # Place the token usage table above the Code Migration Plan (JSON) section
+        metrics_section = token_summary_section.strip()
+        if duration_section.strip():
+            metrics_section = f"{metrics_section}\n\n{duration_section.strip()}"
+
+        # For multi-repo runs, place the metrics tables at the end of the summary / report
+        if self.multi_repo:
+            return f"{title}{report.rstrip()}\n\n{metrics_section}\n"
+
+        # Place the metrics tables above the Code Migration Plan (JSON) section
         match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
         if match:
             idx = match.start()
-            final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
+            final_report = report[:idx] + metrics_section + "\n\n" + report[idx:]
             return f"{title}{final_report}"
 
-        return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+        return f"{title}{report.rstrip()}\n\n{metrics_section}\n"
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""
