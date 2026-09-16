@@ -29,6 +29,8 @@ def format_duration(seconds: float) -> str:
     remaining_min = minutes % 60
     return f"{hours}h {remaining_min:02d}m {int(remaining_sec):02d}s"
 
+STAGE_ORDER = {"Data Generation": 0, "Indexing": 1, "Analysis": 2}
+
 
 def _current_timestamp() -> str:
     """Returns the current local ISO timestamp with timezone offset."""
@@ -79,7 +81,9 @@ class StepMetric:
     def complete(self, status: str = "COMPLETED", error_message: str = "") -> float:
         """Stops the timer and marks step status."""
         self.stopped_at = _current_timestamp()
-        self.duration = max(0.0, time.perf_counter() - self._start_perf)
+        perf_elapsed = max(0.0, time.perf_counter() - self._start_perf) if (hasattr(self, "_start_perf") and self._start_perf > 0.0) else 0.0
+        ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
+        self.duration = max(self.duration, perf_elapsed, ts_diff)
         self.status = status
         if error_message:
             self.error_message = error_message
@@ -142,7 +146,10 @@ class AppMetric:
 
     def complete(self, status: str = "COMPLETED", error_message: str = "") -> float:
         self.stopped_at = _current_timestamp()
-        self.duration = max(0.0, time.perf_counter() - self._start_perf)
+        perf_elapsed = max(0.0, time.perf_counter() - self._start_perf) if (hasattr(self, "_start_perf") and self._start_perf > 0.0) else 0.0
+        step_sum = sum(s.get_duration() for s in self.steps)
+        ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
+        self.duration = max(self.duration, perf_elapsed, step_sum, ts_diff)
         self.status = status
         if error_message:
             self.error_message = error_message
@@ -200,7 +207,12 @@ class StageMetric:
 
     def complete(self, status: str = "COMPLETED", error_message: str = "") -> float:
         self.stopped_at = _current_timestamp()
-        self.duration = max(0.0, time.perf_counter() - self._start_perf)
+        perf_elapsed = max(0.0, time.perf_counter() - self._start_perf) if (hasattr(self, "_start_perf") and self._start_perf > 0.0) else 0.0
+        sub_sum = sum(s.get_duration() for s in self.steps)
+        if self.apps:
+            sub_sum = max(sub_sum, sum(a.get_duration() for a in self.apps.values()))
+        ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
+        self.duration = max(self.duration, perf_elapsed, sub_sum, ts_diff)
         self.status = status
         if error_message:
             self.error_message = error_message
@@ -247,9 +259,17 @@ class StageMetric:
 class PipelineMetricsTracker:
     """Central metrics collector and reporting engine for code understanding pipelines."""
 
-    def __init__(self, pipeline_name: str = "pipeline", multi_repo: bool = False):
+    def __init__(
+        self,
+        pipeline_name: str = "pipeline",
+        multi_repo: bool = False,
+        git_repo: Optional[str] = None,
+        git_branch: Optional[str] = None,
+    ):
         self.pipeline_name = pipeline_name
         self.multi_repo = multi_repo
+        self.git_repo = git_repo
+        self.git_branch = git_branch
         self.started_at: str = _current_timestamp()
         self.stopped_at: Optional[str] = None
         self._start_perf: float = time.perf_counter()
@@ -312,11 +332,11 @@ class PipelineMetricsTracker:
     def stop_pipeline(self, status: str = "COMPLETED", error_message: str = "") -> float:
         """Stops the pipeline timer and records total duration."""
         self.stopped_at = _current_timestamp()
-        perf_elapsed = max(0.0, time.perf_counter() - self._start_perf)
+        perf_elapsed = max(0.0, time.perf_counter() - self._start_perf) if (hasattr(self, "_start_perf") and self._start_perf > 0.0) else 0.0
         stage_sum = sum(s.get_duration() for s in self.stages.values())
         step_sum = sum(s.get_duration() for s in self.steps)
         ts_diff = _duration_between_timestamps(self.started_at, self.stopped_at)
-        self.total_duration = max(perf_elapsed, stage_sum, step_sum, ts_diff)
+        self.total_duration = max(stage_sum, step_sum, ts_diff, perf_elapsed)
         self.status = status
         if error_message:
             self.error_message = error_message
@@ -362,7 +382,8 @@ class PipelineMetricsTracker:
             stage = StageMetric(stage_name)
             self.stages[stage_name] = stage
         stage.stopped_at = _current_timestamp()
-        perf_elapsed = max(0.0, time.perf_counter() - getattr(stage, "_start_perf", time.perf_counter()))
+        stage_start_perf = getattr(stage, "_start_perf", 0.0)
+        perf_elapsed = max(0.0, time.perf_counter() - stage_start_perf) if stage_start_perf > 0.0 else 0.0
         sub_sum = sum(s.get_duration() for s in stage.steps)
         if stage.apps:
             sub_sum = max(sub_sum, sum(a.get_duration() for a in stage.apps.values()))
@@ -415,7 +436,8 @@ class PipelineMetricsTracker:
             app = AppMetric(app_name=app_name)
             self.apps[app_name] = app
         app.stopped_at = _current_timestamp()
-        perf_elapsed = max(0.0, time.perf_counter() - getattr(app, "_start_perf", time.perf_counter()))
+        app_start_perf = getattr(app, "_start_perf", 0.0)
+        perf_elapsed = max(0.0, time.perf_counter() - app_start_perf) if app_start_perf > 0.0 else 0.0
         step_sum = sum(s.get_duration() for s in app.steps)
         ts_diff = _duration_between_timestamps(app.started_at, app.stopped_at)
         app.duration = max(app.duration, perf_elapsed, step_sum, ts_diff)
@@ -426,8 +448,6 @@ class PipelineMetricsTracker:
             self._active_app = None
         logging.info(f"  -> [APP END] {app_name} [{status}] - Duration: {format_duration(app.duration)}")
         return app.duration
-        logging.info(f"  -> [APP END] {app_name} [{status}] - Duration: {format_duration(duration)}")
-        return duration
 
     @contextmanager
     def track_app(self, app_name: str, git_repo: str = "", git_branch: str = "main"):
@@ -456,6 +476,23 @@ class PipelineMetricsTracker:
         """Starts tracking an individual step."""
         stage_name = stage or self._active_stage
         app_name = app or self._active_app
+
+        # Deduplicate step if re-executed or previously loaded from disk
+        if stage_name and stage_name in self.stages:
+            self.stages[stage_name].steps = [
+                s for s in self.stages[stage_name].steps
+                if not (s.name == step_name and s.app == app_name)
+            ]
+        if app_name and app_name in self.apps:
+            self.apps[app_name].steps = [
+                s for s in self.apps[app_name].steps
+                if s.name != step_name
+            ]
+        self.steps = [
+            s for s in self.steps
+            if not (s.name == step_name and s.stage == stage_name and s.app == app_name)
+        ]
+
         step = StepMetric(name=step_name, stage=stage_name, app=app_name, details=details)
         self.steps.append(step)
 
@@ -549,7 +586,11 @@ class PipelineMetricsTracker:
 
         # Print hierarchical breakdown
         if self.stages:
-            for stage_name, stage in self.stages.items():
+            sorted_stages = sorted(
+                self.stages.items(),
+                key=lambda kv: (STAGE_ORDER.get(kv[0], 99), kv[1].started_at or "")
+            )
+            for stage_name, stage in sorted_stages:
                 s_start = stage.started_at[11:19] if len(stage.started_at) >= 19 else stage.started_at
                 s_stop = stage.stopped_at[11:19] if stage.stopped_at and len(stage.stopped_at) >= 19 else (
                     _current_timestamp()[11:19] if finalize_running else "-"
@@ -736,7 +777,11 @@ class PipelineMetricsTracker:
         md.append("| :--- | :--- | :--- | :--- | :--- |")
 
         if self.stages:
-            for stage_name, stage in self.stages.items():
+            sorted_stages = sorted(
+                self.stages.items(),
+                key=lambda kv: (STAGE_ORDER.get(kv[0], 99), kv[1].started_at or "")
+            )
+            for stage_name, stage in sorted_stages:
                 s_stop = stage.stopped_at or (_current_timestamp() if finalize_running else "-")
                 s_status = "COMPLETED" if (stage.status == "running" and finalize_running) else stage.status
                 stage_dur = stage.get_duration(finalize_running=finalize_running)
@@ -822,6 +867,8 @@ class PipelineMetricsTracker:
         return {
             "pipeline_name": self.pipeline_name,
             "multi_repo": self.multi_repo,
+            "git_repo": getattr(self, "git_repo", None),
+            "git_branch": getattr(self, "git_branch", None),
             "started_at": self.started_at,
             "stopped_at": self.stopped_at,
             "total_duration": round(total_dur, 4),
@@ -839,6 +886,8 @@ class PipelineMetricsTracker:
         tracker = cls(
             pipeline_name=data.get("pipeline_name", "pipeline"),
             multi_repo=data.get("multi_repo", False),
+            git_repo=data.get("git_repo"),
+            git_branch=data.get("git_branch"),
         )
         tracker._start_perf = 0.0
         tracker.started_at = data.get("started_at", tracker.started_at)
@@ -991,14 +1040,25 @@ class PipelineMetricsTracker:
                 cur_step_names = {s.name for s in cur_stage.steps}
                 for s in other_stage.steps:
                     if s.name not in cur_step_names:
-                        cur_stage.steps.insert(0, s)
-                        self.steps.insert(0, s)
+                        cur_stage.steps.append(s)
+                        self.steps.append(s)
                 for a_name, a_val in other_stage.apps.items():
                     if a_name not in cur_stage.apps:
                         cur_stage.apps[a_name] = a_val
+                    else:
+                        cur_app = cur_stage.apps[a_name]
+                        cur_app_step_names = {s.name for s in cur_app.steps}
+                        for s in a_val.steps:
+                            if s.name not in cur_app_step_names:
+                                cur_app.steps.append(s)
+                        cur_app.duration = max(cur_app.duration, a_val.duration)
                 cur_stage.duration = max(cur_stage.duration, other_stage.duration)
                 if other_stage.started_at and (not cur_stage.started_at or other_stage.started_at < cur_stage.started_at):
                     cur_stage.started_at = other_stage.started_at
+                if other_stage.stopped_at and (not cur_stage.stopped_at or other_stage.stopped_at > cur_stage.stopped_at):
+                    cur_stage.stopped_at = other_stage.stopped_at
+                if cur_stage.status != "running" and other_stage.status != "running":
+                    cur_stage.status = other_stage.status or cur_stage.status
 
         for app_name, other_app in other.apps.items():
             if app_name not in self.apps:
@@ -1008,13 +1068,13 @@ class PipelineMetricsTracker:
                 cur_step_names = {s.name for s in cur_app.steps}
                 for s in other_app.steps:
                     if s.name not in cur_step_names:
-                        cur_app.steps.insert(0, s)
+                        cur_app.steps.append(s)
                 cur_app.duration = max(cur_app.duration, other_app.duration)
 
         cur_step_keys = {(s.stage, s.app, s.name) for s in self.steps}
         for s in other.steps:
             if (s.stage, s.app, s.name) not in cur_step_keys:
-                self.steps.insert(0, s)
+                self.steps.append(s)
 
         self.total_duration = self.get_total_duration()
 
@@ -1028,40 +1088,166 @@ class PipelineMetricsTracker:
         git_branch: Optional[str] = None,
     ) -> "PipelineMetricsTracker":
         """Finds and loads prior metrics from paths/DefaultAssetLoader or creates a fresh tracker."""
-        tracker = None
-        paths = search_paths or []
-        for p in paths:
-            if not p:
-                continue
-            fpath = os.path.join(p, "pipeline_metrics.json") if os.path.isdir(p) else p
-            if os.path.isfile(fpath):
-                tracker = cls.load_from_file(fpath)
-                if tracker:
-                    break
-
-        asset_tracker = None
+        git_repo = git_repo or os.getenv("GIT_REPO")
+        git_branch = git_branch or os.getenv("GIT_BRANCH")
+        git_slug = None
         if git_repo:
             try:
                 from pipelines.base.data_generation import generate_git_slug
-                from loaders.default_asset_loader import DefaultAssetLoader
                 git_slug = generate_git_slug(git_repo, git_branch or "")
-                loader = DefaultAssetLoader()
-                res_path = f"pipeline_metrics_{git_slug}.json" if git_slug else "pipeline_metrics.json"
-                import tempfile
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    res = loader.download(res_path, download_dir=tmp_dir)
-                    if isinstance(res, dict):
-                        asset_tracker = cls.from_dict(res)
-                    elif res and os.path.isfile(str(res)):
-                        asset_tracker = cls.load_from_file(str(res))
-            except Exception as e:
-                logging.debug(f"Could not load prior metrics via DefaultAssetLoader: {e}")
+            except Exception:
+                pass
+        if not git_slug:
+            git_slug = os.getenv("GIT_SLUG")
 
-        if tracker and asset_tracker:
-            tracker.merge(asset_tracker)
-        elif not tracker and asset_tracker:
-            tracker = asset_tracker
+        tracker: Optional[PipelineMetricsTracker] = None
 
+        # 1. Collect candidate directories
+        raw_dirs = list(search_paths or [])
+        raw_dirs.extend([
+            ".",
+            "target",
+            "source",
+            "graph_rag_app/source",
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            os.getenv("PARENT_SOURCE_PATH", "source"),
+            os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"),
+            "assets",
+            "assets/pipelines",
+        ])
+
+        candidate_dirs = set()
+        explicit_files = []
+
+        for p in raw_dirs:
+            if not p:
+                continue
+            if os.path.isfile(p):
+                explicit_files.append(os.path.abspath(p))
+                d = os.path.dirname(p)
+                if d and os.path.isdir(d):
+                    candidate_dirs.add(os.path.abspath(d))
+            elif os.path.isdir(p):
+                abs_d = os.path.abspath(p)
+                candidate_dirs.add(abs_d)
+                if git_slug:
+                    candidate_dirs.add(os.path.join(abs_d, git_slug))
+                candidate_dirs.add(os.path.join(abs_d, "input"))
+                candidate_dirs.add(os.path.join(abs_d, "output"))
+                parent = os.path.dirname(abs_d)
+                if parent and os.path.isdir(parent):
+                    candidate_dirs.add(parent)
+                    if git_slug:
+                        candidate_dirs.add(os.path.join(parent, git_slug))
+                try:
+                    for entry in os.scandir(abs_d):
+                        if entry.is_dir():
+                            candidate_dirs.add(entry.path)
+                except Exception:
+                    pass
+
+        # 2. Check candidate files in directories
+        candidate_filenames = ["pipeline_metrics.json"]
+        if git_slug:
+            candidate_filenames.append(f"pipeline_metrics_{git_slug}.json")
+        if multi_repo:
+            candidate_filenames.append("pipeline_metrics_multi_repo.json")
+
+        all_candidate_files = list(explicit_files)
+        for cd in candidate_dirs:
+            if not os.path.isdir(cd):
+                continue
+            for fn in candidate_filenames:
+                fp = os.path.join(cd, fn)
+                if os.path.isfile(fp):
+                    all_candidate_files.append(os.path.abspath(fp))
+            try:
+                for entry in os.scandir(cd):
+                    if entry.is_file() and "pipeline_metrics" in entry.name and entry.name.endswith(".json"):
+                        all_candidate_files.append(os.path.abspath(entry.path))
+            except Exception:
+                pass
+
+        # Load and merge all discovered metric files
+        loaded_files = set()
+        for fpath in all_candidate_files:
+            if fpath in loaded_files or not os.path.isfile(fpath):
+                continue
+            loaded_files.add(fpath)
+            loaded = cls.load_from_file(fpath)
+            if loaded:
+                if tracker is None:
+                    tracker = loaded
+                else:
+                    tracker.merge(loaded)
+
+        # 3. Query DefaultAssetLoader
+        try:
+            from loaders.default_asset_loader import DefaultAssetLoader
+            from loaders.mlflow_asset_loader import MlFlowAssetLoader
+            loader = DefaultAssetLoader()
+
+            res_filenames = []
+            if git_slug:
+                res_filenames.append(f"pipeline_metrics_{git_slug}.json")
+            if multi_repo:
+                res_filenames.append("pipeline_metrics_multi_repo.json")
+            res_filenames.append("pipeline_metrics.json")
+
+            artifact_path = loader.get_log_results_artifact_path(
+                loader.RESULTS_PATH_PREFIX_PIPELINES,
+                git_slug=git_slug,
+                multi_repo=multi_repo,
+            ) if hasattr(loader, "get_log_results_artifact_path") else None
+
+            candidate_asset_paths = []
+            for fn in res_filenames:
+                if artifact_path:
+                    candidate_asset_paths.append(f"{artifact_path}/{fn}")
+                if git_slug:
+                    candidate_asset_paths.append(f"pipelines/{git_slug}/{fn}")
+                candidate_asset_paths.append(fn)
+
+            exp_name = getattr(MlFlowAssetLoader, "RESULT_ASSET_EXPERIMENT", "augur-result-assets")
+            tags = {"category": "metrics"}
+            if git_slug:
+                tags["git_slug"] = git_slug
+            elif multi_repo:
+                tags["multi_repo"] = "True"
+
+            import tempfile
+            for cap in candidate_asset_paths:
+                try:
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        res = None
+                        try:
+                            res = loader.download(cap, download_dir=tmp_dir, experiment_name=exp_name, asset_tags=tags)
+                        except Exception:
+                            pass
+                        if not res:
+                            try:
+                                res = loader.download(cap, download_dir=tmp_dir)
+                            except Exception:
+                                pass
+
+                        asset_tracker = None
+                        if isinstance(res, dict):
+                            asset_tracker = cls.from_dict(res)
+                        elif res and os.path.isfile(str(res)):
+                            asset_tracker = cls.load_from_file(str(res))
+
+                        if asset_tracker:
+                            if tracker is None:
+                                tracker = asset_tracker
+                            else:
+                                tracker.merge(asset_tracker)
+                            break
+                except Exception as dl_err:
+                    logging.debug(f"Failed candidate asset path {cap}: {dl_err}")
+        except Exception as e:
+            logging.debug(f"Could not load prior metrics via DefaultAssetLoader: {e}")
+
+        # Finalize tracker
         if tracker is None:
             tracker = cls(pipeline_name=pipeline_name, multi_repo=multi_repo)
         else:
@@ -1069,6 +1255,7 @@ class PipelineMetricsTracker:
                 tracker.pipeline_name = pipeline_name
             if multi_repo:
                 tracker.multi_repo = True
+
         return tracker
 
     def save_to_file(self, filepath: str):
@@ -1088,18 +1275,29 @@ class PipelineMetricsTracker:
         multi_repo: bool = False,
     ):
         """Saves metrics to target_dir/pipeline_metrics.json and logs via DefaultAssetLoader."""
+        from pipelines.base.data_generation import generate_git_slug
+        git_slug = generate_git_slug(git_repo, git_branch or "") if git_repo else (os.getenv("GIT_SLUG") or None)
+
+        res_filename = f"pipeline_metrics_{git_slug}.json" if git_slug else ("pipeline_metrics_multi_repo.json" if multi_repo else "pipeline_metrics.json")
+
         if target_dir:
             try:
                 metrics_file = os.path.join(target_dir, "pipeline_metrics.json")
                 self.save_to_file(metrics_file)
+                if git_slug:
+                    slug_file = os.path.join(target_dir, f"pipeline_metrics_{git_slug}.json")
+                    self.save_to_file(slug_file)
             except Exception as e:
                 logging.warning(f"Failed to save metrics to {target_dir}: {e}")
+        else:
+            # Only save in current working directory if no target_dir specified
+            try:
+                self.save_to_file(res_filename)
+            except Exception:
+                pass
 
         try:
             from loaders.default_asset_loader import DefaultAssetLoader
-            from pipelines.base.data_generation import generate_git_slug
-            git_slug = generate_git_slug(git_repo, git_branch or "") if git_repo else None
-            res_filename = f"pipeline_metrics_{git_slug}.json" if git_slug else ("pipeline_metrics_multi_repo.json" if multi_repo else "pipeline_metrics.json")
             loader = DefaultAssetLoader()
             artifact_path = loader.get_log_results_artifact_path(
                 loader.RESULTS_PATH_PREFIX_PIPELINES,
@@ -1110,7 +1308,13 @@ class PipelineMetricsTracker:
                 res_filename,
                 artifact_path=artifact_path,
                 content=json.dumps(self.to_dict(), indent=2),
-                tags={"category": "metrics", "pipeline": self.pipeline_name, "git_slug": git_slug, "multi_repo": multi_repo},
+                tags={
+                    "category": "metrics",
+                    "pipeline": self.pipeline_name,
+                    "git_slug": git_slug or "",
+                    "multi_repo": str(multi_repo),
+                    "latest": "true",
+                },
             )
         except Exception as e:
             logging.debug(f"Failed to log metrics to DefaultAssetLoader: {e}")

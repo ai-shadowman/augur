@@ -320,25 +320,26 @@ class TestPipelineStagesIntegration(unittest.TestCase):
     ):
         from pipelines.base.data_generation import DataGenerationPipeline
 
-        tracker = PipelineMetricsTracker("dg-test")
-        with tracker.track_pipeline():
-            with tracker.track_stage("Data Generation"):
-                res = DataGenerationPipeline().run(
-                    git_repo="https://github.com/example/test-repo",
-                    git_branch="main",
-                    source_path="source/test",
-                    target_path="target/test",
-                    metrics_tracker=tracker,
-                )
+        with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_tgt:
+            tracker = PipelineMetricsTracker("dg-test")
+            with tracker.track_pipeline():
+                with tracker.track_stage("Data Generation"):
+                    res = DataGenerationPipeline().run(
+                        git_repo="https://github.com/example/test-repo",
+                        git_branch="main",
+                        source_path=tmp_src,
+                        target_path=tmp_tgt,
+                        metrics_tracker=tracker,
+                    )
 
-        self.assertEqual(res["status"], "complete")
-        self.assertIn("metrics", res)
-        stage = tracker.stages["Data Generation"]
-        step_names = [s.name for s in stage.steps]
-        self.assertIn("prepare_environment", step_names)
-        self.assertIn("detect_languages", step_names)
-        self.assertIn("load_external_data", step_names)
-        self.assertTrue(any("generate_code_and_meta" in s for s in step_names))
+            self.assertEqual(res["status"], "complete")
+            self.assertIn("metrics", res)
+            stage = tracker.stages["Data Generation"]
+            step_names = [s.name for s in stage.steps]
+            self.assertIn("prepare_environment", step_names)
+            self.assertIn("detect_languages", step_names)
+            self.assertIn("load_external_data", step_names)
+            self.assertTrue(any("generate_code_and_meta" in s for s in step_names))
 
     @patch("pipelines.base.data_generation.generate_code_and_meta")
     @patch("pipelines.base.data_generation.load_external_data", return_value={})
@@ -354,20 +355,26 @@ class TestPipelineStagesIntegration(unittest.TestCase):
             {"git_repo": "https://github.com/org/repo-two", "git_branch": "develop"},
         ]
 
-        tracker = PipelineMetricsTracker("multi-repo-test", multi_repo=True)
-        with tracker.track_pipeline():
-            with tracker.track_stage("Data Generation"):
-                results = DataGenerationPipeline().run_multi_repo(repos, metrics_tracker=tracker)
+        with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_tgt:
+            tracker = PipelineMetricsTracker("multi-repo-test", multi_repo=True)
+            with tracker.track_pipeline():
+                with tracker.track_stage("Data Generation"):
+                    results = DataGenerationPipeline().run_multi_repo(
+                        repos,
+                        parent_source_path=tmp_src,
+                        parent_target_path=tmp_tgt,
+                        metrics_tracker=tracker,
+                    )
 
-        self.assertEqual(len(results), 2)
-        self.assertIn("org-repo-one-main", tracker.apps)
-        self.assertIn("org-repo-two-develop", tracker.apps)
+            self.assertEqual(len(results), 2)
+            self.assertIn("org-repo-one-main", tracker.apps)
+            self.assertIn("org-repo-two-develop", tracker.apps)
 
-        # Check that table contains both apps
-        table = tracker.format_summary_table()
-        self.assertIn("org-repo-one-main", table)
-        self.assertIn("org-repo-two-develop", table)
-        self.assertIn("MULTI-REPO APP DURATION BREAKDOWN", table)
+            # Check that table contains both apps
+            table = tracker.format_summary_table()
+            self.assertIn("org-repo-one-main", table)
+            self.assertIn("org-repo-two-develop", table)
+            self.assertIn("MULTI-REPO APP DURATION BREAKDOWN", table)
 
     @patch("pipelines.base.indexing.evaluate_graphrag_index")
     @patch("pipelines.base.indexing.generate_graphrag_index")
@@ -746,6 +753,143 @@ class TestCrossStagePipelineMetrics(unittest.TestCase):
             analysis_step_line = [l for l in lines if "generate_migration_report" in l]
             self.assertTrue(len(analysis_step_line) > 0)
             self.assertIn("COMPLETED", analysis_step_line[0])
+
+    def test_multi_directory_slug_metrics_discovery(self):
+        """Verify that load_or_create discovers metrics nested in target/{slug} and graph_rag_app/source/{slug}."""
+        with tempfile.TemporaryDirectory() as base_dir:
+            orig_cwd = os.getcwd()
+            os.chdir(base_dir)
+            try:
+                git_repo = "https://github.com/myorg/myapp"
+                git_branch = "main"
+                git_slug = "myorg_myapp_main"
+
+                # Stage 1: Data Generation writes to target/{slug}/pipeline_metrics.json
+                target_slug_dir = os.path.join(base_dir, "target", git_slug)
+                os.makedirs(target_slug_dir, exist_ok=True)
+                t1 = PipelineMetricsTracker("single-repo-pipeline", git_repo=git_repo, git_branch=git_branch)
+                t1.start_stage("Data Generation")
+                with t1.track_step("prepare_environment", stage="Data Generation"):
+                    pass
+                with t1.track_step("generate_code_and_meta (python)", stage="Data Generation"):
+                    pass
+                t1.stop_stage("Data Generation", status="COMPLETED")
+                t1.save_to_file(os.path.join(target_slug_dir, "pipeline_metrics.json"))
+
+                # Stage 2: Indexing writes to graph_rag_app/source/{slug}/pipeline_metrics.json
+                graphrag_slug_dir = os.path.join(base_dir, "graph_rag_app", "source", git_slug)
+                os.makedirs(graphrag_slug_dir, exist_ok=True)
+                t2 = PipelineMetricsTracker("single-repo-pipeline", git_repo=git_repo, git_branch=git_branch)
+                t2.start_stage("Indexing")
+                with t2.track_step("generate_graphrag_index", stage="Indexing"):
+                    pass
+                with t2.track_step("evaluate_graphrag_index", stage="Indexing"):
+                    pass
+                t2.stop_stage("Indexing", status="COMPLETED")
+                t2.save_to_file(os.path.join(graphrag_slug_dir, "pipeline_metrics.json"))
+
+                # Stage 3: Analysis called with only "graph_rag_app/source"
+                search_paths = [os.path.join(base_dir, "graph_rag_app", "source")]
+                t3 = PipelineMetricsTracker.load_or_create(
+                    search_paths=search_paths,
+                    pipeline_name="single-repo-pipeline",
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                )
+                t3.start_stage("Analysis")
+                with t3.track_step("generate_migration_report", stage="Analysis"):
+                    pass
+                t3.stop_stage("Analysis", status="COMPLETED")
+
+                # Verify all stages are present in t3
+                self.assertIn("Data Generation", t3.stages)
+                self.assertIn("Indexing", t3.stages)
+                self.assertIn("Analysis", t3.stages)
+
+                # Verify canonical ordering in summary table
+                summary = t3.format_summary_table()
+                pos_dg = summary.index("[STAGE] Data Generation")
+                pos_idx = summary.index("[STAGE] Indexing")
+                pos_ana = summary.index("[STAGE] Analysis")
+                self.assertLess(pos_dg, pos_idx)
+                self.assertLess(pos_idx, pos_ana)
+
+                # Verify all steps present
+                self.assertIn("prepare_environment", summary)
+                self.assertIn("generate_code_and_meta (python)", summary)
+                self.assertIn("generate_graphrag_index", summary)
+                self.assertIn("evaluate_graphrag_index", summary)
+                self.assertIn("generate_migration_report", summary)
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_multi_repo_metrics_propagation_and_breakdown(self):
+        """Verify that multi-repo metrics propagate across stages and produce app breakdown table."""
+        with tempfile.TemporaryDirectory() as base_dir:
+            orig_cwd = os.getcwd()
+            os.chdir(base_dir)
+            try:
+                parent_target = os.path.join(base_dir, "target")
+                os.makedirs(parent_target, exist_ok=True)
+
+                # Stage 1: Data Generation multi-repo
+                t1 = PipelineMetricsTracker("multi-repo-pipeline", multi_repo=True)
+                t1.start_stage("Data Generation")
+                with t1.track_app("service-alpha", git_branch="main"):
+                    with t1.track_step("generate_code_and_meta (python)", stage="Data Generation", app="service-alpha"):
+                        pass
+                with t1.track_app("service-beta", git_branch="main"):
+                    with t1.track_step("generate_code_and_meta (java)", stage="Data Generation", app="service-beta"):
+                        pass
+                t1.stop_stage("Data Generation", status="COMPLETED")
+                t1.save_and_log(target_dir=parent_target, multi_repo=True)
+
+                # Stage 2: Indexing multi-repo loads from target
+                graphrag_source = os.path.join(base_dir, "graph_rag_app", "source")
+                os.makedirs(graphrag_source, exist_ok=True)
+                t2 = PipelineMetricsTracker.load_or_create(
+                    search_paths=[parent_target, graphrag_source],
+                    pipeline_name="multi-repo-pipeline",
+                    multi_repo=True,
+                )
+                self.assertIn("Data Generation", t2.stages)
+                self.assertIn("service-alpha", t2.apps)
+                self.assertIn("service-beta", t2.apps)
+                t2.start_stage("Indexing")
+                with t2.track_step("generate_graphrag_index", stage="Indexing"):
+                    pass
+                t2.stop_stage("Indexing", status="COMPLETED")
+                t2.save_and_log(target_dir=graphrag_source, multi_repo=True)
+
+                # Stage 3: Analysis multi-repo loads from graphrag_source
+                t3 = PipelineMetricsTracker.load_or_create(
+                    search_paths=[graphrag_source, parent_target],
+                    pipeline_name="multi-repo-pipeline",
+                    multi_repo=True,
+                )
+                t3.start_stage("Analysis")
+                with t3.track_step("generate_migration_report", stage="Analysis"):
+                    pass
+                t3.stop_stage("Analysis", status="COMPLETED")
+
+                # Verify all stages, apps, and breakdown table
+                self.assertIn("Data Generation", t3.stages)
+                self.assertIn("Indexing", t3.stages)
+                self.assertIn("Analysis", t3.stages)
+                self.assertIn("service-alpha", t3.apps)
+                self.assertIn("service-beta", t3.apps)
+
+                summary = t3.format_summary_table()
+                self.assertIn("MULTI-REPO APP DURATION BREAKDOWN", summary)
+                self.assertIn("service-alpha", summary)
+                self.assertIn("service-beta", summary)
+                pos_dg = summary.index("[STAGE] Data Generation")
+                pos_idx = summary.index("[STAGE] Indexing")
+                pos_ana = summary.index("[STAGE] Analysis")
+                self.assertLess(pos_dg, pos_idx)
+                self.assertLess(pos_idx, pos_ana)
+            finally:
+                os.chdir(orig_cwd)
 
 
 if __name__ == "__main__":

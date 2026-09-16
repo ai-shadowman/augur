@@ -218,12 +218,12 @@ class MlFlowAssetLoader(AssetLoader):
                     mlflow.set_tags(tags)
 
                 if is_dir:
-
                     mlflow.log_artifacts(results_path, artifact_path=artifact_path)
-
                 else:
-
                     mlflow.log_artifact(results_path, artifact_path=artifact_path)
+
+                if tags and tags.get("latest") == "true":
+                    self._mark_as_latest(client, experiment.experiment_id, run.info.run_id)
 
                 logging.info(f"Logged results to run {run.info.run_id}")
 

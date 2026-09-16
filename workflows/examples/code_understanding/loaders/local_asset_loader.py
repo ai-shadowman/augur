@@ -28,10 +28,15 @@ class LocalAssetLoader(AssetLoader):
             asset_uri = os.path.join(self.asset_base_uri, asset_file_path)
 
             if not os.path.exists(asset_uri):
-
-                logging.info(f"Asset {asset_uri} not found.")
-
-                return None
+                if os.path.exists(asset_file_path):
+                    asset_uri = asset_file_path
+                else:
+                    alt_uri = os.path.join(self.asset_base_uri, os.path.basename(asset_file_path))
+                    if os.path.exists(alt_uri):
+                        asset_uri = alt_uri
+                    else:
+                        logging.info(f"Asset {asset_uri} not found.")
+                        return None
 
             with open(asset_uri, "r") as f:
 
@@ -81,8 +86,25 @@ class LocalAssetLoader(AssetLoader):
                     content: str = None):
         """Writes content to results_path if provided. No remote logging step."""
         if content is not None and not os.path.isdir(results_path):
+            dir_name = os.path.dirname(results_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             with open(results_path, "w") as f:
                 f.write(content)
+
+            try:
+                if artifact_path:
+                    target_asset = os.path.join(self.asset_base_uri, artifact_path, os.path.basename(results_path))
+                    os.makedirs(os.path.dirname(target_asset), exist_ok=True)
+                    with open(target_asset, "w") as f:
+                        f.write(content)
+                else:
+                    target_asset = os.path.join(self.asset_base_uri, os.path.basename(results_path))
+                    os.makedirs(os.path.dirname(target_asset), exist_ok=True)
+                    with open(target_asset, "w") as f:
+                        f.write(content)
+            except Exception as e:
+                logging.debug(f"Failed to mirror result to asset_base_uri: {e}")
 
     def upload_all_assets(self, assets_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""

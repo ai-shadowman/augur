@@ -23,12 +23,24 @@ class AnalysisPipeline:
 
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
+        candidate_search_paths = [graphrag_source_path]
+        if git_slug:
+            candidate_search_paths.append(os.path.join(graphrag_source_path, git_slug))
+        parent_dir = os.path.dirname(graphrag_source_path)
+        if parent_dir:
+            candidate_search_paths.append(parent_dir)
+            if git_slug:
+                candidate_search_paths.append(os.path.join(parent_dir, git_slug))
+        candidate_search_paths.extend(["target", "source", "graph_rag_app/source", "."])
+        if git_slug:
+            candidate_search_paths.extend([f"target/{git_slug}", f"source/{git_slug}", f"graph_rag_app/source/{git_slug}"])
+
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
             default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
             tracker = PipelineMetricsTracker.load_or_create(
-                search_paths=[graphrag_source_path],
+                search_paths=candidate_search_paths,
                 pipeline_name=default_name,
                 multi_repo=multi_repo,
                 git_repo=git_repo,
@@ -38,17 +50,14 @@ class AnalysisPipeline:
             tracker.start_stage("Analysis")
         else:
             prior_tracker = PipelineMetricsTracker.load_or_create(
-                search_paths=[graphrag_source_path],
+                search_paths=candidate_search_paths,
                 pipeline_name=tracker.pipeline_name,
                 multi_repo=multi_repo,
                 git_repo=git_repo,
                 git_branch=git_branch,
             )
-            if prior_tracker and prior_tracker.stages:
-                for st_name in prior_tracker.stages:
-                    if st_name not in tracker.stages:
-                        tracker.merge(prior_tracker)
-                        break
+            if prior_tracker:
+                tracker.merge(prior_tracker)
             tracker.start_stage("Analysis")
 
         try:
@@ -108,11 +117,19 @@ class AnalysisPipeline:
 
         graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
+        multi_search_paths = [
+            graphrag_source_path,
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            os.getenv("PARENT_SOURCE_PATH", "source"),
+            "target",
+            "source",
+            ".",
+        ]
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
             tracker = PipelineMetricsTracker.load_or_create(
-                search_paths=[graphrag_source_path],
+                search_paths=multi_search_paths,
                 pipeline_name="multi-repo-pipeline",
                 multi_repo=True,
             )

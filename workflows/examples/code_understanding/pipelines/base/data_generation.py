@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Optional, List, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
@@ -633,7 +634,13 @@ class DataGenerationPipeline:
 
         return result
 
-    def run_multi_repo(self, git_repos: list, metrics_tracker=None):
+    def run_multi_repo(
+        self,
+        git_repos: list,
+        parent_source_path: Optional[str] = None,
+        parent_target_path: Optional[str] = None,
+        metrics_tracker=None,
+    ):
         """Runs run for each repository in git_repos and returns a list of status dicts."""
         import logging
         from utils import code_utils
@@ -642,8 +649,8 @@ class DataGenerationPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-        parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
-        parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
+        parent_source_path = parent_source_path or os.getenv("PARENT_SOURCE_PATH", "source")
+        parent_target_path = parent_target_path or os.getenv("PARENT_TARGET_PATH", "target")
 
         tracker = metrics_tracker
         own_tracker = False
@@ -681,6 +688,11 @@ class DataGenerationPipeline:
             tracker.stop_stage("Data Generation", status="COMPLETED")
             tracker.stop_pipeline(status="COMPLETED")
             tracker.log_summary()
+
+        tracker.save_and_log(
+            target_dir=parent_target_path,
+            multi_repo=True,
+        )
 
         return pipeline_results
 

@@ -159,18 +159,42 @@ class IndexingPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        from pipelines.base.data_generation import generate_git_slug
+        git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+
+        candidate_search_paths = [codebase_path, graphrag_source_path]
+        if git_slug:
+            candidate_search_paths.extend([
+                os.path.join(codebase_path, git_slug),
+                os.path.join(graphrag_source_path, git_slug),
+            ])
+        candidate_search_paths.extend(["target", "source", "graph_rag_app/source", "."])
+        if git_slug:
+            candidate_search_paths.extend([f"target/{git_slug}", f"source/{git_slug}", f"graph_rag_app/source/{git_slug}"])
+
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
             default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
             tracker = PipelineMetricsTracker.load_or_create(
-                search_paths=[codebase_path, graphrag_source_path],
+                search_paths=candidate_search_paths,
                 pipeline_name=default_name,
                 multi_repo=multi_repo,
                 git_repo=git_repo,
                 git_branch=git_branch,
             )
             own_tracker = True
+            tracker.start_stage("Indexing")
+        else:
+            prior_tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=candidate_search_paths,
+                pipeline_name=tracker.pipeline_name,
+                multi_repo=multi_repo,
+                git_repo=git_repo,
+                git_branch=git_branch,
+            )
+            if prior_tracker:
+                tracker.merge(prior_tracker)
             tracker.start_stage("Indexing")
 
         try:
@@ -245,11 +269,32 @@ class IndexingPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        multi_search_paths = [
+            parent_target_path,
+            graphrag_source_path or "graph_rag_app/source",
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            "target",
+            "source",
+            ".",
+        ]
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            tracker = PipelineMetricsTracker("multi-repo-indexing", multi_repo=True)
+            tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=multi_search_paths,
+                pipeline_name="multi-repo-pipeline",
+                multi_repo=True,
+            )
             own_tracker = True
+            tracker.start_stage("Indexing")
+        else:
+            prior_tracker = PipelineMetricsTracker.load_or_create(
+                search_paths=multi_search_paths,
+                pipeline_name=tracker.pipeline_name,
+                multi_repo=True,
+            )
+            if prior_tracker:
+                tracker.merge(prior_tracker)
             tracker.start_stage("Indexing")
 
         if graphrag_source_path is None:
