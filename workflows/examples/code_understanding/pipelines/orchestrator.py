@@ -48,6 +48,7 @@ def single_repo_pipeline(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_name="single-repo-pipeline",
         )
 
         idx = IndexingPipeline.run(
@@ -55,6 +56,7 @@ def single_repo_pipeline(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_name="single-repo-pipeline",
         )
 
         AnalysisPipeline.run(
@@ -62,6 +64,7 @@ def single_repo_pipeline(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_name="single-repo-pipeline",
         )
 
     else:

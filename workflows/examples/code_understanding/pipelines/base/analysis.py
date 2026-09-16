@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Optional, List, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
@@ -10,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 class AnalysisPipeline:
 
     def run(self, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
-            multi_repo: bool = False, metrics_tracker=None):
+            multi_repo: bool = False, metrics_tracker=None, pipeline_name: Optional[str] = None):
         """Generates a migration report from the GraphRAG index and returns the result."""
         import asyncio, logging
         from loaders.default_asset_loader import DefaultAssetLoader
@@ -23,9 +24,16 @@ class AnalysisPipeline:
 
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-        candidate_search_paths = [graphrag_source_path]
+        candidate_search_paths = [
+            graphrag_source_path,
+            os.path.join(graphrag_source_path, "input"),
+            os.path.join(graphrag_source_path, "output"),
+        ]
         if git_slug:
-            candidate_search_paths.append(os.path.join(graphrag_source_path, git_slug))
+            candidate_search_paths.extend([
+                os.path.join(graphrag_source_path, git_slug),
+                os.path.join(graphrag_source_path, "input", git_slug),
+            ])
         parent_dir = os.path.dirname(graphrag_source_path)
         if parent_dir:
             candidate_search_paths.append(parent_dir)
@@ -38,7 +46,7 @@ class AnalysisPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            default_name = pipeline_name or ("single-repo-pipeline" if not multi_repo else "multi-repo-pipeline")
             tracker = PipelineMetricsTracker.load_or_create(
                 search_paths=candidate_search_paths,
                 pipeline_name=default_name,
@@ -58,6 +66,8 @@ class AnalysisPipeline:
             )
             if prior_tracker:
                 tracker.merge(prior_tracker)
+            if pipeline_name and pipeline_name != "pipeline":
+                tracker.pipeline_name = pipeline_name
             tracker.start_stage("Analysis")
 
         try:
@@ -256,12 +266,14 @@ class AnalysisPipeline:
 
 def write_migration_report(graphrag_source_path: str, report_path: str,
                            git_repo: str = "", git_branch: str = "",
-                           multi_repo: bool = False, metrics_tracker=None):
+                           multi_repo: bool = False, metrics_tracker=None,
+                           pipeline_name: Optional[str] = None):
     """Run the migration report and write the result to report_path."""
     import os
     migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
                                               git_branch=git_branch, multi_repo=multi_repo,
-                                              metrics_tracker=metrics_tracker)
+                                              metrics_tracker=metrics_tracker,
+                                              pipeline_name=pipeline_name)
     if dirname := os.path.dirname(report_path):
         os.makedirs(dirname, exist_ok=True)
     with open(report_path, "w") as f:

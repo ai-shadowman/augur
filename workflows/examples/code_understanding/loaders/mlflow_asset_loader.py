@@ -74,18 +74,85 @@ class MlFlowAssetLoader(AssetLoader):
 
         return os.path.join(asset_base_uri, asset_file_path)
 
-    def _mark_as_latest(self, client, experiment_id, new_run_id):
+    def _mark_as_latest(self, client, experiment_id, new_run_id, tags: dict = None):
+        filters = ["tags.latest = 'true'"]
+        if tags:
+            if tags.get("category"):
+                filters.append(f"tags.\"category\" = '{tags['category']}'")
+            if tags.get("pipeline"):
+                filters.append(f"tags.\"pipeline\" = '{tags['pipeline']}'")
+            if tags.get("git_slug"):
+                filters.append(f"tags.\"git_slug\" = '{tags['git_slug']}'")
+        filter_string = " AND ".join(filters)
 
         existing = client.search_runs(
             experiment_ids=[experiment_id],
-            filter_string="tags.latest = 'true'",
+            filter_string=filter_string,
         )
 
         for run in existing:
-
-            client.set_tag(run.info.run_id, "latest", "false")
+            if run.info.run_id != new_run_id:
+                client.set_tag(run.info.run_id, "latest", "false")
 
         client.set_tag(new_run_id, "latest", "true")
+
+    def download_matching_artifacts(self,
+                                   artifact_filename: str = None,
+                                   experiment_name=RESULT_ASSET_EXPERIMENT,
+                                   tags: dict = None,
+                                   max_runs: int = 50):
+        """Finds and downloads matching artifacts across multiple MLflow runs matching tags."""
+        try:
+            client = MlflowClient()
+            experiment = client.get_experiment_by_name(experiment_name)
+            if not experiment:
+                return []
+
+            filter_conditions = []
+            for k, v in (tags or {}).items():
+                if v:
+                    filter_conditions.append(f"tags.\"{k}\" = '{v}'")
+            filter_string = " AND ".join(filter_conditions)
+
+            runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                filter_string=filter_string,
+                order_by=["attributes.start_time DESC"],
+                max_results=max_runs,
+            )
+
+            results = []
+            for run in runs:
+                try:
+                    artifacts = client.list_artifacts(run.info.run_id)
+                    to_check = [a.path for a in artifacts]
+                    target_paths = []
+                    while to_check:
+                        curr = to_check.pop()
+                        base = os.path.basename(curr)
+                        if artifact_filename and curr.endswith(artifact_filename):
+                            target_paths.append(curr)
+                        elif not artifact_filename and "pipeline_metrics" in base and base.endswith(".json"):
+                            target_paths.append(curr)
+                        else:
+                            try:
+                                sub = client.list_artifacts(run.info.run_id, path=curr)
+                                if sub:
+                                    to_check.extend([s.path for s in sub])
+                            except Exception:
+                                pass
+                    for p in target_paths:
+                        local_path = mlflow.artifacts.download_artifacts(run_id=run.info.run_id, artifact_path=p)
+                        if os.path.exists(local_path):
+                            with open(local_path, "r", encoding="utf-8") as f:
+                                data = json.load(f) if local_path.endswith(".json") else f.read()
+                                results.append(data)
+                except Exception as run_err:
+                    logging.debug(f"Error checking artifacts for run {run.info.run_id}: {run_err}")
+            return results
+        except Exception as e:
+            logging.debug(f"Error in download_matching_artifacts: {e}")
+            return []
 
     def get_or_create_experiment_by_name(self, client, experiment_name):
         """Gets or creates an MLflow experiment by name, handling deleted and non-active states."""
@@ -223,7 +290,7 @@ class MlFlowAssetLoader(AssetLoader):
                     mlflow.log_artifact(results_path, artifact_path=artifact_path)
 
                 if tags and tags.get("latest") == "true":
-                    self._mark_as_latest(client, experiment.experiment_id, run.info.run_id)
+                    self._mark_as_latest(client, experiment.experiment_id, run.info.run_id, tags=tags)
 
                 logging.info(f"Logged results to run {run.info.run_id}")
 

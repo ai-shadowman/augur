@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+from typing import Optional, List, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
@@ -151,7 +152,7 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 class IndexingPipeline:
 
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
-            multi_repo: bool = False, metrics_tracker=None):
+            multi_repo: bool = False, metrics_tracker=None, pipeline_name: Optional[str] = None):
         """Generates a GraphRAG index and returns a status dict."""
         import traceback, logging
         import os
@@ -175,7 +176,7 @@ class IndexingPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            default_name = pipeline_name or ("single-repo-pipeline" if not multi_repo else "multi-repo-pipeline")
             tracker = PipelineMetricsTracker.load_or_create(
                 search_paths=candidate_search_paths,
                 pipeline_name=default_name,
@@ -195,6 +196,8 @@ class IndexingPipeline:
             )
             if prior_tracker:
                 tracker.merge(prior_tracker)
+            if pipeline_name and pipeline_name != "pipeline":
+                tracker.pipeline_name = pipeline_name
             tracker.start_stage("Indexing")
 
         try:

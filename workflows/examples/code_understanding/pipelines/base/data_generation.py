@@ -530,7 +530,7 @@ def detect_languages(source_path: str) -> list:
 class DataGenerationPipeline:
 
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
-            multi_repo: bool = False, metrics_tracker=None):
+            multi_repo: bool = False, metrics_tracker=None, pipeline_name: Optional[str] = None):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback, logging
         import os
@@ -543,7 +543,7 @@ class DataGenerationPipeline:
         tracker = metrics_tracker
         own_tracker = False
         if tracker is None:
-            default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+            default_name = pipeline_name or ("single-repo-pipeline" if not multi_repo else "multi-repo-pipeline")
             tracker = PipelineMetricsTracker.load_or_create(
                 search_paths=[source_path, target_path],
                 pipeline_name=default_name,
@@ -552,6 +552,12 @@ class DataGenerationPipeline:
                 git_branch=git_branch,
             )
             own_tracker = True
+            tracker.start_stage("Data Generation")
+            if multi_repo:
+                tracker.start_app(git_slug, git_repo=git_repo, git_branch=git_branch)
+        else:
+            if pipeline_name and pipeline_name != "pipeline":
+                tracker.pipeline_name = pipeline_name
             tracker.start_stage("Data Generation")
             if multi_repo:
                 tracker.start_app(git_slug, git_repo=git_repo, git_branch=git_branch)

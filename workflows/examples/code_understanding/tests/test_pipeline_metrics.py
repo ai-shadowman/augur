@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -890,6 +891,164 @@ class TestCrossStagePipelineMetrics(unittest.TestCase):
                 self.assertLess(pos_idx, pos_ana)
             finally:
                 os.chdir(orig_cwd)
+
+    def test_sub_pipelines_independent_metrics_aggregation(self):
+        """Verify that when sub-pipelines execute independently (data-generation-pipeline,
+        graphrag-indexing-pipeline, graphrag-analysis-pipeline), the final tracker and
+        migration report aggregate metrics from all sub-pipelines."""
+        with tempfile.TemporaryDirectory() as base_dir:
+            orig_cwd = os.getcwd()
+            os.chdir(base_dir)
+            try:
+                git_repo = "https://github.com/my-org/my-service.git"
+                git_branch = "main"
+                from pipelines.base.data_generation import generate_git_slug
+                git_slug = generate_git_slug(git_repo, git_branch)
+
+                target_dir = os.path.join(base_dir, "target", git_slug)
+                os.makedirs(target_dir, exist_ok=True)
+                graphrag_dir = os.path.join(base_dir, "graph_rag_app", "source", git_slug)
+                os.makedirs(graphrag_dir, exist_ok=True)
+
+                # 1. Run Sub-pipeline 1: data-generation-pipeline
+                dg_tracker = PipelineMetricsTracker("data-generation-pipeline")
+                dg_tracker.start_pipeline()
+                dg_tracker.start_stage("Data Generation")
+                with dg_tracker.track_step("prepare_environment", stage="Data Generation"):
+                    time.sleep(0.01)
+                with dg_tracker.track_step("detect_languages", stage="Data Generation"):
+                    time.sleep(0.01)
+                with dg_tracker.track_step("generate_code_and_meta (python)", stage="Data Generation"):
+                    time.sleep(0.01)
+                dg_tracker.stop_stage("Data Generation", status="COMPLETED")
+                dg_tracker.stop_pipeline(status="COMPLETED")
+                dg_tracker.save_and_log(target_dir=target_dir, git_repo=git_repo, git_branch=git_branch)
+
+                self.assertTrue(os.path.isfile(os.path.join(target_dir, f"pipeline_metrics_{git_slug}.json")))
+                self.assertTrue(os.path.isfile(os.path.join(target_dir, f"pipeline_metrics_data-generation-pipeline_{git_slug}.json")))
+
+                # 2. Run Sub-pipeline 2: graphrag-indexing-pipeline
+                idx_tracker = PipelineMetricsTracker.load_or_create(
+                    search_paths=[target_dir],
+                    pipeline_name="graphrag-indexing-pipeline",
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                )
+                self.assertIn("Data Generation", idx_tracker.stages)
+                idx_tracker.start_stage("Indexing")
+                with idx_tracker.track_step("generate_graphrag_index", stage="Indexing"):
+                    time.sleep(0.01)
+                with idx_tracker.track_step("evaluate_graphrag_index", stage="Indexing"):
+                    time.sleep(0.01)
+                idx_tracker.stop_stage("Indexing", status="COMPLETED")
+                idx_tracker.stop_pipeline(status="COMPLETED")
+                idx_tracker.save_and_log(target_dir=graphrag_dir, git_repo=git_repo, git_branch=git_branch)
+
+                self.assertTrue(os.path.isfile(os.path.join(graphrag_dir, f"pipeline_metrics_graphrag-indexing-pipeline_{git_slug}.json")))
+
+                # 3. Run Sub-pipeline 3: graphrag-analysis-pipeline
+                ana_tracker = PipelineMetricsTracker.load_or_create(
+                    search_paths=[graphrag_dir, target_dir],
+                    pipeline_name="graphrag-analysis-pipeline",
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                )
+                ana_tracker.start_stage("Analysis")
+                with ana_tracker.track_step("generate_migration_report", stage="Analysis"):
+                    time.sleep(0.01)
+                ana_tracker.stop_stage("Analysis", status="COMPLETED")
+                ana_tracker.stop_pipeline(status="COMPLETED")
+
+                # Verify all 3 stages exist in ana_tracker
+                self.assertIn("Data Generation", ana_tracker.stages)
+                self.assertIn("Indexing", ana_tracker.stages)
+                self.assertIn("Analysis", ana_tracker.stages)
+
+                summary = ana_tracker.format_summary_table()
+
+                self.assertIn("[STAGE] Data Generation", summary)
+                self.assertIn("prepare_environment", summary)
+                self.assertIn("detect_languages", summary)
+                self.assertIn("generate_code_and_meta (python)", summary)
+
+                self.assertIn("[STAGE] Indexing", summary)
+                self.assertIn("generate_graphrag_index", summary)
+                self.assertIn("evaluate_graphrag_index", summary)
+
+                self.assertIn("[STAGE] Analysis", summary)
+                self.assertIn("generate_migration_report", summary)
+
+                pos_dg = summary.index("[STAGE] Data Generation")
+                pos_idx = summary.index("[STAGE] Indexing")
+                pos_ana = summary.index("[STAGE] Analysis")
+                self.assertLess(pos_dg, pos_idx)
+                self.assertLess(pos_idx, pos_ana)
+
+                # Also verify report generated via DependencyAnalyzer contains all 3 stages
+                import asyncio
+                from utils.graphrag_utils import DependencyAnalyzer
+                with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+                     patch.object(DependencyAnalyzer, '_setup_search'), \
+                     patch.object(DependencyAnalyzer, '_setup_prompts'), \
+                     patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/my-org/my-service.git"}), \
+                     patch('utils.visualization_utils.log_interactive_dependency_graph'):
+                    analyzer = DependencyAnalyzer(metrics_tracker=ana_tracker)
+                    mock_loader = MagicMock()
+                    mock_loader.num_prompts.side_effect = lambda path: 1
+                    mock_loader.download_prompt.side_effect = [
+                        ("prompt 1", {"title": "### Overview", "skip_prompt": None}),
+                        ("prompt 2", {"title": "### Code Migration Plan (JSON)", "skip_prompt": None}),
+                    ]
+                    orig_loader = DefaultAssetLoaderMock.return_value
+                    DefaultAssetLoaderMock.return_value = mock_loader
+                    try:
+                        with patch.object(analyzer, 'query_with_llm', side_effect=["Overview content", '{"plan": []}']):
+                            report = asyncio.run(analyzer.generate_migration_report())
+                    finally:
+                        DefaultAssetLoaderMock.return_value = orig_loader
+
+                    self.assertIn("### Pipeline Execution Metrics Summary", report)
+                    self.assertIn("[STAGE] Data Generation", report)
+                    self.assertIn("[STAGE] Indexing", report)
+                    self.assertIn("[STAGE] Analysis", report)
+                    self.assertIn("prepare_environment", report)
+                    self.assertIn("generate_graphrag_index", report)
+                    self.assertIn("generate_migration_report", report)
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_sub_pipelines_asset_loader_download_matching_artifacts(self):
+        """Verify that when metrics are only in AssetLoader across separate subparts,
+        load_or_create discovers and merges all subparts."""
+        dg_t = PipelineMetricsTracker("data-generation-pipeline")
+        dg_t.start_stage("Data Generation")
+        with dg_t.track_step("prepare_environment", stage="Data Generation"):
+            pass
+        dg_t.stop_stage("Data Generation")
+
+        idx_t = PipelineMetricsTracker("graphrag-indexing-pipeline")
+        idx_t.start_stage("Indexing")
+        with idx_t.track_step("generate_graphrag_index", stage="Indexing"):
+            pass
+        idx_t.stop_stage("Indexing")
+
+        mock_loader = MagicMock()
+        mock_loader.download_matching_artifacts.return_value = [
+            dg_t.to_dict(),
+            idx_t.to_dict(),
+        ]
+        mock_loader.download.return_value = None
+
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            with tempfile.TemporaryDirectory() as empty_dir:
+                tracker = PipelineMetricsTracker.load_or_create(
+                    search_paths=[empty_dir],
+                    pipeline_name="graphrag-analysis-pipeline",
+                )
+                self.assertIn("Data Generation", tracker.stages)
+                self.assertIn("Indexing", tracker.stages)
+                self.assertIn("prepare_environment", {s.name for s in tracker.steps})
+                self.assertIn("generate_graphrag_index", {s.name for s in tracker.steps})
 
 
 if __name__ == "__main__":

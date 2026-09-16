@@ -24,7 +24,8 @@ def prepare_environment_op(git_repo: str,
     git_branch: str, 
     git_username: str, 
     git_token: str, 
-    source_dir: Output[Dataset]):
+    source_dir: Output[Dataset],
+    pipeline_name: str = "data-generation-pipeline"):
     """Clones the repository and archives it as a gzip tarball."""
 
     from pipelines.base.data_generation import prepare_environment
@@ -33,7 +34,7 @@ def prepare_environment_op(git_repo: str,
     setup_logging()
 
     with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
-        tracker = PipelineMetricsTracker("single-repo-pipeline", multi_repo=False)
+        tracker = PipelineMetricsTracker(pipeline_name, multi_repo=False)
         tracker.start_stage("Data Generation")
         with tracker.track_step("prepare_environment", stage="Data Generation"):
             prepare_environment(
@@ -59,7 +60,8 @@ def generate_code_and_meta_op(
     git_branch: str,
     source_dir: Input[Dataset], 
     target_dir: Output[Dataset],
-    multi_repo: bool = False):
+    multi_repo: bool = False,
+    pipeline_name: str = "data-generation-pipeline"):
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
@@ -72,7 +74,7 @@ def generate_code_and_meta_op(
     import logging
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
-        default_name = "single-repo-pipeline" if not multi_repo else "multi-repo-pipeline"
+        default_name = pipeline_name or ("single-repo-pipeline" if not multi_repo else "multi-repo-pipeline")
         tracker = PipelineMetricsTracker.load_or_create(
             search_paths=[tmp_source],
             pipeline_name=default_name,
@@ -177,13 +179,15 @@ def _run_pipeline(
     git_username: str = "",
     git_token: str = "",
     multi_repo: bool = False,
+    pipeline_name: str = "data-generation-pipeline",
 ) -> Dataset:
 
     prep = prepare_environment_op(
         git_repo=git_repo,
         git_branch=git_branch,
         git_username=git_username,
-        git_token=git_token
+        git_token=git_token,
+        pipeline_name=pipeline_name,
     )
 
     gen = generate_code_and_meta_op(
@@ -191,6 +195,7 @@ def _run_pipeline(
         git_branch=git_branch,
         source_dir=prep.outputs["source_dir"],
         multi_repo=multi_repo,
+        pipeline_name=pipeline_name,
     )
 
     return gen.outputs["target_dir"]

@@ -106,6 +106,26 @@ class LocalAssetLoader(AssetLoader):
             except Exception as e:
                 logging.debug(f"Failed to mirror result to asset_base_uri: {e}")
 
+    def download_matching_artifacts(self, artifact_filename: str = None, tags: dict = None, **kwargs):
+        """Finds and returns matching metrics artifacts from local asset base directory."""
+        results = []
+        try:
+            if not os.path.isdir(self.asset_base_uri):
+                return results
+            for root, _, files in os.walk(self.asset_base_uri):
+                for fn in files:
+                    if artifact_filename and fn == artifact_filename:
+                        fp = os.path.join(root, fn)
+                        with open(fp, "r", encoding="utf-8") as f:
+                            results.append(json.load(f) if fn.endswith(".json") else f.read())
+                    elif not artifact_filename and "pipeline_metrics" in fn and fn.endswith(".json"):
+                        fp = os.path.join(root, fn)
+                        with open(fp, "r", encoding="utf-8") as f:
+                            results.append(json.load(f))
+        except Exception as e:
+            logging.debug(f"Error scanning local assets: {e}")
+        return results
+
     def upload_all_assets(self, assets_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""
         pass

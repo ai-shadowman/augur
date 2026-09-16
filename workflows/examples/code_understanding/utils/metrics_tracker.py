@@ -30,6 +30,16 @@ def format_duration(seconds: float) -> str:
     return f"{hours}h {remaining_min:02d}m {int(remaining_sec):02d}s"
 
 STAGE_ORDER = {"Data Generation": 0, "Indexing": 1, "Analysis": 2}
+KNOWN_PIPELINE_SUBPARTS = [
+    "data-generation-pipeline",
+    "graphrag-indexing-pipeline",
+    "graphrag-analysis-pipeline",
+    "single-repo-pipeline",
+    "multi-repo-pipeline",
+    "data_generation",
+    "indexing",
+    "analysis",
+]
 
 
 def _current_timestamp() -> str:
@@ -1031,17 +1041,30 @@ class PipelineMetricsTracker:
             return
         if other.started_at and (not self.started_at or other.started_at < self.started_at):
             self.started_at = other.started_at
+        if other.stopped_at and (not self.stopped_at or other.stopped_at > self.stopped_at):
+            if self.status != "running":
+                self.stopped_at = other.stopped_at
 
         for stage_name, other_stage in other.stages.items():
             if stage_name not in self.stages:
                 self.stages[stage_name] = other_stage
             else:
                 cur_stage = self.stages[stage_name]
-                cur_step_names = {s.name for s in cur_stage.steps}
+                cur_steps_by_name = {s.name: s for s in cur_stage.steps}
                 for s in other_stage.steps:
-                    if s.name not in cur_step_names:
+                    if s.name not in cur_steps_by_name:
                         cur_stage.steps.append(s)
                         self.steps.append(s)
+                    else:
+                        existing = cur_steps_by_name[s.name]
+                        if s.status == "COMPLETED" and existing.status != "COMPLETED":
+                            existing.status = s.status
+                            existing.duration = max(existing.duration, s.duration)
+                            if s.stopped_at:
+                                existing.stopped_at = s.stopped_at
+                        elif s.duration > existing.duration:
+                            existing.duration = s.duration
+
                 for a_name, a_val in other_stage.apps.items():
                     if a_name not in cur_stage.apps:
                         cur_stage.apps[a_name] = a_val
@@ -1134,6 +1157,8 @@ class PipelineMetricsTracker:
                     candidate_dirs.add(os.path.join(abs_d, git_slug))
                 candidate_dirs.add(os.path.join(abs_d, "input"))
                 candidate_dirs.add(os.path.join(abs_d, "output"))
+                if git_slug:
+                    candidate_dirs.add(os.path.join(abs_d, "input", git_slug))
                 parent = os.path.dirname(abs_d)
                 if parent and os.path.isdir(parent):
                     candidate_dirs.add(parent)
@@ -1152,6 +1177,11 @@ class PipelineMetricsTracker:
             candidate_filenames.append(f"pipeline_metrics_{git_slug}.json")
         if multi_repo:
             candidate_filenames.append("pipeline_metrics_multi_repo.json")
+        for subpart in KNOWN_PIPELINE_SUBPARTS:
+            candidate_filenames.append(f"pipeline_metrics_{subpart}.json")
+            if git_slug:
+                candidate_filenames.append(f"pipeline_metrics_{subpart}_{git_slug}.json")
+                candidate_filenames.append(f"pipeline_metrics_{git_slug}_{subpart}.json")
 
         all_candidate_files = list(explicit_files)
         for cd in candidate_dirs:
@@ -1187,43 +1217,20 @@ class PipelineMetricsTracker:
             from loaders.mlflow_asset_loader import MlFlowAssetLoader
             loader = DefaultAssetLoader()
 
-            res_filenames = []
-            if git_slug:
-                res_filenames.append(f"pipeline_metrics_{git_slug}.json")
-            if multi_repo:
-                res_filenames.append("pipeline_metrics_multi_repo.json")
-            res_filenames.append("pipeline_metrics.json")
-
-            artifact_path = loader.get_log_results_artifact_path(
-                loader.RESULTS_PATH_PREFIX_PIPELINES,
-                git_slug=git_slug,
-                multi_repo=multi_repo,
-            ) if hasattr(loader, "get_log_results_artifact_path") else None
-
-            candidate_asset_paths = []
-            for fn in res_filenames:
-                if artifact_path:
-                    candidate_asset_paths.append(f"{artifact_path}/{fn}")
-                if git_slug:
-                    candidate_asset_paths.append(f"pipelines/{git_slug}/{fn}")
-                candidate_asset_paths.append(fn)
-
             exp_name = getattr(MlFlowAssetLoader, "RESULT_ASSET_EXPERIMENT", "augur-result-assets")
-            tags = {"category": "metrics"}
-            if git_slug:
-                tags["git_slug"] = git_slug
-            elif multi_repo:
-                tags["multi_repo"] = "True"
 
-            import tempfile
-            for cap in candidate_asset_paths:
+            # Helper to download and merge
+            def _try_merge_asset(cap: str, asset_tags: dict = None):
+                nonlocal tracker
                 try:
+                    import tempfile
                     with tempfile.TemporaryDirectory() as tmp_dir:
                         res = None
-                        try:
-                            res = loader.download(cap, download_dir=tmp_dir, experiment_name=exp_name, asset_tags=tags)
-                        except Exception:
-                            pass
+                        if asset_tags:
+                            try:
+                                res = loader.download(cap, download_dir=tmp_dir, experiment_name=exp_name, asset_tags=asset_tags)
+                            except Exception:
+                                pass
                         if not res:
                             try:
                                 res = loader.download(cap, download_dir=tmp_dir)
@@ -1241,9 +1248,72 @@ class PipelineMetricsTracker:
                                 tracker = asset_tracker
                             else:
                                 tracker.merge(asset_tracker)
-                            break
+                            return True
                 except Exception as dl_err:
                     logging.debug(f"Failed candidate asset path {cap}: {dl_err}")
+                return False
+
+            # If loader has download_matching_artifacts, use it to fetch all matching metric assets
+            if hasattr(loader, "download_matching_artifacts"):
+                query_tags = {"category": "metrics"}
+                if git_slug:
+                    query_tags["git_slug"] = git_slug
+                elif multi_repo:
+                    query_tags["multi_repo"] = "True"
+                try:
+                    matching_assets = loader.download_matching_artifacts(
+                        experiment_name=exp_name,
+                        tags=query_tags,
+                    )
+                    for item in matching_assets:
+                        if isinstance(item, dict):
+                            t = cls.from_dict(item)
+                            if tracker is None:
+                                tracker = t
+                            else:
+                                tracker.merge(t)
+                except Exception as e:
+                    logging.debug(f"Error calling download_matching_artifacts: {e}")
+
+            # Also check candidate asset paths across all known subparts and general files
+            artifact_path = loader.get_log_results_artifact_path(
+                loader.RESULTS_PATH_PREFIX_PIPELINES,
+                git_slug=git_slug,
+                multi_repo=multi_repo,
+            ) if hasattr(loader, "get_log_results_artifact_path") else None
+
+            base_tags = {"category": "metrics"}
+            if git_slug:
+                base_tags["git_slug"] = git_slug
+            elif multi_repo:
+                base_tags["multi_repo"] = "True"
+
+            tag_sets = [base_tags]
+            for subpart in KNOWN_PIPELINE_SUBPARTS:
+                stags = dict(base_tags)
+                stags["pipeline"] = subpart
+                tag_sets.append(stags)
+
+            asset_filenames = ["pipeline_metrics.json"]
+            if git_slug:
+                asset_filenames.append(f"pipeline_metrics_{git_slug}.json")
+            if multi_repo:
+                asset_filenames.append("pipeline_metrics_multi_repo.json")
+            for subpart in KNOWN_PIPELINE_SUBPARTS:
+                asset_filenames.append(f"pipeline_metrics_{subpart}.json")
+                if git_slug:
+                    asset_filenames.append(f"pipeline_metrics_{subpart}_{git_slug}.json")
+
+            for t_tags in tag_sets:
+                for fn in asset_filenames:
+                    caps = []
+                    if artifact_path:
+                        caps.append(f"{artifact_path}/{fn}")
+                    if git_slug:
+                        caps.append(f"pipelines/{git_slug}/{fn}")
+                    caps.append(fn)
+                    for cap in caps:
+                        _try_merge_asset(cap, asset_tags=t_tags)
         except Exception as e:
             logging.debug(f"Could not load prior metrics via DefaultAssetLoader: {e}")
 
@@ -1251,7 +1321,9 @@ class PipelineMetricsTracker:
         if tracker is None:
             tracker = cls(pipeline_name=pipeline_name, multi_repo=multi_repo)
         else:
-            if pipeline_name and pipeline_name != "pipeline":
+            if tracker.pipeline_name in ("single-repo-pipeline", "multi-repo-pipeline"):
+                pass
+            elif pipeline_name and pipeline_name != "pipeline":
                 tracker.pipeline_name = pipeline_name
             if multi_repo:
                 tracker.multi_repo = True
@@ -1279,6 +1351,7 @@ class PipelineMetricsTracker:
         git_slug = generate_git_slug(git_repo, git_branch or "") if git_repo else (os.getenv("GIT_SLUG") or None)
 
         res_filename = f"pipeline_metrics_{git_slug}.json" if git_slug else ("pipeline_metrics_multi_repo.json" if multi_repo else "pipeline_metrics.json")
+        pipe_res_filename = f"pipeline_metrics_{self.pipeline_name}_{git_slug}.json" if (self.pipeline_name and git_slug) else (f"pipeline_metrics_{self.pipeline_name}.json" if self.pipeline_name else None)
 
         if target_dir:
             try:
@@ -1287,12 +1360,17 @@ class PipelineMetricsTracker:
                 if git_slug:
                     slug_file = os.path.join(target_dir, f"pipeline_metrics_{git_slug}.json")
                     self.save_to_file(slug_file)
+                if pipe_res_filename:
+                    pipe_file = os.path.join(target_dir, pipe_res_filename)
+                    self.save_to_file(pipe_file)
             except Exception as e:
                 logging.warning(f"Failed to save metrics to {target_dir}: {e}")
         else:
             # Only save in current working directory if no target_dir specified
             try:
                 self.save_to_file(res_filename)
+                if pipe_res_filename and pipe_res_filename != res_filename:
+                    self.save_to_file(pipe_res_filename)
             except Exception:
                 pass
 
@@ -1304,18 +1382,26 @@ class PipelineMetricsTracker:
                 git_slug=git_slug,
                 multi_repo=multi_repo,
             ) if hasattr(loader, "get_log_results_artifact_path") else None
+            tags = {
+                "category": "metrics",
+                "pipeline": self.pipeline_name,
+                "git_slug": git_slug or "",
+                "multi_repo": str(multi_repo),
+                "latest": "true",
+            }
             loader.log_results(
                 res_filename,
                 artifact_path=artifact_path,
                 content=json.dumps(self.to_dict(), indent=2),
-                tags={
-                    "category": "metrics",
-                    "pipeline": self.pipeline_name,
-                    "git_slug": git_slug or "",
-                    "multi_repo": str(multi_repo),
-                    "latest": "true",
-                },
+                tags=tags,
             )
+            if pipe_res_filename and pipe_res_filename != res_filename:
+                loader.log_results(
+                    pipe_res_filename,
+                    artifact_path=artifact_path,
+                    content=json.dumps(self.to_dict(), indent=2),
+                    tags=tags,
+                )
         except Exception as e:
             logging.debug(f"Failed to log metrics to DefaultAssetLoader: {e}")
 
