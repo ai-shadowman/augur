@@ -59,8 +59,8 @@ def prepare_environment(source_path: str,
                         target_path: str, 
                         git_repo: str, 
                         git_branch: str,
-                        git_username: str = "",
-                        git_token: str = ""):
+                        git_username: str,
+                        git_token: str):
     """Prepares the environment at the start of the pipeline."""
     import logging
     import os

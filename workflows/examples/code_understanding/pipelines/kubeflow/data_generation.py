@@ -132,8 +132,8 @@ def get_repo_list_op() -> list:
 def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
-    git_username: str = "",
-    git_token: str = "",
+    git_username: str = os.getenv("GIT_USERNAME", ""),
+    git_token: str = os.getenv("GIT_TOKEN", ""),
     multi_repo: bool = False,
 ) -> Dataset:
 
