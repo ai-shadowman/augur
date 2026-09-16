@@ -415,6 +415,20 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             analyzer = DependencyAnalyzer()
             self.assertIs(analyzer.token_tracker, singleton)
 
+    def test_log_to_mlflow_ends_active_run(self):
+        """Verify log_to_mlflow logs metrics and ends active run to prevent conflict with asset loader."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+        active_run_mock = MagicMock()
+        mlflow_mock.active_run.return_value = active_run_mock
+
+        tracker = TokenCostTracker()
+        tracker.track_chat(prompt_tokens=100, output_tokens=50)
+        tracker.log_to_mlflow()
+
+        mlflow_mock.log_metrics.assert_called()
+        mlflow_mock.end_run.assert_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -141,6 +141,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                     client.create_experiment(name=self._EXPERIMENT_NAME)
                 )
 
+            if mlflow.active_run():
+                mlflow.end_run()
+
             with mlflow.start_run(
                 experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
             ):
@@ -258,6 +261,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
         _eval_tags = {"category": "evaluation", "git_slug": slug}
+
+        if mlflow.active_run():
+            mlflow.end_run()
 
         with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
 

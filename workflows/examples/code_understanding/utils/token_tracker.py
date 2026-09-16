@@ -408,6 +408,12 @@ class TokenCostTracker:
                 with mlflow.start_run(run_id=run_id):
                     mlflow.log_metrics(metrics)
             else:
-                mlflow.log_metrics(metrics)
+                active_run = mlflow.active_run()
+                if active_run:
+                    mlflow.log_metrics(metrics)
+                    mlflow.end_run()
+                else:
+                    with mlflow.start_run():
+                        mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow metric logging skipped or failed: {e}")

@@ -211,6 +211,9 @@ class MlFlowAssetLoader(AssetLoader):
 
             experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 
+            if mlflow.active_run():
+                mlflow.end_run()
+
             with mlflow.start_run(experiment_id=experiment.experiment_id) as run:
 
                 if tags:
