@@ -30,6 +30,7 @@ class AnalysisPipeline:
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
             for check_path in [graphrag_source_path, os.path.join(graphrag_source_path, "output")]:
                 dur_file = os.path.join(check_path, "durations.json")
                 if os.path.exists(dur_file):
@@ -37,6 +38,17 @@ class AnalysisPipeline:
                     break
         except Exception:
             dur_tracker = None
+
+        try:
+            analyzer.token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            for check_path in [graphrag_source_path, os.path.join(graphrag_source_path, "output")]:
+                tokens_file = os.path.join(check_path, "tokens.json")
+                if os.path.exists(tokens_file):
+                    from utils.token_tracker import TokenCostTracker
+                    analyzer.token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
+                    break
+        except Exception:
+            pass
 
         if dur_tracker:
             with dur_tracker.measure(stage="Analysis", step="Generate Migration Report"):
@@ -57,15 +69,16 @@ class AnalysisPipeline:
                     report = f"{report.rstrip()}\n\n{dur_md.strip()}\n"
 
         try:
-            analyzer.token_tracker.log_to_mlflow()
+            analyzer.token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
         except Exception as e:
-            logging.debug(f"Failed to log token metrics to MLflow: {e}")
+            logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
         if dur_tracker:
             try:
-                dur_tracker.log_to_mlflow()
+                dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
             except Exception as e:
-                logging.debug(f"Failed to log duration metrics to MLflow: {e}")
+                logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 

@@ -375,6 +375,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
 
     def test_singleton_get_instance_and_reset(self):
         """Verify TokenCostTracker.get_instance() and reset_instance() behavior."""
+        TokenCostTracker.reset_instance()
         inst1 = TokenCostTracker.get_instance()
         inst2 = TokenCostTracker.get_instance()
         self.assertIs(inst1, inst2)
@@ -430,8 +431,141 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
         mlflow_mock.end_run.assert_called()
 
 
+    def test_token_tracker_upload_to_mlflow(self):
+        """Verify upload_to_mlflow logs metrics and uploads tokens.json via AssetLoader and mlflow."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+        active_mock = MagicMock()
+        active_mock.info.run_id = "test-run-456"
+        mlflow_mock.active_run.return_value = active_mock
+
+        tracker = TokenCostTracker()
+        tracker.track_chat(prompt_tokens=200, output_tokens=100)
+
+        mock_loader = MagicMock()
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            tracker.upload_to_mlflow(git_slug="org-repo-main", stage="Data Generation")
+
+            mlflow_mock.log_artifact.assert_called()
+            call_args = mlflow_mock.log_artifact.call_args
+            self.assertEqual(call_args[1]["artifact_path"], "telemetry")
+
+            mock_loader.log_results.assert_called_once()
+            _, kwargs = mock_loader.log_results.call_args
+            self.assertEqual(kwargs["tags"]["git_slug"], "org-repo-main")
+            self.assertEqual(kwargs["tags"]["category"], "telemetry")
+            self.assertEqual(kwargs["tags"]["type"], "tokens")
+
+    def test_token_tracker_download_from_mlflow_by_run_id(self):
+        """Verify download_from_mlflow downloads telemetry/tokens.json via mlflow artifacts."""
+        import sys
+        import tempfile
+        mlflow_mock = sys.modules["mlflow"]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tokens_file = os.path.join(tmp_dir, "tokens.json")
+            sample_tracker = TokenCostTracker()
+            sample_tracker.track_chat(prompt_tokens=500, output_tokens=200)
+            sample_tracker.save_to_file(tokens_file)
+
+            mlflow_mock.artifacts.download_artifacts.return_value = tokens_file
+
+            tracker = TokenCostTracker()
+            success = tracker.download_from_mlflow(run_id="run-token-123")
+            self.assertTrue(success)
+            self.assertEqual(tracker.get_totals()["total_calls"], 1)
+            self.assertEqual(tracker.get_totals()["total_tokens"], 700)
+
+    def test_token_tracker_download_from_mlflow_by_git_slug(self):
+        """Verify download_from_mlflow downloads via DefaultAssetLoader when git_slug is provided."""
+        sample_tracker = TokenCostTracker()
+        sample_tracker.track_embedding(prompt_tokens=1000)
+        sample_dict = sample_tracker.to_dict()
+
+        mock_loader = MagicMock()
+        mock_loader.download.return_value = sample_dict
+
+        tracker = TokenCostTracker()
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            success = tracker.download_from_mlflow(git_slug="org-repo-main")
+            self.assertTrue(success)
+            self.assertEqual(tracker.get_totals()["total_calls"], 1)
+            self.assertEqual(tracker.get_totals()["total_prompt_tokens"], 1000)
+
+    def test_token_tracker_log_to_mlflow_nested_and_matching_run(self):
+        """Verify log_to_mlflow with matching run_id or nested run_id."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+
+        # Case 1: active run matches run_id
+        active_mock = MagicMock()
+        active_mock.info.run_id = "run-same"
+        mlflow_mock.active_run.return_value = active_mock
+        mlflow_mock.start_run.reset_mock()
+
+        tracker = TokenCostTracker()
+        tracker.track_chat(prompt_tokens=10, output_tokens=10)
+        tracker.log_to_mlflow(run_id="run-same")
+        mlflow_mock.log_metrics.assert_called()
+        mlflow_mock.start_run.assert_not_called()
+
+        # Case 2: active run differs from run_id -> nested run
+        active_mock.info.run_id = "run-parent"
+        mlflow_mock.active_run.return_value = active_mock
+        mlflow_mock.start_run.reset_mock()
+
+        tracker.log_to_mlflow(run_id="run-child")
+        mlflow_mock.start_run.assert_called_with(run_id="run-child", nested=True)
+
+    def test_generate_migration_report_aggregates_downloaded_telemetry(self):
+        """Verify generate_migration_report downloads prior telemetry from MLflow and renders both tables."""
+        from utils.graphrag_utils import DependencyAnalyzer
+        from utils.duration_tracker import DurationTracker
+        import asyncio
+
+        dur_singleton = DurationTracker.reset_instance()
+        token_singleton = TokenCostTracker.reset_instance()
+
+        mock_loader = MagicMock()
+        mock_loader.num_prompts.side_effect = lambda prefix: 1 if "enhanced" in prefix else 1
+        mock_loader.download_prompt.side_effect = [
+            ("Prompt overview", {"search_mode": "global"}),
+            ("Prompt plan", {"search_mode": "global"}),
+        ]
+
+        # Simulate downloading prior Data Generation step from MLflow
+        def fake_dur_download(*args, **kwargs):
+            dur_singleton.record_step("Data Generation", "Clone Repository", 8.5)
+            return True
+
+        def fake_token_download(*args, **kwargs):
+            token_singleton.track_chat(prompt_tokens=400, output_tokens=100)
+            return True
+
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'), \
+             patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
+             patch('utils.visualization_utils.log_interactive_dependency_graph'), \
+             patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+             patch.object(DurationTracker, 'download_from_mlflow', side_effect=fake_dur_download), \
+             patch.object(TokenCostTracker, 'download_from_mlflow', side_effect=fake_token_download), \
+             patch('sys.modules'):
+
+            analyzer = DependencyAnalyzer(root_dir="/dummy/dir", git_slug="test-slug")
+
+            with patch.object(analyzer, 'query_with_llm', side_effect=["Overview text", "### Code Migration Plan (JSON)\n[]"]):
+                report = asyncio.run(analyzer.generate_migration_report())
+
+                self.assertIn("### LLM Token Usage & Cost Summary", report)
+                self.assertIn("### Pipeline Execution Duration Summary", report)
+                self.assertIn("Clone Repository", report)
+                self.assertIn("Data Generation", report)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

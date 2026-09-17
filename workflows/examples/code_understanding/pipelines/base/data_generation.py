@@ -615,6 +615,8 @@ class DataGenerationPipeline:
                             config=config, multi_repo=multi_repo, external_metadata=external_metadata,
                         )
 
+            git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+
             if dur_tracker:
                 if target_path:
                     try:
@@ -622,9 +624,22 @@ class DataGenerationPipeline:
                     except Exception as e:
                         logging.debug(f"Failed to save duration metrics to {target_path}: {e}")
                 try:
-                    dur_tracker.log_to_mlflow()
+                    dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
                 except Exception as e:
-                    logging.debug(f"Failed to log duration metrics to MLflow: {e}")
+                    logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
+            try:
+                from utils.token_tracker import TokenCostTracker
+                token_tracker = TokenCostTracker.get_instance()
+                if target_path:
+                    try:
+                        token_tracker.save_to_file(os.path.join(target_path, "tokens.json"))
+                    except Exception as e:
+                        logging.debug(f"Failed to save token metrics to {target_path}: {e}")
+                token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"Failed to upload token metrics to MLflow: {e}")
+
 
             logging.info("Data generation pipeline complete.")
 

@@ -1,7 +1,10 @@
 import os
+import re
 import json
 import logging
+import tempfile
 from typing import Optional, Dict, Any
+
 
 try:
     import litellm
@@ -404,11 +407,20 @@ class TokenCostTracker:
                 "llm_total_tokens": totals["total_tokens"],
                 "llm_total_cost": totals["total_cost"],
             }
+            for source, r in self.records.items():
+                source_clean = re.sub(r"[^a-zA-Z0-9_]", "_", source.lower()).strip("_")[:200]
+                metrics[f"llm_{source_clean}_calls"] = r.get("calls", 0)
+                metrics[f"llm_{source_clean}_tokens"] = r.get("total_tokens", 0)
+                metrics[f"llm_{source_clean}_cost"] = r.get("cost", 0.0)
+
+            active_run = mlflow.active_run()
             if run_id:
-                with mlflow.start_run(run_id=run_id):
+                if active_run and active_run.info.run_id == run_id:
                     mlflow.log_metrics(metrics)
+                else:
+                    with mlflow.start_run(run_id=run_id, nested=bool(active_run)):
+                        mlflow.log_metrics(metrics)
             else:
-                active_run = mlflow.active_run()
                 if active_run:
                     mlflow.log_metrics(metrics)
                     mlflow.end_run()
@@ -417,3 +429,135 @@ class TokenCostTracker:
                         mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow metric logging skipped or failed: {e}")
+
+    def upload_to_mlflow(
+        self,
+        git_slug: Optional[str] = None,
+        stage: Optional[str] = None,
+        run_id: Optional[str] = None,
+        multi_repo: bool = False,
+    ):
+        """Uploads token metrics and tokens.json artifact to MLflow."""
+        if not self.records:
+            return
+
+        # 1. Log numerical metrics
+        try:
+            self.log_to_mlflow(run_id=run_id)
+        except Exception as e:
+            logging.debug(f"Failed to log token metrics to MLflow: {e}")
+
+        # 2. Upload tokens.json artifact
+        temp_dir = tempfile.mkdtemp()
+        temp_file = os.path.join(temp_dir, "tokens.json")
+        try:
+            self.save_to_file(temp_file)
+
+            # Direct MLflow run upload if active run or run_id available
+            try:
+                import mlflow
+                active_run = mlflow.active_run()
+                target_run = run_id or (active_run.info.run_id if active_run else None) or os.environ.get("MLFLOW_RUN_ID")
+                if target_run:
+                    if active_run and active_run.info.run_id == target_run:
+                        mlflow.log_artifact(temp_file, artifact_path="telemetry")
+                    else:
+                        with mlflow.start_run(run_id=target_run, nested=bool(active_run)):
+                            mlflow.log_artifact(temp_file, artifact_path="telemetry")
+            except Exception as e:
+                logging.debug(f"Failed to log tokens.json directly to MLflow run: {e}")
+
+            # Catalog upload via DefaultAssetLoader for git_slug / tag search
+            if git_slug or multi_repo:
+                try:
+                    from loaders.default_asset_loader import DefaultAssetLoader
+                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    )
+                    tags = {
+                        "git_slug": git_slug or "multi-repo",
+                        "category": "telemetry",
+                        "type": "tokens",
+                        "multi_repo": multi_repo,
+                    }
+                    if stage:
+                        tags["stage"] = stage
+                    DefaultAssetLoader().log_results(
+                        temp_file,
+                        artifact_path=artifact_path,
+                        tags=tags,
+                    )
+                except Exception as e:
+                    logging.debug(f"Failed to upload tokens.json via DefaultAssetLoader: {e}")
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def download_from_mlflow(
+        self,
+        git_slug: Optional[str] = None,
+        run_id: Optional[str] = None,
+        multi_repo: bool = False,
+    ) -> bool:
+        """Downloads and merges token usage records from MLflow.
+        Returns True if records were retrieved and merged, False otherwise."""
+        # 1. Try downloading via run_id
+        target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
+        if target_run:
+            try:
+                import mlflow
+                local_path = mlflow.artifacts.download_artifacts(
+                    run_id=target_run, artifact_path="telemetry/tokens.json"
+                )
+                if local_path and os.path.exists(local_path):
+                    other = TokenCostTracker.load_from_file(local_path)
+                    self.merge(other)
+                    return True
+            except Exception as e:
+                logging.debug(f"Failed to download tokens.json for run {target_run}: {e}")
+
+        # 2. Try downloading via DefaultAssetLoader / MLflow tag search
+        if git_slug or multi_repo:
+            try:
+                from loaders.default_asset_loader import DefaultAssetLoader
+                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                    git_slug=git_slug,
+                    multi_repo=multi_repo,
+                )
+                asset_file = f"{artifact_path}/tokens.json"
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    content = DefaultAssetLoader().download(
+                        asset_file,
+                        download_dir=temp_dir,
+                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                        asset_tags={"git_slug": git_slug or "multi-repo", "type": "tokens"},
+                    )
+                    if isinstance(content, dict) and "records" in content:
+                        other = TokenCostTracker.from_dict(content)
+                        self.merge(other)
+                        return True
+                    elif isinstance(content, str):
+                        data = json.loads(content)
+                        if isinstance(data, dict) and "records" in data:
+                            other = TokenCostTracker.from_dict(data)
+                            self.merge(other)
+                            return True
+                    downloaded_file = os.path.join(temp_dir, "tokens.json")
+                    if os.path.exists(downloaded_file):
+                        other = TokenCostTracker.load_from_file(downloaded_file)
+                        self.merge(other)
+                        return True
+                finally:
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logging.debug(f"Failed to download tokens.json via DefaultAssetLoader: {e}")
+
+        return False
+

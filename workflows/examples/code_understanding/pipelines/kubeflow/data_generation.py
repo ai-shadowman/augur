@@ -123,12 +123,23 @@ def generate_code_and_meta_op(
                             external_metadata=external_metadata,
                         )
 
+            git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+
             if dur_tracker:
                 dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
                 try:
-                    dur_tracker.log_to_mlflow()
+                    dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
                 except Exception:
                     pass
+
+            try:
+                from utils.token_tracker import TokenCostTracker
+                token_tracker = TokenCostTracker.get_instance()
+                token_tracker.save_to_file(os.path.join(tmp_target, "tokens.json"))
+                token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+            except Exception:
+                pass
+
 
         except Exception as e:
 

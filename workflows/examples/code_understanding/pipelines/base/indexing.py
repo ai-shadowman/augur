@@ -38,6 +38,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
             for check_path in [codebase_path, os.path.dirname(codebase_path)]:
                 dur_file = os.path.join(check_path, "durations.json")
                 if os.path.exists(dur_file):
@@ -45,6 +46,18 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     break
         except Exception:
             dur_tracker = None
+
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            for check_path in [codebase_path, os.path.dirname(codebase_path)]:
+                tokens_file = os.path.join(check_path, "tokens.json")
+                if os.path.exists(tokens_file):
+                    token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
+                    break
+        except Exception:
+            token_tracker = None
 
         if dur_tracker:
             with dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config"):
@@ -77,9 +90,15 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         try:
             from utils.token_tracker import TokenCostTracker
-            TokenCostTracker.get_instance().log_to_mlflow()
+            t_tracker = TokenCostTracker.get_instance()
+            for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    t_tracker.save_to_file(os.path.join(save_dir, "tokens.json"))
+                except Exception:
+                    pass
+            t_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
         except Exception as e:
-            logging.debug(f"Failed to log token metrics to MLflow: {e}")
+            logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
         if dur_tracker:
             for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
@@ -88,9 +107,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 except Exception as e:
                     logging.debug(f"Failed to save durations to {save_dir}: {e}")
             try:
-                dur_tracker.log_to_mlflow()
+                dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
             except Exception as e:
-                logging.debug(f"Failed to log duration metrics to MLflow: {e}")
+                logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 

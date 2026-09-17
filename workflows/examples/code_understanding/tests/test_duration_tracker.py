@@ -1,7 +1,9 @@
+import json
 import os
 import sys
 import tempfile
 import time
+
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -364,7 +366,92 @@ class TestDurationTracker(unittest.TestCase):
                 self.assertIn("pipeline_total_duration_sec", logged_metrics)
 
 
+    def test_duration_tracker_upload_to_mlflow(self):
+        """Verify upload_to_mlflow logs metrics and uploads durations.json via AssetLoader and mlflow."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+        active_mock = MagicMock()
+        active_mock.info.run_id = "test-run-123"
+        mlflow_mock.active_run.return_value = active_mock
+
+        self.tracker.record_step("Data Generation", "Clone Repository", 5.0)
+
+        mock_loader = MagicMock()
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            self.tracker.upload_to_mlflow(git_slug="org-repo-main", stage="Data Generation")
+
+            # Check that log_artifact was called with telemetry path
+            mlflow_mock.log_artifact.assert_called()
+            call_args = mlflow_mock.log_artifact.call_args
+            self.assertEqual(call_args[1]["artifact_path"], "telemetry")
+
+            # Check that DefaultAssetLoader().log_results was called
+            mock_loader.log_results.assert_called_once()
+            _, kwargs = mock_loader.log_results.call_args
+            self.assertEqual(kwargs["tags"]["git_slug"], "org-repo-main")
+            self.assertEqual(kwargs["tags"]["category"], "telemetry")
+            self.assertEqual(kwargs["tags"]["type"], "durations")
+
+    def test_duration_tracker_download_from_mlflow_by_run_id(self):
+        """Verify download_from_mlflow downloads telemetry/durations.json via mlflow artifacts."""
+        import sys
+        import tempfile
+        mlflow_mock = sys.modules["mlflow"]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dur_file = os.path.join(tmp_dir, "durations.json")
+            with open(dur_file, "w") as f:
+                json.dump({"records": [{"stage": "Data Generation", "step": "Clone", "duration": 4.5, "status": "success"}]}, f)
+
+            mlflow_mock.artifacts.download_artifacts.return_value = dur_file
+
+            tracker = DurationTracker()
+            success = tracker.download_from_mlflow(run_id="run-xyz")
+            self.assertTrue(success)
+            self.assertEqual(len(tracker.records), 1)
+            self.assertEqual(tracker.records[0]["step"], "Clone")
+
+    def test_duration_tracker_download_from_mlflow_by_git_slug(self):
+        """Verify download_from_mlflow downloads via DefaultAssetLoader when git_slug is provided."""
+        mock_loader = MagicMock()
+        mock_loader.download.return_value = {
+            "records": [{"stage": "Indexing", "step": "GraphRAG", "duration": 15.0, "status": "success"}]
+        }
+
+        tracker = DurationTracker()
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+            success = tracker.download_from_mlflow(git_slug="my-org-repo-main")
+            self.assertTrue(success)
+            self.assertEqual(len(tracker.records), 1)
+            self.assertEqual(tracker.records[0]["step"], "GraphRAG")
+
+    def test_log_to_mlflow_nested_and_matching_run(self):
+        """Verify log_to_mlflow behavior with explicit run_id matching or nesting."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+
+        # Case 1: active run matches run_id -> no start_run call
+        active_mock = MagicMock()
+        active_mock.info.run_id = "run-same"
+        mlflow_mock.active_run.return_value = active_mock
+        mlflow_mock.start_run.reset_mock()
+
+        self.tracker.record_step("Analysis", "Report", 2.0)
+        self.tracker.log_to_mlflow(run_id="run-same")
+        mlflow_mock.log_metrics.assert_called()
+        mlflow_mock.start_run.assert_not_called()
+
+        # Case 2: active run differs from run_id -> nested start_run
+        active_mock.info.run_id = "run-other"
+        mlflow_mock.active_run.return_value = active_mock
+        mlflow_mock.start_run.reset_mock()
+
+        self.tracker.log_to_mlflow(run_id="run-child")
+        mlflow_mock.start_run.assert_called_with(run_id="run-child", nested=True)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
