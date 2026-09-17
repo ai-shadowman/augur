@@ -748,7 +748,7 @@ class DependencyAnalyzer:
 
         try:
             from utils.duration_tracker import DurationTracker
-            duration_section = DurationTracker.get_instance().format_markdown_section()
+            duration_section = DurationTracker.get_instance().format_markdown_table()
         except Exception:
             duration_section = ""
 

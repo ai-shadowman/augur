@@ -49,6 +49,14 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
             requests.Session.send = _send_with_forwarded_token
 
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
+            token_tracker.enable_openai_tracking(category="Evaluation (Judge)")
+        except Exception as e:
+            logging.debug(f"Failed to enable token tracking in MlFlowCustomEvaluator: {e}")
+
     def _judge_model_uri(self) -> str:
         """Returns the MLflow judge model URI, using an OpenAI-compatible endpoint."""
         judge_id = os.getenv("JUDGE_LLM_ID")

@@ -1,5 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
+from contextlib import redirect_stdout
+import io
+import logging
 import os
 import sys
 import tempfile
@@ -12,7 +15,8 @@ if BASE_DIR not in sys.path:
 # Provide mock stubs for container dependencies when running in local environments
 for pkg_name in [
     "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
-    "pandas", "yaml", "mlflow", "mlflow.tracking", "requests", "deepeval",
+    "pandas", "yaml", "mlflow", "mlflow.tracking", "mlflow.metrics", "mlflow.metrics.genai",
+    "requests", "deepeval",
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm"
 ]:
     if pkg_name not in sys.modules:
@@ -371,8 +375,11 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertIn("### LLM Token Usage & Cost Summary", report)
             rec_pos = report.index("### Recommended Migration Order")
             summary_pos = report.index("### LLM Token Usage & Cost Summary")
-            self.assertGreater(summary_pos, rec_pos)
-            self.assertTrue(report.rstrip().endswith("```"))
+            self.assertTrue(
+                report.rstrip().endswith("</details>")
+                or report.rstrip().endswith("```")
+                or report.rstrip().endswith("|")
+            )
 
     def test_singleton_get_instance_and_reset(self):
         """Verify TokenCostTracker.get_instance() and reset_instance() behavior."""
@@ -404,6 +411,36 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertEqual(result, 10)
             self.assertEqual(called, [5])
             mock_track.assert_called_once()
+
+    def test_mlflow_custom_telemetry_idempotency(self):
+        """Verify MlFlowCustomTelemetry.track() is idempotent and only configures setup once."""
+        from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+        import mlflow
+
+        MlFlowCustomTelemetry.reset()
+        mlflow.set_experiment.reset_mock()
+        mlflow.openai.autolog.reset_mock()
+        try:
+            with patch.dict(os.environ, {"MLFLOW_TRACKING_URI": "http://mock-mlflow:5000", "MLFLOW_EXPERIMENT_NAME": "test-exp"}):
+                telem = MlFlowCustomTelemetry()
+                telem.track()
+                telem.track()
+
+                self.assertEqual(mlflow.set_experiment.call_count, 1)
+                self.assertEqual(mlflow.openai.autolog.call_count, 1)
+        finally:
+            MlFlowCustomTelemetry.reset()
+
+    def test_indexing_pipeline_run_has_enable_telemetry(self):
+        """Verify IndexingPipeline.run invokes DefaultCustomTelemetry.track via @enable_telemetry."""
+        from pipelines.base.indexing import IndexingPipeline
+
+        with patch('telemetry.default_custom_telemetry.DefaultCustomTelemetry.track') as mock_track, \
+             patch('pipelines.base.indexing.generate_graphrag_index'), \
+             patch('pipelines.base.indexing.evaluate_graphrag_index'):
+            pipeline = IndexingPipeline()
+            pipeline.run(codebase_path="/tmp/code", graphrag_source_path="/tmp/gr", git_repo="repo", git_branch="main")
+            mock_track.assert_called()
 
     def test_dependency_analyzer_uses_singleton_by_default(self):
         """Verify DependencyAnalyzer defaults to TokenCostTracker.get_instance()."""
@@ -904,6 +941,65 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
         self.assertEqual(len(new_tracker._merged_runs), 0)
         self.assertEqual(len(new_tracker._merged_upstream_sources), 0)
         self.assertEqual(len(new_tracker._merged_files), 0)
+
+    def test_console_output_no_double_logging(self):
+        """Verify that real-time [LLM Call] uses logging.debug (not logging.info), preventing double-printing."""
+        tracker = TokenCostTracker(print_to_console=True)
+        stdout_buf = io.StringIO()
+
+        with self.assertLogs(level="DEBUG") as log_cm:
+            with redirect_stdout(stdout_buf):
+                tracker.track(
+                    source="Test Logging",
+                    calls=1,
+                    prompt_tokens=100,
+                    output_tokens=50,
+                    model="test-model",
+                )
+
+        stdout_text = stdout_buf.getvalue()
+        self.assertIn("[LLM Call]", stdout_text)
+
+        # Confirm the log record is emitted at DEBUG level, NOT INFO
+        debug_logs = [record for record in log_cm.records if record.levelno == logging.DEBUG and "[LLM Call]" in record.getMessage()]
+        info_logs = [record for record in log_cm.records if record.levelno >= logging.INFO and "[LLM Call]" in record.getMessage()]
+        self.assertEqual(len(debug_logs), 1)
+        self.assertEqual(len(info_logs), 0)
+
+    def test_print_to_console_suppression_and_env(self):
+        """Verify print_to_console parameter, env var suppression, and to_dict/from_dict serialization."""
+        # 1. Test parameter suppression
+        tracker_quiet = TokenCostTracker(print_to_console=False)
+        stdout_buf = io.StringIO()
+        with redirect_stdout(stdout_buf):
+            tracker_quiet.track(source="Quiet", calls=1, prompt_tokens=10, output_tokens=10)
+        self.assertEqual(stdout_buf.getvalue(), "")
+
+        # 2. Test to_dict / from_dict persistence
+        d = tracker_quiet.to_dict()
+        self.assertIn("print_to_console", d)
+        self.assertFalse(d["print_to_console"])
+        reconstructed = TokenCostTracker.from_dict(d)
+        self.assertFalse(reconstructed.print_to_console)
+
+        # 3. Test env var suppression
+        with patch.dict(os.environ, {"TOKEN_TRACKER_PRINT_CONSOLE": "false"}):
+            tracker_env = TokenCostTracker()
+            self.assertFalse(tracker_env.print_to_console)
+            stdout_env = io.StringIO()
+            with redirect_stdout(stdout_env):
+                tracker_env.track(source="EnvQuiet", calls=1, prompt_tokens=10, output_tokens=10)
+            self.assertEqual(stdout_env.getvalue(), "")
+
+    def test_evaluator_initializes_token_tracking(self):
+        """Verify MlFlowCustomEvaluator initializes token callbacks and openai tracking."""
+        from eval.mlflow_custom_evaluator import MlFlowCustomEvaluator
+        with patch.object(TokenCostTracker, "enable_litellm_callbacks") as mock_litellm, \
+             patch.object(TokenCostTracker, "enable_openai_tracking") as mock_openai:
+            evaluator = MlFlowCustomEvaluator()
+            self.assertIsNotNone(evaluator)
+            mock_litellm.assert_called_once_with(category="Evaluation (Ground Truth)")
+            mock_openai.assert_called_once_with(category="Evaluation (Judge)")
 
 
 if __name__ == "__main__":

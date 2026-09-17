@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 
 
 
+def _is_mock(obj: Any) -> bool:
+    """Helper to detect mock objects in unit tests to prevent serialization issues."""
+    return obj is not None and (hasattr(obj, "_mock_name") or hasattr(obj, "_mock_return_value"))
+
+
 class DurationTracker:
     """Tracks step and stage durations across pipeline executions using a singleton pattern."""
 
@@ -33,11 +38,46 @@ class DurationTracker:
         self._active_measurements: List[Dict[str, Any]] = []
         self.git_slug: Optional[str] = git_slug
         self.git_repo: Optional[str] = git_repo
+        self.mlflow_run_id: Optional[str] = None
+        self.mlflow_experiment_id: Optional[str] = None
+        self.mlflow_tracking_uri: Optional[str] = None
 
     def reset(self):
         """Clears all recorded timing records."""
         self.records.clear()
         self._active_measurements.clear()
+        self.mlflow_run_id = None
+        self.mlflow_experiment_id = None
+        self.mlflow_tracking_uri = None
+
+    def capture_mlflow_context(self):
+        """Captures MLflow tracking URI, run ID, and experiment ID from active run or environment."""
+        try:
+            import mlflow
+            if not self.mlflow_tracking_uri:
+                uri = mlflow.get_tracking_uri()
+                if uri and not _is_mock(uri):
+                    self.mlflow_tracking_uri = str(uri)
+            active_run = mlflow.active_run()
+            if active_run and hasattr(active_run, "info"):
+                if not self.mlflow_run_id:
+                    rid = getattr(active_run.info, "run_id", None)
+                    if rid and not _is_mock(rid):
+                        self.mlflow_run_id = str(rid)
+                if not self.mlflow_experiment_id:
+                    eid = getattr(active_run.info, "experiment_id", None)
+                    if eid and not _is_mock(eid):
+                        self.mlflow_experiment_id = str(eid)
+        except Exception:
+            pass
+        if not self.mlflow_run_id:
+            env_rid = os.environ.get("MLFLOW_RUN_ID")
+            if env_rid:
+                self.mlflow_run_id = env_rid
+        if not self.mlflow_tracking_uri:
+            env_uri = os.environ.get("MLFLOW_TRACKING_URI")
+            if env_uri:
+                self.mlflow_tracking_uri = env_uri
 
     def record_step(
         self,
@@ -238,8 +278,92 @@ class DurationTracker:
 
         return "\n".join(lines)
 
-    def format_markdown_section(self, include_active: bool = True) -> str:
+    def format_markdown_table(self, include_active: bool = False) -> str:
+        """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
+        records = self.get_all_records(include_active=include_active)
+        if not records:
+            return ""
+
+        self.capture_mlflow_context()
+
+        total_duration = self.get_total_duration()
+        stages = self.get_stage_durations(include_active=include_active)
+
+        # Identify slowest non-aggregate step as bottleneck
+        non_agg = [r for r in records if not self._is_aggregate_step(r)]
+        bottleneck = max(non_agg, key=lambda r: r.get("duration", 0.0)) if non_agg else None
+
+        lines = [
+            "\n\n### Pipeline Execution Duration Summary\n",
+        ]
+
+        # Callout block with KPIs and MLflow links
+        mlflow_links = []
+        if self.mlflow_tracking_uri and self.mlflow_run_id:
+            base_url = self.mlflow_tracking_uri.rstrip("/")
+            exp_id = self.mlflow_experiment_id or "0"
+            run_url = f"{base_url}/#/experiments/{exp_id}/runs/{self.mlflow_run_id}"
+            mlflow_links.append(f"[MLflow Run `{self.mlflow_run_id[:8]}`]({run_url})")
+            mlflow_links.append(f"[Artifacts]({run_url}/artifacts)")
+
+        kpi_parts = [f"**Total Pipeline Runtime:** `{self.format_duration(total_duration)}`"]
+        if bottleneck and total_duration > 0:
+            b_pct = (bottleneck.get("duration", 0.0) / total_duration) * 100.0
+            kpi_parts.append(
+                f"**Slowest Step:** `{bottleneck.get('step')}` ({self.format_duration(bottleneck.get('duration', 0.0))} — {b_pct:.1f}%)"
+            )
+        if mlflow_links:
+            kpi_parts.append(f"**MLflow Tracking:** {' • '.join(mlflow_links)}")
+
+        lines.append("> " + " | ".join(kpi_parts) + "\n")
+
+        # Table header
+        lines.append("| Stage | Step / Sub-step | Duration | % Total | Latency Bar | Status |")
+        lines.append("| :--- | :--- | :---: | :---: | :--- | :---: |")
+
+        max_bar_width = 15
+        stages_with_substeps = set()
+        for rec in records:
+            if not self._is_aggregate_step(rec):
+                stages_with_substeps.add(rec["stage"])
+
+        for rec in records:
+            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec):
+                continue
+            dur = rec.get("duration", 0.0)
+            pct = (dur / total_duration * 100.0) if total_duration > 0 else 0.0
+            bar_len = max(1, int(pct / 100.0 * max_bar_width)) if pct > 0 else 1
+            bar = "█" * bar_len
+            raw_status = rec.get("status", "success").lower()
+            if raw_status == "success":
+                status_icon = "✅"
+            elif raw_status == "running":
+                status_icon = "⏳"
+            else:
+                status_icon = "❌"
+
+            lines.append(
+                f"| **{rec['stage']}** | {rec['step']} | {self.format_duration(dur)} | {pct:.1f}% | `{bar}` | {status_icon} |"
+            )
+
+        total_str = self.format_duration(total_duration)
+        lines.append(f"| **Total** | *All Stages* | **{total_str}** | **100%** | | |")
+
+        # Collapsible stage breakdown
+        if len(stages) > 1:
+            lines.append("\n<details>")
+            lines.append("<summary><b>📊 Stage Breakdown</b></summary>\n")
+            for stage, s_dur in stages.items():
+                pct = (s_dur / total_duration * 100.0) if total_duration > 0 else 0.0
+                lines.append(f"- **{stage}:** `{self.format_duration(s_dur)}` ({pct:.1f}%)")
+            lines.append("\n</details>\n")
+
+        return "\n".join(lines)
+
+    def format_markdown_section(self, include_active: bool = True, as_table: bool = False) -> str:
         """Returns a Markdown-formatted section ready to append to migration_report.md."""
+        if as_table:
+            return self.format_markdown_table(include_active=include_active)
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return ""
@@ -266,19 +390,49 @@ class DurationTracker:
 
             metrics["pipeline_total_duration_sec"] = self.get_total_duration()
 
+            try:
+                uri = mlflow.get_tracking_uri()
+                if uri and not _is_mock(uri):
+                    self.mlflow_tracking_uri = str(uri)
+            except Exception:
+                self.mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+
             active_run = mlflow.active_run()
             if run_id:
-                if active_run and active_run.info.run_id == run_id:
+                if not _is_mock(run_id):
+                    self.mlflow_run_id = str(run_id)
+                if active_run and hasattr(active_run, "info") and active_run.info.run_id == run_id:
+                    eid = getattr(active_run.info, "experiment_id", None)
+                    if eid and not _is_mock(eid):
+                        self.mlflow_experiment_id = str(eid)
                     mlflow.log_metrics(metrics)
                 else:
-                    with mlflow.start_run(run_id=run_id, nested=bool(active_run)):
+                    with mlflow.start_run(run_id=run_id, nested=bool(active_run)) as r:
+                        if hasattr(r, "info"):
+                            eid = getattr(r.info, "experiment_id", None)
+                            if eid and not _is_mock(eid):
+                                self.mlflow_experiment_id = str(eid)
                         mlflow.log_metrics(metrics)
             else:
                 if active_run:
+                    if hasattr(active_run, "info"):
+                        rid = getattr(active_run.info, "run_id", None)
+                        if rid and not _is_mock(rid):
+                            self.mlflow_run_id = str(rid)
+                        eid = getattr(active_run.info, "experiment_id", None)
+                        if eid and not _is_mock(eid):
+                            self.mlflow_experiment_id = str(eid)
                     mlflow.log_metrics(metrics)
                     mlflow.end_run()
                 else:
-                    with mlflow.start_run():
+                    with mlflow.start_run() as r:
+                        if hasattr(r, "info"):
+                            rid = getattr(r.info, "run_id", None)
+                            if rid and not _is_mock(rid):
+                                self.mlflow_run_id = str(rid)
+                            eid = getattr(r.info, "experiment_id", None)
+                            if eid and not _is_mock(eid):
+                                self.mlflow_experiment_id = str(eid)
                         mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow duration metric logging skipped or failed: {e}")
@@ -310,8 +464,13 @@ class DurationTracker:
             try:
                 import mlflow
                 active_run = mlflow.active_run()
-                target_run = run_id or (active_run.info.run_id if active_run else None) or os.environ.get("MLFLOW_RUN_ID")
-                if target_run:
+                target_run = run_id or (active_run.info.run_id if active_run and hasattr(active_run, "info") else None) or os.environ.get("MLFLOW_RUN_ID")
+                if target_run and not _is_mock(target_run):
+                    self.mlflow_run_id = str(target_run)
+                    if active_run and hasattr(active_run, "info"):
+                        eid = getattr(active_run.info, "experiment_id", None)
+                        if eid and not _is_mock(eid):
+                            self.mlflow_experiment_id = self.mlflow_experiment_id or str(eid)
                     run_tags = {
                         "category": "telemetry",
                         "type": "durations",
@@ -384,6 +543,8 @@ class DurationTracker:
         # 1. Try downloading via run_id or MLFLOW_RUN_ID
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
         if target_run and target_run not in self._merged_runs:
+            if not self.mlflow_run_id:
+                self.mlflow_run_id = target_run
             try:
                 import mlflow
                 local_path = mlflow.artifacts.download_artifacts(
@@ -498,6 +659,9 @@ class DurationTracker:
                                 if target_file and os.path.exists(target_file):
                                     self.load_and_merge(target_file, current_stage=current_stage)
                                     self._merged_runs.add(run.info.run_id)
+                                    if not self.mlflow_run_id:
+                                        self.mlflow_run_id = run.info.run_id
+                                        self.mlflow_experiment_id = run.info.experiment_id
                                     merged_any = True
                                     run_merged = True
                                     if stage:
@@ -585,6 +749,12 @@ class DurationTracker:
             d["git_slug"] = self.git_slug
         if self.git_repo:
             d["git_repo"] = self.git_repo
+        if self.mlflow_run_id and not _is_mock(self.mlflow_run_id):
+            d["mlflow_run_id"] = str(self.mlflow_run_id)
+        if self.mlflow_experiment_id and not _is_mock(self.mlflow_experiment_id):
+            d["mlflow_experiment_id"] = str(self.mlflow_experiment_id)
+        if self.mlflow_tracking_uri and not _is_mock(self.mlflow_tracking_uri):
+            d["mlflow_tracking_uri"] = str(self.mlflow_tracking_uri)
         return d
 
     @classmethod
@@ -592,6 +762,12 @@ class DurationTracker:
         """Reconstructs a DurationTracker from a dictionary."""
         tracker = cls(git_slug=data.get("git_slug"), git_repo=data.get("git_repo"))
         tracker.records = list(data.get("records", []))
+        if data.get("mlflow_run_id") and not _is_mock(data["mlflow_run_id"]):
+            tracker.mlflow_run_id = str(data["mlflow_run_id"])
+        if data.get("mlflow_experiment_id") and not _is_mock(data["mlflow_experiment_id"]):
+            tracker.mlflow_experiment_id = str(data["mlflow_experiment_id"])
+        if data.get("mlflow_tracking_uri") and not _is_mock(data["mlflow_tracking_uri"]):
+            tracker.mlflow_tracking_uri = str(data["mlflow_tracking_uri"])
         return tracker
 
     def load_from_dict(self, data: Dict[str, Any], current_stage: Optional[str] = None):
@@ -607,6 +783,12 @@ class DurationTracker:
             self.git_slug = data["git_slug"]
         if "git_repo" in data and not self.git_repo:
             self.git_repo = data["git_repo"]
+        if "mlflow_run_id" in data and not self.mlflow_run_id and not _is_mock(data["mlflow_run_id"]):
+            self.mlflow_run_id = str(data["mlflow_run_id"])
+        if "mlflow_experiment_id" in data and not self.mlflow_experiment_id and not _is_mock(data["mlflow_experiment_id"]):
+            self.mlflow_experiment_id = str(data["mlflow_experiment_id"])
+        if "mlflow_tracking_uri" in data and not self.mlflow_tracking_uri and not _is_mock(data["mlflow_tracking_uri"]):
+            self.mlflow_tracking_uri = str(data["mlflow_tracking_uri"])
 
     def save_to_file(self, filepath: str):
         """Saves duration records to a JSON file."""
@@ -645,6 +827,12 @@ class DurationTracker:
         If current_stage is provided, records belonging to that stage are ignored so current measurements are not overwritten."""
         if not other:
             return
+        if not self.mlflow_run_id and other.mlflow_run_id and not _is_mock(other.mlflow_run_id):
+            self.mlflow_run_id = str(other.mlflow_run_id)
+        if not self.mlflow_experiment_id and other.mlflow_experiment_id and not _is_mock(other.mlflow_experiment_id):
+            self.mlflow_experiment_id = str(other.mlflow_experiment_id)
+        if not self.mlflow_tracking_uri and other.mlflow_tracking_uri and not _is_mock(other.mlflow_tracking_uri):
+            self.mlflow_tracking_uri = str(other.mlflow_tracking_uri)
         existing_indices = {(r.get("stage"), r.get("step")): i for i, r in enumerate(self.records)}
         stage_low = current_stage.lower() if current_stage else None
         for rec in other.records:

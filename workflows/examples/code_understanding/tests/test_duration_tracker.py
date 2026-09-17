@@ -713,6 +713,92 @@ class TestDurationTracker(unittest.TestCase):
         self.assertIn("Analysis", summary)
 
 
+    def test_format_markdown_table(self):
+        """Verify format_markdown_table produces a native GFM table with visual latency bars and bottleneck callout."""
+        tracker = DurationTracker()
+        tracker.record_step("Data Generation", "Clone Repository", 10.0)
+        tracker.record_step("Indexing", "GraphRAG Indexing", 80.0)
+        tracker.record_step("Analysis", "Dependency Graph", 10.0)
+
+        table_md = tracker.format_markdown_table()
+        self.assertIn("### Pipeline Execution Duration Summary", table_md)
+        self.assertIn("| Stage | Step / Sub-step | Duration | % Total | Latency Bar | Status |", table_md)
+        self.assertIn("| :--- | :--- | :---: | :---: | :--- | :---: |", table_md)
+        self.assertIn("| **Data Generation** | Clone Repository |", table_md)
+        self.assertIn("| **Indexing** | GraphRAG Indexing |", table_md)
+        self.assertIn("| **Analysis** | Dependency Graph |", table_md)
+        self.assertIn("█", table_md)
+        self.assertIn("✅", table_md)
+        self.assertIn("| **Total** | *All Stages* |", table_md)
+        self.assertIn("**Slowest Step:** `GraphRAG Indexing`", table_md)
+        self.assertIn("<details>", table_md)
+        self.assertIn("<summary><b>📊 Stage Breakdown</b></summary>", table_md)
+
+    def test_format_markdown_table_with_mlflow_deep_links(self):
+        """Verify format_markdown_table renders MLflow run deep-links when tracking context is available."""
+        tracker = DurationTracker()
+        tracker.record_step("Data Generation", "Setup", 5.0)
+        tracker.mlflow_run_id = "run-abc-123"
+        tracker.mlflow_experiment_id = "42"
+        tracker.mlflow_tracking_uri = "http://mlflow-server:5000"
+
+        table_md = tracker.format_markdown_table()
+        self.assertIn("**MLflow Tracking:**", table_md)
+        self.assertIn("http://mlflow-server:5000/#/experiments/42/runs/run-abc-123", table_md)
+
+    def test_format_markdown_section_as_table_flag(self):
+        """Verify format_markdown_section delegates to format_markdown_table when as_table=True."""
+        tracker = DurationTracker()
+        tracker.record_step("Data Generation", "Setup", 5.0)
+
+        # as_table=False (default backward-compatible ASCII fence)
+        ascii_md = tracker.format_markdown_section(as_table=False)
+        self.assertTrue(ascii_md.rstrip().endswith("```"))
+
+        # as_table=True (native GFM table)
+        gfm_md = tracker.format_markdown_section(as_table=True)
+        self.assertIn("| Stage | Step / Sub-step | Duration |", gfm_md)
+
+    def test_mlflow_context_serialization_and_merge(self):
+        """Verify that MLflow metadata fields serialize to JSON and propagate across tracker merges."""
+        t1 = DurationTracker()
+        t1.record_step("Data Generation", "Step A", 10.0)
+        t1.mlflow_run_id = "run-001"
+        t1.mlflow_experiment_id = "exp-7"
+        t1.mlflow_tracking_uri = "http://localhost:5000"
+
+        d = t1.to_dict()
+        self.assertEqual(d["mlflow_run_id"], "run-001")
+        self.assertEqual(d["mlflow_experiment_id"], "exp-7")
+        self.assertEqual(d["mlflow_tracking_uri"], "http://localhost:5000")
+
+        # Roundtrip from_dict
+        t2 = DurationTracker.from_dict(d)
+        self.assertEqual(t2.mlflow_run_id, "run-001")
+        self.assertEqual(t2.mlflow_experiment_id, "exp-7")
+        self.assertEqual(t2.mlflow_tracking_uri, "http://localhost:5000")
+
+        # File roundtrip
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fpath = os.path.join(tmp_dir, "durations.json")
+            t1.save_to_file(fpath)
+
+            t3 = DurationTracker()
+            t3.load_from_file(fpath)
+            self.assertEqual(t3.mlflow_run_id, "run-001")
+            self.assertEqual(t3.mlflow_experiment_id, "exp-7")
+            self.assertEqual(t3.mlflow_tracking_uri, "http://localhost:5000")
+
+        # Merge propagation
+        t4 = DurationTracker()
+        t4.record_step("Analysis", "Step B", 5.0)
+        self.assertIsNone(t4.mlflow_run_id)
+        t4.merge(t1)
+        self.assertEqual(t4.mlflow_run_id, "run-001")
+        self.assertEqual(t4.mlflow_experiment_id, "exp-7")
+        self.assertEqual(t4.mlflow_tracking_uri, "http://localhost:5000")
+
+
 if __name__ == "__main__":
     unittest.main()
 

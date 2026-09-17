@@ -51,7 +51,13 @@ class TokenCostTracker:
         git_repo: Optional[str] = None,
         run_id: Optional[str] = None,
         only_current_run: bool = True,
+        print_to_console: Optional[bool] = None,
     ):
+        if print_to_console is not None:
+            self.print_to_console = print_to_console
+        else:
+            self.print_to_console = os.getenv("TOKEN_TRACKER_PRINT_CONSOLE", "true").lower() in ("true", "1", "yes")
+
         self.chat_model = chat_model or os.getenv("GRAPHRAG_LLM_ID", "openai/gpt-oss-120b")
         self.embed_model = embed_model or os.getenv("EMBED_LLM_ID", "e5-mistral-7b-instruct")
 
@@ -190,8 +196,9 @@ class TokenCostTracker:
             f"Prompt Tokens: {prompt_tokens:,} | Output Tokens: {output_tokens:,} | "
             f"Total Tokens: {total_tokens:,} | Est. Cost: ${cost:.4f}"
         )
-        logging.info(console_msg)
-        print(console_msg, flush=True)
+        logging.debug(console_msg)
+        if getattr(self, "print_to_console", True):
+            print(console_msg, flush=True)
 
     def track_chat(
         self, prompt_tokens: int, output_tokens: int, calls: int = 1, model: Optional[str] = None
@@ -332,6 +339,8 @@ class TokenCostTracker:
             d["git_repo"] = self.git_repo
         if getattr(self, "run_id", None):
             d["run_id"] = self.run_id
+        if getattr(self, "print_to_console", None) is not None:
+            d["print_to_console"] = self.print_to_console
         return d
 
     @classmethod
@@ -343,6 +352,7 @@ class TokenCostTracker:
             chat_prompt_price=data.get("chat_prompt_price"),
             chat_output_price=data.get("chat_output_price"),
             embed_prompt_price=data.get("embed_prompt_price"),
+            print_to_console=data.get("print_to_console"),
         )
         tracker.records = data.get("records", {})
         tracker.git_slug = data.get("git_slug")

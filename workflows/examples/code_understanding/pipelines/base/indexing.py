@@ -275,6 +275,7 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
 class IndexingPipeline:
 
+    @enable_telemetry
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
             multi_repo: bool = False):
         """Generates a GraphRAG index and returns a status dict."""

@@ -11,6 +11,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
     """MLflow telemetry provider. Enables LiteLLM autologging for token counts and latency."""
 
     _DEFAULT_EXPERIMENT_NAME = None
+    _initialized = False
 
     def _get_default_experiment_name(self) -> str:
         """Returns the experiment name from the MLFLOW_EXPERIMENT_NAME env var."""
@@ -19,11 +20,20 @@ class MlFlowCustomTelemetry(CustomTelemetry):
     def __init__(self):
         if not MlFlowCustomTelemetry._DEFAULT_EXPERIMENT_NAME:
             MlFlowCustomTelemetry._DEFAULT_EXPERIMENT_NAME = self._get_default_experiment_name()
+            logging.info(
+                f"MlFlowCustomTelemetry: default experiment resolved to '{self._DEFAULT_EXPERIMENT_NAME}'")
 
-        logging.info(
-            f"MlFlowCustomTelemetry: default experiment resolved to '{self._DEFAULT_EXPERIMENT_NAME}'")
+    @classmethod
+    def reset(cls):
+        """Resets the initialization state (useful for testing)."""
+        cls._initialized = False
+        cls._DEFAULT_EXPERIMENT_NAME = None
 
     def track(self):
+        if MlFlowCustomTelemetry._initialized:
+            logging.debug("MlFlowCustomTelemetry: already initialized, skipping duplicate track() setup.")
+            return
+
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
         logging.debug(f"MlFlowCustomTelemetry.track() called. MLFLOW_TRACKING_URI={tracking_uri}")
@@ -40,4 +50,5 @@ class MlFlowCustomTelemetry(CustomTelemetry):
             logging.error(f"mlflow.openai.autolog() failed: {e}")
 
         litellm.callbacks = ["mlflow"]
+        MlFlowCustomTelemetry._initialized = True
 

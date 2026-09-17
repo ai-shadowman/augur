@@ -66,7 +66,7 @@ class AnalysisPipeline:
 
         # Safeguard: ensure duration summary is present in the markdown report
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
-            dur_md = dur_tracker.format_markdown_section()
+            dur_md = dur_tracker.format_markdown_table()
             if dur_md.strip():
                 import re
                 match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
