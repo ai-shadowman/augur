@@ -38,6 +38,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            for check_path in [codebase_path, os.path.dirname(codebase_path)]:
+                dur_file = os.path.join(check_path, "durations.json")
+                if os.path.exists(dur_file):
+                    dur_tracker.load_and_merge(dur_file)
+                    break
         except Exception:
             dur_tracker = None
 
@@ -76,6 +81,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             logging.debug(f"Failed to log token metrics to MLflow: {e}")
 
         if dur_tracker:
+            for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    dur_tracker.save_to_file(os.path.join(save_dir, "durations.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save durations to {save_dir}: {e}")
             try:
                 dur_tracker.log_to_mlflow()
             except Exception as e:

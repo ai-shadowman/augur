@@ -28,10 +28,12 @@ class DurationTracker:
 
     def __init__(self):
         self.records: List[Dict[str, Any]] = []
+        self._active_measurements: List[Dict[str, Any]] = []
 
     def reset(self):
         """Clears all recorded timing records."""
         self.records.clear()
+        self._active_measurements.clear()
 
     def record_step(
         self,
@@ -59,6 +61,14 @@ class DurationTracker:
         """Context manager measuring execution duration of a block with time.perf_counter()."""
         start_perf = time.perf_counter()
         start_wall = time.time()
+        active_rec = {
+            "stage": stage,
+            "step": step,
+            "start_perf": start_perf,
+            "start_time": start_wall,
+            "metadata": metadata or {},
+        }
+        self._active_measurements.append(active_rec)
         status = "success"
         try:
             yield
@@ -66,6 +76,8 @@ class DurationTracker:
             status = "failed"
             raise
         finally:
+            if active_rec in self._active_measurements:
+                self._active_measurements.remove(active_rec)
             duration = time.perf_counter() - start_perf
             end_wall = time.time()
             self.record_step(
@@ -77,6 +89,24 @@ class DurationTracker:
                 status=status,
                 metadata=metadata,
             )
+
+    def get_all_records(self, include_active: bool = True) -> List[Dict[str, Any]]:
+        """Returns all completed records, plus currently active measurements if requested."""
+        records = list(self.records)
+        if include_active and hasattr(self, "_active_measurements"):
+            now_perf = time.perf_counter()
+            for active in self._active_measurements:
+                dur = now_perf - active["start_perf"]
+                records.append({
+                    "stage": active["stage"],
+                    "step": active["step"],
+                    "duration": dur,
+                    "start_time": active["start_time"],
+                    "end_time": time.time(),
+                    "status": "running",
+                    "metadata": active.get("metadata", {}),
+                })
+        return records
 
     def get_steps(self) -> List[Dict[str, Any]]:
         """Returns a copy of all recorded steps."""
@@ -111,9 +141,10 @@ class DurationTracker:
         rem_minutes = minutes % 60
         return f"{hours}h {rem_minutes:02d}m {rem_seconds:.0f}s"
 
-    def format_summary(self) -> str:
+    def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations."""
-        if not self.records:
+        all_records = self.get_all_records(include_active=include_active)
+        if not all_records:
             return "No pipeline duration records captured."
 
         lines = [
@@ -124,7 +155,7 @@ class DurationTracker:
             "+" + "-" * 20 + "+" + "-" * 34 + "+" + "-" * 11 + "+" + "-" * 9 + "+",
         ]
 
-        for rec in self.records:
+        for rec in all_records:
             dur_str = self.format_duration(rec["duration"])
             status_str = rec.get("status", "success").capitalize()
             stage_str = rec["stage"][:18]
@@ -133,19 +164,20 @@ class DurationTracker:
                 f"| {stage_str:<18} | {step_str:<32} | {dur_str:>9} | {status_str:<7} |"
             )
 
-        total_str = self.format_duration(self.get_total_duration())
+        total_str = self.format_duration(sum(rec["duration"] for rec in all_records))
         lines.append("+" + "-" * 20 + "+" + "-" * 34 + "+" + "-" * 11 + "+" + "-" * 9 + "+")
         lines.append(f"| {'Total Runtime':<18} | {'':<32} | {total_str:>9} | {'':<7} |")
         lines.append("+" + "-" * 78 + "+")
 
         return "\n".join(lines)
 
-    def format_markdown_section(self) -> str:
+    def format_markdown_section(self, include_active: bool = True) -> str:
         """Returns a Markdown-formatted section ready to append to migration_report.md."""
-        if not self.records:
+        all_records = self.get_all_records(include_active=include_active)
+        if not all_records:
             return ""
 
-        return f"\n\n### Pipeline Execution Duration Summary\n\n```\n{self.format_summary()}\n```\n"
+        return f"\n\n### Pipeline Execution Duration Summary\n\n```\n{self.format_summary(include_active=include_active)}\n```\n"
 
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs recorded step durations as metrics to active MLflow run."""
@@ -203,9 +235,25 @@ class DurationTracker:
             data = json.load(f)
         self.from_dict(data)
 
+    def load_and_merge(self, filepath: str):
+        """Loads duration records from a JSON file and merges them into this instance."""
+        if not os.path.exists(filepath):
+            return
+        try:
+            other = DurationTracker()
+            other.load_from_file(filepath)
+            self.merge(other)
+        except Exception as e:
+            logging.debug(f"Failed to load and merge durations from {filepath}: {e}")
+
     def merge(self, other: "DurationTracker"):
-        """Merges records from another DurationTracker instance into this one."""
-        self.records.extend(other.records)
+        """Merges records from another DurationTracker instance into this one, deduplicating identical records."""
+        existing_keys = {(r.get("stage"), r.get("step")) for r in self.records}
+        for rec in other.records:
+            key = (rec.get("stage"), rec.get("step"))
+            if key not in existing_keys:
+                self.records.append(rec)
+                existing_keys.add(key)
 
 
 def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None):

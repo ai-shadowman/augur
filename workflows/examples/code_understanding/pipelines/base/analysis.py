@@ -30,6 +30,11 @@ class AnalysisPipeline:
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            for check_path in [graphrag_source_path, os.path.join(graphrag_source_path, "output")]:
+                dur_file = os.path.join(check_path, "durations.json")
+                if os.path.exists(dur_file):
+                    dur_tracker.load_and_merge(dur_file)
+                    break
         except Exception:
             dur_tracker = None
 
@@ -38,6 +43,18 @@ class AnalysisPipeline:
                 report = asyncio.run(analyzer.generate_migration_report())
         else:
             report = asyncio.run(analyzer.generate_migration_report())
+
+        # Safeguard: ensure duration summary is present in the markdown report
+        if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
+            dur_md = dur_tracker.format_markdown_section()
+            if dur_md.strip():
+                import re
+                match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+                if match:
+                    idx = match.start()
+                    report = report[:idx] + dur_md.strip() + "\n\n" + report[idx:]
+                else:
+                    report = f"{report.rstrip()}\n\n{dur_md.strip()}\n"
 
         try:
             analyzer.token_tracker.log_to_mlflow()

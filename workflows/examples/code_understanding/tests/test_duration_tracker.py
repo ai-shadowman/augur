@@ -242,14 +242,73 @@ class TestDurationTracker(unittest.TestCase):
 
                 report = asyncio.run(analyzer.generate_migration_report())
 
-                self.assertIn("### LLM Token Usage & Cost Summary", report)
-                self.assertIn("### Pipeline Execution Duration Summary", report)
+    def test_load_and_merge_from_file(self):
+        """Verify load_and_merge reads from file and avoids duplicating steps."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file1 = os.path.join(tmp_dir, "durations1.json")
+            t1 = DurationTracker()
+            t1.record_step("Data Generation", "Prepare Environment", 5.0)
+            t1.save_to_file(file1)
 
-                token_pos = report.index("### LLM Token Usage & Cost Summary")
-                duration_pos = report.index("### Pipeline Execution Duration Summary")
-                self.assertLess(token_pos, duration_pos)
+            self.tracker.record_step("Data Generation", "Prepare Environment", 5.0)
+            self.tracker.record_step("Indexing", "Build GraphRAG", 20.0)
+            self.tracker.load_and_merge(file1)
+
+            # "Prepare Environment" should not be duplicated
+            self.assertEqual(len(self.tracker.get_steps()), 2)
+            self.assertAlmostEqual(self.tracker.get_total_duration(), 25.0)
+
+    def test_active_measurements_included_in_summary(self):
+        """Verify that an in-progress measure block is included in summary and markdown output."""
+        with self.tracker.measure("Analysis", "Active Long Job"):
+            summary = self.tracker.format_summary(include_active=True)
+            self.assertIn("Active Long Job", summary)
+            self.assertIn("Running", summary)
+
+            md = self.tracker.format_markdown_section(include_active=True)
+            self.assertIn("### Pipeline Execution Duration Summary", md)
+            self.assertIn("Active Long Job", md)
+
+    def test_generate_migration_report_auto_populates_duration_table_even_if_no_prior_steps(self):
+        """Verify that generate_migration_report populates duration summary even with 0 prior steps."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+        from utils.token_tracker import TokenCostTracker
+
+        # Clear all records to simulate isolated pod start in Kubeflow
+        self.tracker.reset()
+        self.assertEqual(len(self.tracker.get_steps()), 0)
+
+        custom_tokens = TokenCostTracker.reset_instance()
+        custom_tokens.track_chat(prompt_tokens=100, output_tokens=50)
+
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'), \
+             patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
+             patch('utils.visualization_utils.log_interactive_dependency_graph'):
+
+            analyzer = DependencyAnalyzer(token_tracker=custom_tokens)
+
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
+            mock_loader.download_prompt.side_effect = [
+                ("prompt 1", {"title": "### Overview", "skip_prompt": None}),
+                ("prompt 2", {"title": "### Code Migration Plan (JSON)", "skip_prompt": None}),
+            ]
+
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+                 patch.object(analyzer, 'query_with_llm', side_effect=["Overview content", '{"plan": []}']):
+
+                report = asyncio.run(analyzer.generate_migration_report())
+
+                # Duration table MUST be present even though tracker had 0 prior records
+                self.assertIn("### Pipeline Execution Duration Summary", report)
+                self.assertIn("Dependency Graph Visualization", report)
+                self.assertIn("Migration Report Total", report)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

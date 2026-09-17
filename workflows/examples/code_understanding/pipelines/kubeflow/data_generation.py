@@ -33,14 +33,36 @@ def prepare_environment_op(git_repo: str,
 
     with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
 
-        prepare_environment(
-            source_path=tmp_source,
-            target_path=tmp_target,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            git_username=git_username,
-            git_token=git_token,
-        )
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
+
+        if dur_tracker:
+            with dur_tracker.measure(stage="Data Generation", step="Prepare Environment"):
+                prepare_environment(
+                    source_path=tmp_source,
+                    target_path=tmp_target,
+                    git_repo=git_repo,
+                    git_branch=git_branch,
+                    git_username=git_username,
+                    git_token=git_token,
+                )
+            dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
+            try:
+                dur_tracker.log_to_mlflow()
+            except Exception:
+                pass
+        else:
+            prepare_environment(
+                source_path=tmp_source,
+                target_path=tmp_target,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                git_username=git_username,
+                git_token=git_token,
+            )
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -64,23 +86,51 @@ def generate_code_and_meta_op(
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
 
         try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+            dur_tracker.load_and_merge(os.path.join(tmp_source, "durations.json"))
+        except Exception:
+            dur_tracker = None
+
+        try:
 
             from pipelines.base.data_generation import load_external_data
 
             external_metadata = load_external_data(tmp_source)
 
-            languages = detect_languages(tmp_source)
+            if dur_tracker:
+                with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
+                    languages = detect_languages(tmp_source)
 
-            for language in languages:
+                with dur_tracker.measure(stage="Data Generation", step="Generate Code Metadata"):
+                    for language in languages:
+                        for config in [False, True]:
+                            generate_code_and_meta(
+                                git_repo=git_repo, git_branch=git_branch,
+                                language=language, source_path=tmp_source, target_path=tmp_target,
+                                config=config, multi_repo=multi_repo,
+                                external_metadata=external_metadata,
+                            )
+            else:
+                languages = detect_languages(tmp_source)
 
-                for config in [False, True]:
+                for language in languages:
 
-                    generate_code_and_meta(
-                        git_repo=git_repo, git_branch=git_branch,
-                        language=language, source_path=tmp_source, target_path=tmp_target,
-                        config=config, multi_repo=multi_repo,
-                        external_metadata=external_metadata,
-                    )
+                    for config in [False, True]:
+
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=tmp_source, target_path=tmp_target,
+                            config=config, multi_repo=multi_repo,
+                            external_metadata=external_metadata,
+                        )
+
+            if dur_tracker:
+                dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
+                try:
+                    dur_tracker.log_to_mlflow()
+                except Exception:
+                    pass
 
         except Exception as e:
 

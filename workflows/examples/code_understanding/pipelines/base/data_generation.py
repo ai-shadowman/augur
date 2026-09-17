@@ -579,6 +579,11 @@ class DataGenerationPipeline:
                         )
 
             if dur_tracker:
+                if target_path:
+                    try:
+                        dur_tracker.save_to_file(os.path.join(target_path, "durations.json"))
+                    except Exception as e:
+                        logging.debug(f"Failed to save duration metrics to {target_path}: {e}")
                 try:
                     dur_tracker.log_to_mlflow()
                 except Exception as e:

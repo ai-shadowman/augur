@@ -2,6 +2,7 @@ import os
 import re
 import ssl
 import math
+import time
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
     _orig_create_default_context = ssl.create_default_context
@@ -31,6 +32,7 @@ class DependencyAnalyzer:
     def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False, token_tracker=None):
 
         self.root_dir = root_dir
+        self.graphrag_dir = root_dir
 
         self.git_slug = git_slug
 
@@ -585,6 +587,21 @@ class DependencyAnalyzer:
 
         answers = ["N/A"] * len(prompts)
 
+        dur_tracker = None
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+            # Load prior pipeline stage durations from graphrag directory (e.g. Data Gen & Indexing)
+            for candidate in [self.graphrag_dir, os.path.join(self.graphrag_dir, "output")]:
+                dur_file = os.path.join(candidate, "durations.json")
+                if os.path.exists(dur_file):
+                    dur_tracker.load_and_merge(dur_file)
+                    break
+        except Exception as e:
+            logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
+
+        report_start_perf = time.perf_counter()
+
         git_urls = self._extract_indexed_git_urls()
 
         git_urls_list = "\n".join("- " + url for url in sorted(git_urls))
@@ -623,9 +640,19 @@ class DependencyAnalyzer:
                 else:
                     use_global = self.multi_repo
 
+                p_start = time.perf_counter()
                 result = await self.query_with_llm(prompt,
                                                    bypass_index=bypass_index,
                                                    use_global=use_global)
+                if dur_tracker:
+                    p_dur = time.perf_counter() - p_start
+                    p_title = meta.get('title') or prompt_path
+                    dur_tracker.record_step(
+                        stage="Analysis",
+                        step=f"Report Prompt {i+1}",
+                        duration=p_dur,
+                        metadata={"title": p_title, "prompt": prompt_path},
+                    )
 
                 result = f"{meta.get('title')}\n\n{result}"
 
@@ -633,9 +660,26 @@ class DependencyAnalyzer:
 
                 report += f"{result}\n\n"
 
+        viz_start = time.perf_counter()
         from utils.visualization_utils import log_interactive_dependency_graph
 
         log_interactive_dependency_graph(self)
+
+        if dur_tracker:
+            dur_tracker.record_step(
+                stage="Analysis",
+                step="Dependency Graph Visualization",
+                duration=time.perf_counter() - viz_start,
+            )
+            dur_tracker.record_step(
+                stage="Analysis",
+                step="Migration Report Total",
+                duration=time.perf_counter() - report_start_perf,
+            )
+            try:
+                dur_tracker.save_to_file(os.path.join(self.graphrag_dir, "durations.json"))
+            except Exception as e:
+                logging.debug(f"Failed to persist durations.json to {self.graphrag_dir}: {e}")
 
         token_summary_section = self.token_tracker.format_markdown_section()
 
