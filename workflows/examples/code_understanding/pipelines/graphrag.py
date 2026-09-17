@@ -61,7 +61,7 @@ def run_graphrag(root_dir: str) -> None:
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
     if dur_tracker:
-        with dur_tracker.measure(stage="Indexing", step="Build GraphRAG Index (Entities & Graph)"):
+        with dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing"):
             results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
     else:
         results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))

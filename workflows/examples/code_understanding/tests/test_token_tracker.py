@@ -488,7 +488,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
 
         tracker = TokenCostTracker()
         with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
-            success = tracker.download_from_mlflow(git_slug="org-repo-main")
+            success = tracker.download_from_mlflow(git_slug="org-repo-main", only_current_run=False)
             self.assertTrue(success)
             self.assertEqual(tracker.get_totals()["total_calls"], 1)
             self.assertEqual(tracker.get_totals()["total_prompt_tokens"], 1000)
@@ -696,7 +696,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                  patch('loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name', return_value=mock_experiment), \
                  patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
 
-                success = tracker.download_from_mlflow(git_slug="my-repo")
+                success = tracker.download_from_mlflow(git_slug="my-repo", only_current_run=False)
                 self.assertTrue(success)
 
                 # Both stages should be present in records
@@ -776,14 +776,14 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
 
             with patch("mlflow.tracking.MlflowClient", return_value=mock_client), \
                  patch("loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name"):
-                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis", only_current_run=False)
 
             # Verify Data Generation was merged once, and run1 (Analysis) was skipped
             self.assertIn("Data Generation Code", tracker.records)
             self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
 
             # Test that calling download_from_mlflow a second time uses _merged_runs cache and does not double-count
-            tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+            tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis", only_current_run=False)
             self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
         finally:
             import shutil
@@ -800,6 +800,110 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
         restored = TokenCostTracker.from_dict(d)
         self.assertEqual(restored.git_slug, "org-repo-main")
         self.assertEqual(restored.git_repo, "https://github.com/org/repo")
+
+    def test_merge_filters_analysis_records_when_current_stage_is_analysis(self):
+        """Verify that merge() omits GraphRAG Local Search and GraphRAG Chat when current_stage='Analysis'."""
+        current_tracker = TokenCostTracker()
+        current_tracker.track_chat(prompt_tokens=500, output_tokens=200)  # GraphRAG Chat in active analysis
+
+        # Past run artifact containing both upstream and old analysis calls
+        past_run_tracker = TokenCostTracker()
+        past_run_tracker.track("GraphRAG Indexing Embeddings (e5-mistral)", calls=10, prompt_tokens=1000, output_tokens=0)
+        past_run_tracker.track_chat(prompt_tokens=5000, output_tokens=2000)  # Old analysis chat
+        past_run_tracker.track_local_search(prompt_tokens=8000, output_tokens=3000)  # Old analysis local search
+
+        current_tracker.merge(past_run_tracker, current_stage="Analysis")
+
+        # Current tracker should contain its OWN chat (1 call, 500 prompt tokens), NOT the past run's chat or local search
+        self.assertEqual(current_tracker.records["GraphRAG Chat (openai/gpt-oss-120b)"]["calls"], 1)
+        self.assertEqual(current_tracker.records["GraphRAG Chat (openai/gpt-oss-120b)"]["prompt_tokens"], 500)
+        self.assertNotIn("GraphRAG Local Search (openai/gpt-oss-120b)", current_tracker.records)
+
+        # But it SHOULD contain the upstream indexing tokens
+        self.assertIn("GraphRAG Indexing Embeddings (e5-mistral)", current_tracker.records)
+        self.assertEqual(current_tracker.records["GraphRAG Indexing Embeddings (e5-mistral)"]["calls"], 10)
+
+    def test_merge_deduplicates_upstream_sources(self):
+        """Verify that merging upstream sources multiple times does not compound token counts."""
+        current_tracker = TokenCostTracker()
+        current_tracker.track_chat(prompt_tokens=100, output_tokens=50)
+
+        upstream_tracker = TokenCostTracker()
+        upstream_tracker.track("Code Understanding (e5-mistral-7b-instruct)", calls=5, prompt_tokens=2500, output_tokens=0)
+
+        # Merge first time
+        current_tracker.merge(upstream_tracker, current_stage="Analysis")
+        self.assertEqual(current_tracker.records["Code Understanding (e5-mistral-7b-instruct)"]["calls"], 5)
+
+        # Merge second time (e.g. from local file and then from MLflow)
+        current_tracker.merge(upstream_tracker, current_stage="Analysis")
+        self.assertEqual(current_tracker.records["Code Understanding (e5-mistral-7b-instruct)"]["calls"], 5)
+        self.assertEqual(current_tracker.records["Code Understanding (e5-mistral-7b-instruct)"]["prompt_tokens"], 2500)
+
+    def test_load_and_merge_file_deduplication(self):
+        """Verify load_and_merge does not load the same file multiple times."""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            tokens_file = os.path.join(temp_dir, "tokens.json")
+            src_tracker = TokenCostTracker()
+            src_tracker.track("Embedding", calls=2, prompt_tokens=200, output_tokens=0)
+            src_tracker.save_to_file(tokens_file)
+
+            tracker = TokenCostTracker()
+            tracker.load_and_merge(tokens_file, current_stage="Analysis")
+            self.assertEqual(tracker.records["Embedding"]["calls"], 2)
+
+            tracker.load_and_merge(tokens_file, current_stage="Analysis")
+            self.assertEqual(tracker.records["Embedding"]["calls"], 2)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+    def test_download_from_mlflow_only_current_run_blocks_cross_run_search(self):
+        """Verify download_from_mlflow with only_current_run=True (default) and no run_id blocks searching other runs."""
+        tracker = TokenCostTracker()
+        with patch('mlflow.tracking.MlflowClient') as mock_client, \
+             patch('loaders.default_asset_loader.DefaultAssetLoader') as mock_loader:
+            success = tracker.download_from_mlflow(git_slug="some-repo")
+            self.assertFalse(success)
+            mock_client.assert_not_called()
+            mock_loader.assert_not_called()
+
+    def test_merge_rejects_different_run_id(self):
+        """Verify merge rejects records from an upstream tracker with a different run_id."""
+        tracker1 = TokenCostTracker(run_id="run-current")
+        tracker1.track("Analysis LLM", calls=1, prompt_tokens=100, output_tokens=50)
+
+        tracker2 = TokenCostTracker(run_id="run-old")
+        tracker2.track("Data Generation Code", calls=2, prompt_tokens=200, output_tokens=0)
+
+        tracker1.merge(tracker2)
+        self.assertNotIn("Data Generation Code", tracker1.records)
+        self.assertEqual(tracker1.get_totals()["total_calls"], 1)
+
+    def test_merge_accepts_same_run_id(self):
+        """Verify merge accepts records from an upstream tracker with matching run_id."""
+        tracker1 = TokenCostTracker(run_id="run-same")
+        tracker2 = TokenCostTracker(run_id="run-same")
+        tracker2.track("Upstream Datagen", calls=2, prompt_tokens=200, output_tokens=0)
+
+        tracker1.merge(tracker2)
+        self.assertIn("Upstream Datagen", tracker1.records)
+        self.assertEqual(tracker1.get_totals()["total_calls"], 2)
+
+    def test_reset_instance_clears_records_and_sources(self):
+        """Verify reset_instance completely clears in-memory records and merge caches."""
+        tracker = TokenCostTracker.get_instance()
+        tracker.track("Test Source", calls=5, prompt_tokens=500, output_tokens=500)
+        self.assertEqual(tracker.get_totals()["total_calls"], 5)
+
+        new_tracker = TokenCostTracker.reset_instance()
+        self.assertEqual(len(new_tracker.records), 0)
+        self.assertEqual(new_tracker.get_totals()["total_calls"], 0)
+        self.assertEqual(len(new_tracker._merged_runs), 0)
+        self.assertEqual(len(new_tracker._merged_upstream_sources), 0)
+        self.assertEqual(len(new_tracker._merged_files), 0)
 
 
 if __name__ == "__main__":

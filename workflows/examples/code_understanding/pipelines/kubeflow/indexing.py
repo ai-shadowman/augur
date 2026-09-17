@@ -45,6 +45,20 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
             multi_repo=multi_repo,
         )
 
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tr = DurationTracker.get_instance()
+            dur_tr.save_to_file(os.path.join(tmp_graphrag, "durations.json"))
+        except Exception as e:
+            logging.debug(f"Failed to persist durations.json to tmp_graphrag: {e}")
+
+        try:
+            from utils.token_tracker import TokenCostTracker
+            tok_tr = TokenCostTracker.get_instance()
+            tok_tr.save_to_file(os.path.join(tmp_graphrag, "tokens.json"))
+        except Exception as e:
+            logging.debug(f"Failed to persist tokens.json to tmp_graphrag: {e}")
+
         result.log_metric("success", 1)
 
     try:

@@ -82,7 +82,7 @@ def prepare_environment(source_path: str,
             with dur_tracker.measure(stage="Data Generation", step="Reset Environment"):
                 reset_environment(source_path, target_path)
 
-            with dur_tracker.measure(stage="Data Generation", step="Clone Repository"):
+            with dur_tracker.measure(stage="Data Generation", step="GitHub Checkout"):
                 clone_from_repo(git_repo, 
                                 source_path, 
                                 branch=git_branch,
@@ -586,6 +586,12 @@ class DataGenerationPipeline:
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         git_slug = generate_git_slug(git_repo, git_branch)
+
+        try:
+            from utils.token_tracker import TokenCostTracker
+            TokenCostTracker.reset_instance()
+        except Exception:
+            pass
 
         try:
             from utils.duration_tracker import DurationTracker

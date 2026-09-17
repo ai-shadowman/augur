@@ -63,6 +63,7 @@ def prepare_environment_op(git_repo: str,
 
         try:
             from utils.token_tracker import TokenCostTracker
+            TokenCostTracker.reset_instance()
             token_tracker = TokenCostTracker.get_instance()
             token_tracker.save_to_file(os.path.join(tmp_source, "tokens.json"))
             token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
@@ -108,13 +109,10 @@ def generate_code_and_meta_op(
         token_tracker = None
         try:
             from utils.token_tracker import TokenCostTracker
+            TokenCostTracker.reset_instance()
             token_tracker = TokenCostTracker.get_instance()
             token_tracker.enable_litellm_callbacks(category="Data Generation")
             token_tracker.enable_openai_tracking(category="Data Generation")
-            try:
-                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
-            except Exception as e:
-                logging.debug(f"MLflow download tokens skipped in generate_code_and_meta_op: {e}")
             tokens_file = os.path.join(tmp_source, "tokens.json")
             if os.path.exists(tokens_file):
                 token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))

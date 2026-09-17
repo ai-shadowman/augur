@@ -49,6 +49,8 @@ class TokenCostTracker:
         embed_prompt_price: Optional[float] = None,
         git_slug: Optional[str] = None,
         git_repo: Optional[str] = None,
+        run_id: Optional[str] = None,
+        only_current_run: bool = True,
     ):
         self.chat_model = chat_model or os.getenv("GRAPHRAG_LLM_ID", "openai/gpt-oss-120b")
         self.embed_model = embed_model or os.getenv("EMBED_LLM_ID", "e5-mistral-7b-instruct")
@@ -68,6 +70,16 @@ class TokenCostTracker:
         self.records: Dict[str, Dict[str, Any]] = {}
         self.git_slug: Optional[str] = git_slug
         self.git_repo: Optional[str] = git_repo
+        self.run_id: Optional[str] = (
+            run_id
+            or os.environ.get("AUGUR_RUN_ID")
+            or os.environ.get("PIPELINE_RUN_ID")
+            or os.environ.get("MLFLOW_RUN_ID")
+        )
+        self.only_current_run: bool = only_current_run
+        self._merged_runs: Set[str] = set()
+        self._merged_upstream_sources: Set[str] = set()
+        self._merged_files: Set[str] = set()
 
         self._register_models_in_litellm()
 
@@ -294,8 +306,14 @@ class TokenCostTracker:
         return f"\n\n### LLM Token Usage & Cost Summary\n\n```\n{self.format_summary()}\n```\n"
 
     def reset(self):
-        """Resets all recorded usage metrics."""
+        """Resets all recorded usage metrics and merge history."""
         self.records.clear()
+        if hasattr(self, "_merged_runs"):
+            self._merged_runs.clear()
+        if hasattr(self, "_merged_upstream_sources"):
+            self._merged_upstream_sources.clear()
+        if hasattr(self, "_merged_files"):
+            self._merged_files.clear()
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes tracker records and config to a dictionary."""
@@ -312,6 +330,8 @@ class TokenCostTracker:
             d["git_slug"] = self.git_slug
         if self.git_repo:
             d["git_repo"] = self.git_repo
+        if getattr(self, "run_id", None):
+            d["run_id"] = self.run_id
         return d
 
     @classmethod
@@ -327,6 +347,7 @@ class TokenCostTracker:
         tracker.records = data.get("records", {})
         tracker.git_slug = data.get("git_slug")
         tracker.git_repo = data.get("git_repo")
+        tracker.run_id = data.get("run_id")
         return tracker
 
     def save_to_file(self, filepath: str):
@@ -344,11 +365,44 @@ class TokenCostTracker:
             data = json.load(f)
         return cls.from_dict(data)
 
-    def merge(self, other: "TokenCostTracker"):
-        """Merges metrics from another TokenCostTracker instance into this one."""
+    def merge(self, other: "TokenCostTracker", current_stage: Optional[str] = None):
+        """Merges metrics from another TokenCostTracker instance into this one.
+        If current_stage is 'Analysis', records belonging to Analysis (e.g. GraphRAG Local Search,
+        GraphRAG Chat) are strictly omitted so previous runs do not compound or duplicate."""
         if not other or not isinstance(other, TokenCostTracker):
             return
+
+        # Enforce run isolation if run_id is known on both
+        if (
+            getattr(self, "only_current_run", True)
+            and getattr(self, "run_id", None)
+            and getattr(other, "run_id", None)
+            and self.run_id != other.run_id
+        ):
+            logging.warning(
+                f"TokenCostTracker: Skipping merge from different run_id '{other.run_id}' "
+                f"(current run_id: '{self.run_id}') to maintain current-run isolation."
+            )
+            return
+
+        if not hasattr(self, "_merged_upstream_sources"):
+            self._merged_upstream_sources = set()
+
+        is_analysis = current_stage and current_stage.lower() == "analysis"
+
         for source, r in other.records.items():
+            s_lower = source.lower()
+            if is_analysis:
+                # Strictly filter out any Analysis-specific records from upstream files/runs
+                if "local search" in s_lower or "chat" in s_lower:
+                    continue
+                if r.get("stage", "").lower() == "analysis" or r.get("category", "").lower() == "analysis":
+                    continue
+                # If an upstream source was already merged, do not add it again
+                if source in self._merged_upstream_sources:
+                    continue
+                self._merged_upstream_sources.add(source)
+
             if source not in self.records:
                 self.records[source] = {
                     "calls": 0,
@@ -363,6 +417,22 @@ class TokenCostTracker:
             rec["output_tokens"] += r.get("output_tokens", 0)
             rec["total_tokens"] += r.get("total_tokens", 0)
             rec["cost"] += r.get("cost", 0.0)
+
+    def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
+        """Loads token records from a JSON file and merges them into this instance."""
+        if not os.path.exists(filepath):
+            return
+        if not hasattr(self, "_merged_files"):
+            self._merged_files = set()
+        abs_p = os.path.abspath(filepath)
+        if abs_p in self._merged_files:
+            return
+        try:
+            other = TokenCostTracker.load_from_file(filepath)
+            self.merge(other, current_stage=current_stage)
+            self._merged_files.add(abs_p)
+        except Exception as e:
+            logging.debug(f"Failed to load and merge tokens from {filepath}: {e}")
 
     def enable_litellm_callbacks(self, category: str = "LiteLLM"):
         """Registers a callback with litellm.success_callback to intercept and track
@@ -628,10 +698,19 @@ class TokenCostTracker:
                 active_run = mlflow.active_run()
                 target_run = run_id or (active_run.info.run_id if active_run else None) or os.environ.get("MLFLOW_RUN_ID")
                 if target_run:
+                    run_tags = {
+                        "category": "telemetry",
+                        "type": "tokens",
+                        "git_slug": str(git_slug or "multi-repo"),
+                    }
+                    if stage:
+                        run_tags["stage"] = str(stage)
                     if active_run and active_run.info.run_id == target_run:
+                        mlflow.set_tags(run_tags)
                         mlflow.log_artifact(temp_file, artifact_path="telemetry")
                     else:
                         with mlflow.start_run(run_id=target_run, nested=bool(active_run)):
+                            mlflow.set_tags(run_tags)
                             mlflow.log_artifact(temp_file, artifact_path="telemetry")
             except Exception as e:
                 logging.debug(f"Failed to log tokens.json directly to MLflow run: {e}")
@@ -679,9 +758,13 @@ class TokenCostTracker:
         run_id: Optional[str] = None,
         multi_repo: bool = False,
         current_stage: Optional[str] = None,
+        only_current_run: bool = True,
     ) -> bool:
         """Downloads and merges token usage records from MLflow.
-        If current_stage is specified, runs tagged with that stage are skipped.
+        If only_current_run is True (default) and no specific run_id or MLFLOW_RUN_ID is given,
+        cross-run searching in MLflow is bypassed to prevent metrics from other runs being merged.
+        If current_stage is specified, runs tagged with that stage are skipped,
+        and only upstream stages (e.g. Data Generation, Indexing for Analysis) are accepted.
         Returns True if records were retrieved and merged, False otherwise."""
         merged_any = False
         if not hasattr(self, "_merged_runs"):
@@ -695,15 +778,34 @@ class TokenCostTracker:
                 local_path = mlflow.artifacts.download_artifacts(
                     run_id=target_run, artifact_path="telemetry/tokens.json"
                 )
-                if local_path and os.path.exists(local_path):
-                    other = TokenCostTracker.load_from_file(local_path)
-                    self.merge(other)
-                    self._merged_runs.add(target_run)
-                    merged_any = True
+                if local_path:
+                    target_file = None
+                    if os.path.isfile(local_path):
+                        target_file = local_path
+                    elif os.path.isdir(local_path):
+                        cand = os.path.join(local_path, "tokens.json")
+                        if os.path.isfile(cand):
+                            target_file = cand
+                    if target_file and os.path.exists(target_file):
+                        self.load_and_merge(target_file, current_stage=current_stage)
+                        self._merged_runs.add(target_run)
+                        merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download tokens.json for run {target_run}: {e}")
 
+        # If tracking only the current run and no specific run_id was provided,
+        # skip searching across historical runs in MLflow to ensure telemetry reflects
+        # only the current run and does not take into account other runs.
+        should_isolate_current_run = only_current_run and getattr(self, "only_current_run", True)
+        if should_isolate_current_run and not target_run:
+            logging.info(
+                "TokenCostTracker: only_current_run is True and no specific run_id provided. "
+                "Skipping cross-run search in MLflow to ensure tokens are strictly for the current run."
+            )
+            return merged_any
+
         # 2. Try searching and aggregating across ALL telemetry runs in MLflow
+        seen_stages = set()
         if git_slug or multi_repo:
             try:
                 import mlflow
@@ -722,33 +824,52 @@ class TokenCostTracker:
                     filter_parts.append("tags.git_slug = 'multi-repo'")
                 filter_string = " AND ".join(filter_parts)
 
-                runs = client.search_runs(
-                    experiment_ids=[experiment.experiment_id],
-                    filter_string=filter_string,
-                    order_by=["attributes.start_time DESC"],
-                )
+                try:
+                    runs = client.search_runs(
+                        experiment_ids=[experiment.experiment_id],
+                        filter_string=filter_string,
+                        order_by=["attributes.start_time DESC"],
+                    )
+                except Exception:
+                    quoted_parts = [
+                        f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
+                        for p in filter_parts
+                    ]
+                    runs = client.search_runs(
+                        experiment_ids=[experiment.experiment_id],
+                        filter_string=" AND ".join(quoted_parts),
+                        order_by=["attributes.start_time DESC"],
+                    )
 
-                seen_stages = set()
+                allowed_stages = None
+                if current_stage and current_stage.lower() == "analysis":
+                    allowed_stages = {"data generation", "indexing"}
+                elif current_stage and current_stage.lower() == "indexing":
+                    allowed_stages = {"data generation"}
+
                 for run in runs:
                     if run.info.run_id in self._merged_runs:
                         continue
                     stage = run.data.tags.get("stage")
                     if current_stage and stage and stage.lower() == current_stage.lower():
                         continue
-                    if current_stage and not stage:
+                    if allowed_stages is not None:
+                        if not stage or stage.lower() not in allowed_stages:
+                            continue
+                    elif current_stage and not stage:
                         continue
+
                     if stage:
                         if stage.lower() in seen_stages:
                             continue
-                        seen_stages.add(stage.lower())
                     else:
                         if "untagged" in seen_stages:
                             continue
-                        seen_stages.add("untagged")
 
                     candidate_subpaths = []
                     if git_slug:
                         candidate_subpaths.append(f"results/telemetry/{git_slug}/tokens.json")
+                        candidate_subpaths.append(f"results/telemetry/{git_slug}")
                     if multi_repo:
                         candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/tokens.json".replace("//", "/"))
                         candidate_subpaths.append("results/telemetry/multi-repo/tokens.json")
@@ -758,26 +879,51 @@ class TokenCostTracker:
                         "tokens.json",
                     ])
 
+                    run_merged = False
                     for subpath in candidate_subpaths:
                         try:
                             downloaded_path = mlflow.artifacts.download_artifacts(
                                 run_id=run.info.run_id,
                                 artifact_path=subpath,
                             )
-                            if downloaded_path and os.path.exists(downloaded_path):
-                                other = TokenCostTracker.load_from_file(downloaded_path)
-                                self.merge(other)
-                                self._merged_runs.add(run.info.run_id)
-                                merged_any = True
-                                break
+                            if downloaded_path:
+                                target_file = None
+                                if os.path.isfile(downloaded_path):
+                                    target_file = downloaded_path
+                                elif os.path.isdir(downloaded_path):
+                                    cand = os.path.join(downloaded_path, "tokens.json")
+                                    if os.path.isfile(cand):
+                                        target_file = cand
+                                if target_file and os.path.exists(target_file):
+                                    self.load_and_merge(target_file, current_stage=current_stage)
+                                    self._merged_runs.add(run.info.run_id)
+                                    merged_any = True
+                                    run_merged = True
+                                    if stage:
+                                        seen_stages.add(stage.lower())
+                                    else:
+                                        seen_stages.add("untagged")
+                                    break
                         except Exception:
                             continue
+                    if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
+                        break
 
             except Exception as e:
                 logging.debug(f"MLflow client multi-run search for tokens.json failed: {e}")
 
-            # Fallback to DefaultAssetLoader if not merged yet
-            if not merged_any:
+            # Fallback to DefaultAssetLoader for missing upstream stages
+            upstream_targets = []
+            if current_stage and current_stage.lower() == "analysis":
+                upstream_targets = ["Data Generation", "Indexing"]
+            elif current_stage and current_stage.lower() == "indexing":
+                upstream_targets = ["Data Generation"]
+            else:
+                upstream_targets = [None]
+
+            for target_stage in upstream_targets:
+                if target_stage and target_stage.lower() in seen_stages:
+                    continue
                 try:
                     from loaders.default_asset_loader import DefaultAssetLoader
                     from loaders.mlflow_asset_loader import MlFlowAssetLoader
@@ -790,32 +936,41 @@ class TokenCostTracker:
                     asset_file = f"{artifact_path}/tokens.json"
                     temp_dir = tempfile.mkdtemp()
                     try:
+                        asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "tokens"}
+                        if target_stage:
+                            asset_tags["stage"] = target_stage
                         content = DefaultAssetLoader().download(
                             asset_file,
                             download_dir=temp_dir,
                             experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                            asset_tags={"git_slug": str(git_slug or "multi-repo"), "type": "tokens"},
+                            asset_tags=asset_tags,
                         )
+                        loaded_from_content = False
                         if isinstance(content, dict) and "records" in content:
                             other = TokenCostTracker.from_dict(content)
-                            self.merge(other)
+                            self.merge(other, current_stage=current_stage)
                             merged_any = True
+                            loaded_from_content = True
                         elif isinstance(content, str):
                             data = json.loads(content)
                             if isinstance(data, dict) and "records" in data:
                                 other = TokenCostTracker.from_dict(data)
-                                self.merge(other)
+                                self.merge(other, current_stage=current_stage)
                                 merged_any = True
-                        downloaded_file = os.path.join(temp_dir, "tokens.json")
-                        if os.path.exists(downloaded_file):
-                            other = TokenCostTracker.load_from_file(downloaded_file)
-                            self.merge(other)
-                            merged_any = True
+                                loaded_from_content = True
+
+                        if not loaded_from_content:
+                            downloaded_file = os.path.join(temp_dir, "tokens.json")
+                            if os.path.exists(downloaded_file):
+                                self.load_and_merge(downloaded_file, current_stage=current_stage)
+                                merged_any = True
+                        if target_stage:
+                            seen_stages.add(target_stage.lower())
                     finally:
                         import shutil
                         shutil.rmtree(temp_dir, ignore_errors=True)
                 except Exception as e:
-                    logging.debug(f"Failed to download tokens.json via DefaultAssetLoader: {e}")
+                    logging.debug(f"Failed to download tokens.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
 

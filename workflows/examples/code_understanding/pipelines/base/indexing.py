@@ -71,10 +71,6 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     git_slug = loaded_tokens.git_slug
                 if not git_repo and loaded_tokens.git_repo:
                     git_repo = loaded_tokens.git_repo
-            try:
-                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
-            except Exception as e:
-                logging.debug(f"Failed to download tokens from MLflow in indexing: {e}")
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in indexing: {e}")
 

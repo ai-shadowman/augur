@@ -641,15 +641,9 @@ class DependencyAnalyzer:
                     os.path.dirname(self.graphrag_dir),
                 ], "tokens.json")
                 if tokens_file:
-                    from utils.token_tracker import TokenCostTracker
-                    loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
-                    self.token_tracker.merge(loaded_tokens)
-                    if not self.git_slug and loaded_tokens.git_slug:
-                        self.git_slug = loaded_tokens.git_slug
-                try:
-                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
-                except Exception as e:
-                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
+                    self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
+                    if not self.git_slug and self.token_tracker.git_slug:
+                        self.git_slug = self.token_tracker.git_slug
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 

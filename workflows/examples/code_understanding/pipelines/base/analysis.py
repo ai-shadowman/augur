@@ -53,18 +53,12 @@ class AnalysisPipeline:
             if hasattr(analyzer, "token_tracker") and analyzer.token_tracker:
                 tokens_file = find_telemetry_file([graphrag_source_path, os.path.dirname(graphrag_source_path)], "tokens.json")
                 if tokens_file:
-                    from utils.token_tracker import TokenCostTracker
-                    loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
-                    analyzer.token_tracker.merge(loaded_tokens)
-                    if not git_slug and loaded_tokens.git_slug:
-                        git_slug = loaded_tokens.git_slug
+                    analyzer.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
+                    if not git_slug and analyzer.token_tracker.git_slug:
+                        git_slug = analyzer.token_tracker.git_slug
                         analyzer.git_slug = git_slug
-                    if not git_repo and loaded_tokens.git_repo:
-                        git_repo = loaded_tokens.git_repo
-                try:
-                    analyzer.token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
-                except Exception as e:
-                    logging.debug(f"Failed to download tokens from MLflow in analysis: {e}")
+                    if not git_repo and analyzer.token_tracker.git_repo:
+                        git_repo = analyzer.token_tracker.git_repo
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 

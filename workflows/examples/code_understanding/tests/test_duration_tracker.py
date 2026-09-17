@@ -667,6 +667,51 @@ class TestDurationTracker(unittest.TestCase):
         self.assertEqual(restored.git_slug, "org-repo-main")
         self.assertEqual(restored.git_repo, "https://github.com/org/repo")
 
+    def test_merge_and_load_from_dict_with_current_stage(self):
+        """Verify load_from_dict and merge filter out records from current_stage."""
+        data = {
+            "records": [
+                {"stage": "Data Generation", "step": "GitHub Checkout", "duration": 5.2, "status": "success"},
+                {"stage": "Indexing", "step": "GraphRAG Indexing", "duration": 42.0, "status": "success"},
+                {"stage": "Analysis", "step": "Old Analysis Prompt", "duration": 18.0, "status": "success"},
+            ]
+        }
+        tracker = DurationTracker()
+        tracker.load_from_dict(data, current_stage="Analysis")
+        stages = [r["stage"] for r in tracker.records]
+        self.assertIn("Data Generation", stages)
+        self.assertIn("Indexing", stages)
+        self.assertNotIn("Analysis", stages)
+
+        # Active analysis step
+        tracker.record_step("Analysis", "Prompt 1: Dependency Graph", 20.0)
+
+        # Merge another tracker with old Analysis
+        other = DurationTracker.from_dict(data)
+        tracker.merge(other, current_stage="Analysis")
+
+        # Confirm old Analysis step was not added
+        steps = [r["step"] for r in tracker.records]
+        self.assertIn("GitHub Checkout", steps)
+        self.assertIn("GraphRAG Indexing", steps)
+        self.assertIn("Prompt 1: Dependency Graph", steps)
+        self.assertNotIn("Old Analysis Prompt", steps)
+
+    def test_github_checkout_and_graphrag_indexing_substeps(self):
+        """Verify GitHub Checkout and GraphRAG Indexing format nicely in duration summary."""
+        tracker = DurationTracker()
+        tracker.record_step("Data Generation", "GitHub Checkout", 12.3)
+        tracker.record_step("Indexing", "GraphRAG Indexing", 95.4)
+        tracker.record_step("Analysis", "Prompt 1: Dependency Graph", 21.5)
+
+        summary = tracker.format_summary()
+        self.assertIn("GitHub Checkout", summary)
+        self.assertIn("GraphRAG Indexing", summary)
+        self.assertIn("Prompt 1: Dependency Graph", summary)
+        self.assertIn("Data Generation", summary)
+        self.assertIn("Indexing", summary)
+        self.assertIn("Analysis", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

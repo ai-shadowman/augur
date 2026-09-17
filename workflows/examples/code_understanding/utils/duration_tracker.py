@@ -312,10 +312,19 @@ class DurationTracker:
                 active_run = mlflow.active_run()
                 target_run = run_id or (active_run.info.run_id if active_run else None) or os.environ.get("MLFLOW_RUN_ID")
                 if target_run:
+                    run_tags = {
+                        "category": "telemetry",
+                        "type": "durations",
+                        "git_slug": str(git_slug or "multi-repo"),
+                    }
+                    if stage:
+                        run_tags["stage"] = str(stage)
                     if active_run and active_run.info.run_id == target_run:
+                        mlflow.set_tags(run_tags)
                         mlflow.log_artifact(temp_file, artifact_path="telemetry")
                     else:
                         with mlflow.start_run(run_id=target_run, nested=bool(active_run)):
+                            mlflow.set_tags(run_tags)
                             mlflow.log_artifact(temp_file, artifact_path="telemetry")
             except Exception as e:
                 logging.debug(f"Failed to log durations.json directly to MLflow run: {e}")
@@ -365,7 +374,8 @@ class DurationTracker:
         current_stage: Optional[str] = None,
     ) -> bool:
         """Downloads and merges duration records from MLflow.
-        If current_stage is specified, runs and records belonging to current_stage are skipped.
+        If current_stage is specified, runs and records belonging to current_stage are skipped,
+        and only upstream stages (e.g. Data Generation, Indexing for Analysis) are accepted.
         Returns True if records were retrieved and merged, False otherwise."""
         merged_any = False
         if not hasattr(self, "_merged_runs"):
@@ -379,14 +389,23 @@ class DurationTracker:
                 local_path = mlflow.artifacts.download_artifacts(
                     run_id=target_run, artifact_path="telemetry/durations.json"
                 )
-                if local_path and os.path.exists(local_path):
-                    self.load_and_merge(local_path, current_stage=current_stage)
-                    self._merged_runs.add(target_run)
-                    merged_any = True
+                if local_path:
+                    target_file = None
+                    if os.path.isfile(local_path):
+                        target_file = local_path
+                    elif os.path.isdir(local_path):
+                        cand = os.path.join(local_path, "durations.json")
+                        if os.path.isfile(cand):
+                            target_file = cand
+                    if target_file and os.path.exists(target_file):
+                        self.load_and_merge(target_file, current_stage=current_stage)
+                        self._merged_runs.add(target_run)
+                        merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download durations.json for run {target_run}: {e}")
 
         # 2. Try searching and aggregating across ALL telemetry runs in MLflow
+        seen_stages = set()
         if git_slug or multi_repo:
             try:
                 import mlflow
@@ -405,33 +424,53 @@ class DurationTracker:
                     filter_parts.append("tags.git_slug = 'multi-repo'")
                 filter_string = " AND ".join(filter_parts)
 
-                runs = client.search_runs(
-                    experiment_ids=[experiment.experiment_id],
-                    filter_string=filter_string,
-                    order_by=["attributes.start_time DESC"],
-                )
+                try:
+                    runs = client.search_runs(
+                        experiment_ids=[experiment.experiment_id],
+                        filter_string=filter_string,
+                        order_by=["attributes.start_time DESC"],
+                    )
+                except Exception:
+                    # Fallback to quoted tag keys in filter
+                    quoted_parts = [
+                        f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
+                        for p in filter_parts
+                    ]
+                    runs = client.search_runs(
+                        experiment_ids=[experiment.experiment_id],
+                        filter_string=" AND ".join(quoted_parts),
+                        order_by=["attributes.start_time DESC"],
+                    )
 
-                seen_stages = set()
+                allowed_stages = None
+                if current_stage and current_stage.lower() == "analysis":
+                    allowed_stages = {"data generation", "indexing"}
+                elif current_stage and current_stage.lower() == "indexing":
+                    allowed_stages = {"data generation"}
+
                 for run in runs:
                     if run.info.run_id in self._merged_runs:
                         continue
                     stage = run.data.tags.get("stage")
                     if current_stage and stage and stage.lower() == current_stage.lower():
                         continue
-                    if current_stage and not stage:
+                    if allowed_stages is not None:
+                        if not stage or stage.lower() not in allowed_stages:
+                            continue
+                    elif current_stage and not stage:
                         continue
+
                     if stage:
                         if stage.lower() in seen_stages:
                             continue
-                        seen_stages.add(stage.lower())
                     else:
                         if "untagged" in seen_stages:
                             continue
-                        seen_stages.add("untagged")
 
                     candidate_subpaths = []
                     if git_slug:
                         candidate_subpaths.append(f"results/telemetry/{git_slug}/durations.json")
+                        candidate_subpaths.append(f"results/telemetry/{git_slug}")
                     if multi_repo:
                         candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/durations.json".replace("//", "/"))
                         candidate_subpaths.append("results/telemetry/multi-repo/durations.json")
@@ -441,25 +480,51 @@ class DurationTracker:
                         "durations.json",
                     ])
 
+                    run_merged = False
                     for subpath in candidate_subpaths:
                         try:
                             downloaded_path = mlflow.artifacts.download_artifacts(
                                 run_id=run.info.run_id,
                                 artifact_path=subpath,
                             )
-                            if downloaded_path and os.path.exists(downloaded_path):
-                                self.load_and_merge(downloaded_path, current_stage=current_stage)
-                                self._merged_runs.add(run.info.run_id)
-                                merged_any = True
-                                break
+                            if downloaded_path:
+                                target_file = None
+                                if os.path.isfile(downloaded_path):
+                                    target_file = downloaded_path
+                                elif os.path.isdir(downloaded_path):
+                                    cand = os.path.join(downloaded_path, "durations.json")
+                                    if os.path.isfile(cand):
+                                        target_file = cand
+                                if target_file and os.path.exists(target_file):
+                                    self.load_and_merge(target_file, current_stage=current_stage)
+                                    self._merged_runs.add(run.info.run_id)
+                                    merged_any = True
+                                    run_merged = True
+                                    if stage:
+                                        seen_stages.add(stage.lower())
+                                    else:
+                                        seen_stages.add("untagged")
+                                    break
                         except Exception:
                             continue
+                    if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
+                        break
 
             except Exception as e:
                 logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
 
-            # Fallback to DefaultAssetLoader if not merged yet
-            if not merged_any:
+            # Fallback to DefaultAssetLoader for missing upstream stages
+            upstream_targets = []
+            if current_stage and current_stage.lower() == "analysis":
+                upstream_targets = ["Data Generation", "Indexing"]
+            elif current_stage and current_stage.lower() == "indexing":
+                upstream_targets = ["Data Generation"]
+            else:
+                upstream_targets = [None]
+
+            for target_stage in upstream_targets:
+                if target_stage and target_stage.lower() in seen_stages:
+                    continue
                 try:
                     from loaders.default_asset_loader import DefaultAssetLoader
                     from loaders.mlflow_asset_loader import MlFlowAssetLoader
@@ -472,31 +537,41 @@ class DurationTracker:
                     asset_file = f"{artifact_path}/durations.json"
                     temp_dir = tempfile.mkdtemp()
                     try:
+                        asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "durations"}
+                        if target_stage:
+                            asset_tags["stage"] = target_stage
                         content = DefaultAssetLoader().download(
                             asset_file,
                             download_dir=temp_dir,
                             experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                            asset_tags={"git_slug": str(git_slug or "multi-repo"), "type": "durations"},
+                            asset_tags=asset_tags,
                         )
+                        loaded_from_content = False
                         if isinstance(content, dict) and "records" in content:
                             other = DurationTracker.from_dict(content)
                             self.merge(other, current_stage=current_stage)
                             merged_any = True
+                            loaded_from_content = True
                         elif isinstance(content, str):
                             data = json.loads(content)
                             if isinstance(data, dict) and "records" in data:
                                 other = DurationTracker.from_dict(data)
                                 self.merge(other, current_stage=current_stage)
                                 merged_any = True
-                        downloaded_file = os.path.join(temp_dir, "durations.json")
-                        if os.path.exists(downloaded_file):
-                            self.load_and_merge(downloaded_file, current_stage=current_stage)
-                            merged_any = True
+                                loaded_from_content = True
+
+                        if not loaded_from_content:
+                            downloaded_file = os.path.join(temp_dir, "durations.json")
+                            if os.path.exists(downloaded_file):
+                                self.load_and_merge(downloaded_file, current_stage=current_stage)
+                                merged_any = True
+                        if target_stage:
+                            seen_stages.add(target_stage.lower())
                     finally:
                         import shutil
                         shutil.rmtree(temp_dir, ignore_errors=True)
                 except Exception as e:
-                    logging.debug(f"Failed to download durations.json via DefaultAssetLoader: {e}")
+                    logging.debug(f"Failed to download durations.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
 
@@ -519,9 +594,15 @@ class DurationTracker:
         tracker.records = list(data.get("records", []))
         return tracker
 
-    def load_from_dict(self, data: Dict[str, Any]):
-        """Populates records from dictionary into this instance."""
-        self.records = list(data.get("records", []))
+    def load_from_dict(self, data: Dict[str, Any], current_stage: Optional[str] = None):
+        """Populates records from dictionary into this instance.
+        If current_stage is specified, records belonging to that stage are excluded."""
+        recs = data.get("records", [])
+        if current_stage:
+            stage_low = current_stage.lower()
+            self.records = [r for r in recs if r.get("stage", "").lower() != stage_low]
+        else:
+            self.records = list(recs)
         if "git_slug" in data and not self.git_slug:
             self.git_slug = data["git_slug"]
         if "git_repo" in data and not self.git_repo:
@@ -534,22 +615,28 @@ class DurationTracker:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
 
-    def load_from_file(self, filepath: str):
+    def load_from_file(self, filepath: str, current_stage: Optional[str] = None):
         """Loads duration records from a JSON file, replacing current state."""
         if not os.path.exists(filepath):
             return
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-        self.load_from_dict(data)
+        self.load_from_dict(data, current_stage=current_stage)
 
     def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
         """Loads duration records from a JSON file and merges them into this instance."""
         if not os.path.exists(filepath):
             return
+        if not hasattr(self, "_merged_files"):
+            self._merged_files = set()
+        abs_p = os.path.abspath(filepath)
+        if abs_p in self._merged_files:
+            return
         try:
             other = DurationTracker()
-            other.load_from_file(filepath)
+            other.load_from_file(filepath, current_stage=current_stage)
             self.merge(other, current_stage=current_stage)
+            self._merged_files.add(abs_p)
         except Exception as e:
             logging.debug(f"Failed to load and merge durations from {filepath}: {e}")
 
@@ -559,8 +646,9 @@ class DurationTracker:
         if not other:
             return
         existing_indices = {(r.get("stage"), r.get("step")): i for i, r in enumerate(self.records)}
+        stage_low = current_stage.lower() if current_stage else None
         for rec in other.records:
-            if current_stage and rec.get("stage") == current_stage:
+            if stage_low and rec.get("stage", "").lower() == stage_low:
                 continue
             key = (rec.get("stage"), rec.get("step"))
             if key not in existing_indices:
