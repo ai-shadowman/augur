@@ -23,7 +23,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         logging.info(
             f"MlFlowCustomTelemetry: default experiment resolved to '{self._DEFAULT_EXPERIMENT_NAME}'")
 
-    def track(self, category: str = "GraphRAG"):
+    def track(self):
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
         logging.debug(f"MlFlowCustomTelemetry.track() called. MLFLOW_TRACKING_URI={tracking_uri}")
@@ -39,17 +39,5 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         except Exception as e:
             logging.error(f"mlflow.openai.autolog() failed: {e}")
 
-        # Register MLflow in LiteLLM callbacks without clobbering existing callbacks
-        if not hasattr(litellm, "callbacks") or not isinstance(litellm.callbacks, list):
-            litellm.callbacks = []
-        if "mlflow" not in litellm.callbacks:
-            litellm.callbacks.append("mlflow")
+        litellm.callbacks = ["mlflow"]
 
-        # Connect TokenCostTracker callback so token counts are intercepted for migration_report.md
-        try:
-            from utils.token_tracker import TokenCostTracker
-            tracker = TokenCostTracker.get_instance()
-            tracker.enable_litellm_callbacks(category=category)
-            logging.debug("TokenCostTracker callback registered with LiteLLM")
-        except Exception as e:
-            logging.debug(f"Could not register TokenCostTracker callback: {e}")

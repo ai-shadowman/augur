@@ -31,6 +31,7 @@ def run_graphrag(root_dir: str) -> None:
     from graphrag.config.load_config import load_config
     import graphrag.api as graphrag_api
 
+    logging.info("Starting Graphic Rag Indexing")
     try:
         from utils.duration_tracker import DurationTracker
         dur_tracker = DurationTracker.get_instance()
