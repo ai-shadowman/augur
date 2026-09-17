@@ -395,6 +395,148 @@ class TokenCostTracker:
                 litellm.success_callback.remove(self._litellm_callback)
         self._litellm_callback = None
 
+    def enable_openai_tracking(self, category: str = "GraphRAG Indexing"):
+        """Intercepts OpenAI chat completions and embeddings calls when direct OpenAI client
+        is used (e.g. by GraphRAG indexing) so token usage is captured."""
+        try:
+            import openai
+        except ImportError:
+            logging.debug("OpenAI package not available; skipping direct OpenAI tracking.")
+            return
+
+        if getattr(self, "_openai_tracking_enabled", False):
+            return
+
+        try:
+            from openai.resources.chat import completions as chat_mod
+            from openai.resources import embeddings as embed_mod
+        except Exception as e:
+            logging.debug(f"Unable to access openai resource modules: {e}")
+            return
+
+        tracker_self = self
+
+        # 1. Patch AsyncCompletions.create
+        if hasattr(chat_mod, "AsyncCompletions") and hasattr(chat_mod.AsyncCompletions, "create"):
+            self._orig_async_chat = chat_mod.AsyncCompletions.create
+
+            async def wrapped_async_chat(*args, **kwargs):
+                resp = await tracker_self._orig_async_chat(*args, **kwargs)
+                try:
+                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
+                    usage = getattr(resp, "usage", None)
+                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                    source = f"{category} ({model})"
+                    tracker_self.track(
+                        source=source,
+                        calls=1,
+                        prompt_tokens=p_tokens,
+                        output_tokens=o_tokens,
+                        model=model,
+                    )
+                except Exception as e:
+                    logging.debug(f"Error in openai tracking callback: {e}")
+                return resp
+
+            chat_mod.AsyncCompletions.create = wrapped_async_chat
+
+        # 2. Patch Completions.create (sync)
+        if hasattr(chat_mod, "Completions") and hasattr(chat_mod.Completions, "create"):
+            self._orig_sync_chat = chat_mod.Completions.create
+
+            def wrapped_sync_chat(*args, **kwargs):
+                resp = tracker_self._orig_sync_chat(*args, **kwargs)
+                try:
+                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
+                    usage = getattr(resp, "usage", None)
+                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                    source = f"{category} ({model})"
+                    tracker_self.track(
+                        source=source,
+                        calls=1,
+                        prompt_tokens=p_tokens,
+                        output_tokens=o_tokens,
+                        model=model,
+                    )
+                except Exception as e:
+                    logging.debug(f"Error in openai sync tracking callback: {e}")
+                return resp
+
+            chat_mod.Completions.create = wrapped_sync_chat
+
+        # 3. Patch AsyncEmbeddings.create
+        if hasattr(embed_mod, "AsyncEmbeddings") and hasattr(embed_mod.AsyncEmbeddings, "create"):
+            self._orig_async_embed = embed_mod.AsyncEmbeddings.create
+
+            async def wrapped_async_embed(*args, **kwargs):
+                resp = await tracker_self._orig_async_embed(*args, **kwargs)
+                try:
+                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
+                    usage = getattr(resp, "usage", None)
+                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
+                    source = f"{category} Embeddings ({model})"
+                    tracker_self.track(
+                        source=source,
+                        calls=1,
+                        prompt_tokens=p_tokens,
+                        output_tokens=0,
+                        model=model,
+                    )
+                except Exception as e:
+                    logging.debug(f"Error in openai embed tracking callback: {e}")
+                return resp
+
+            embed_mod.AsyncEmbeddings.create = wrapped_async_embed
+
+        # 4. Patch Embeddings.create (sync)
+        if hasattr(embed_mod, "Embeddings") and hasattr(embed_mod.Embeddings, "create"):
+            self._orig_sync_embed = embed_mod.Embeddings.create
+
+            def wrapped_sync_embed(*args, **kwargs):
+                resp = tracker_self._orig_sync_embed(*args, **kwargs)
+                try:
+                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
+                    usage = getattr(resp, "usage", None)
+                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
+                    source = f"{category} Embeddings ({model})"
+                    tracker_self.track(
+                        source=source,
+                        calls=1,
+                        prompt_tokens=p_tokens,
+                        output_tokens=0,
+                        model=model,
+                    )
+                except Exception as e:
+                    logging.debug(f"Error in openai sync embed tracking callback: {e}")
+                return resp
+
+            embed_mod.Embeddings.create = wrapped_sync_embed
+
+        self._openai_tracking_enabled = True
+        logging.debug(f"TokenCostTracker: OpenAI tracking enabled for category '{category}'")
+
+    def disable_openai_tracking(self):
+        """Restores original unpatched OpenAI methods if patched."""
+        if not getattr(self, "_openai_tracking_enabled", False):
+            return
+        try:
+            from openai.resources.chat import completions as chat_mod
+            from openai.resources import embeddings as embed_mod
+
+            if hasattr(self, "_orig_async_chat"):
+                chat_mod.AsyncCompletions.create = self._orig_async_chat
+            if hasattr(self, "_orig_sync_chat"):
+                chat_mod.Completions.create = self._orig_sync_chat
+            if hasattr(self, "_orig_async_embed"):
+                embed_mod.AsyncEmbeddings.create = self._orig_async_embed
+            if hasattr(self, "_orig_sync_embed"):
+                embed_mod.Embeddings.create = self._orig_sync_embed
+        except Exception:
+            pass
+        self._openai_tracking_enabled = False
+
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs aggregated token counts and costs to active MLflow run."""
         try:
@@ -477,13 +619,13 @@ class TokenCostTracker:
                         multi_repo=multi_repo,
                     )
                     tags = {
-                        "git_slug": git_slug or "multi-repo",
+                        "git_slug": str(git_slug or "multi-repo"),
                         "category": "telemetry",
                         "type": "tokens",
-                        "multi_repo": multi_repo,
+                        "multi_repo": str(multi_repo),
                     }
                     if stage:
-                        tags["stage"] = stage
+                        tags["stage"] = str(stage)
                     DefaultAssetLoader().log_results(
                         temp_file,
                         artifact_path=artifact_path,
@@ -503,7 +645,9 @@ class TokenCostTracker:
     ) -> bool:
         """Downloads and merges token usage records from MLflow.
         Returns True if records were retrieved and merged, False otherwise."""
-        # 1. Try downloading via run_id
+        merged_any = False
+
+        # 1. Try downloading via run_id or MLFLOW_RUN_ID
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
         if target_run:
             try:
@@ -514,50 +658,96 @@ class TokenCostTracker:
                 if local_path and os.path.exists(local_path):
                     other = TokenCostTracker.load_from_file(local_path)
                     self.merge(other)
-                    return True
+                    merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download tokens.json for run {target_run}: {e}")
 
-        # 2. Try downloading via DefaultAssetLoader / MLflow tag search
+        # 2. Try searching and aggregating across ALL telemetry runs in MLflow
         if git_slug or multi_repo:
             try:
-                from loaders.default_asset_loader import DefaultAssetLoader
+                import mlflow
+                from mlflow.tracking import MlflowClient
                 from loaders.mlflow_asset_loader import MlFlowAssetLoader
 
-                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
-                    git_slug=git_slug,
-                    multi_repo=multi_repo,
+                client = MlflowClient()
+                experiment = MlFlowAssetLoader().get_or_create_experiment_by_name(
+                    client, MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
                 )
-                asset_file = f"{artifact_path}/tokens.json"
-                temp_dir = tempfile.mkdtemp()
-                try:
-                    content = DefaultAssetLoader().download(
-                        asset_file,
-                        download_dir=temp_dir,
-                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                        asset_tags={"git_slug": git_slug or "multi-repo", "type": "tokens"},
-                    )
-                    if isinstance(content, dict) and "records" in content:
-                        other = TokenCostTracker.from_dict(content)
-                        self.merge(other)
-                        return True
-                    elif isinstance(content, str):
-                        data = json.loads(content)
-                        if isinstance(data, dict) and "records" in data:
-                            other = TokenCostTracker.from_dict(data)
-                            self.merge(other)
-                            return True
-                    downloaded_file = os.path.join(temp_dir, "tokens.json")
-                    if os.path.exists(downloaded_file):
-                        other = TokenCostTracker.load_from_file(downloaded_file)
-                        self.merge(other)
-                        return True
-                finally:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                logging.debug(f"Failed to download tokens.json via DefaultAssetLoader: {e}")
 
-        return False
+                filter_parts = ["tags.category = 'telemetry'", "tags.type = 'tokens'"]
+                if git_slug:
+                    filter_parts.append(f"tags.git_slug = '{git_slug}'")
+                elif multi_repo:
+                    filter_parts.append("tags.git_slug = 'multi-repo'")
+                filter_string = " AND ".join(filter_parts)
+
+                runs = client.search_runs(
+                    experiment_ids=[experiment.experiment_id],
+                    filter_string=filter_string,
+                    order_by=["attributes.start_time DESC"],
+                )
+
+                for run in runs:
+                    try:
+                        artifact_subpath = (
+                            f"results/telemetry/{git_slug}/tokens.json"
+                            if git_slug
+                            else "results/telemetry/tokens.json"
+                        )
+                        downloaded_path = mlflow.artifacts.download_artifacts(
+                            run_id=run.info.run_id,
+                            artifact_path=artifact_subpath,
+                        )
+                        if downloaded_path and os.path.exists(downloaded_path):
+                            other = TokenCostTracker.load_from_file(downloaded_path)
+                            self.merge(other)
+                            merged_any = True
+                    except Exception as run_err:
+                        logging.debug(f"Failed to download tokens artifact from run {run.info.run_id}: {run_err}")
+
+            except Exception as e:
+                logging.debug(f"MLflow client multi-run search for tokens.json failed: {e}")
+
+            # Fallback to DefaultAssetLoader if not merged yet
+            if not merged_any:
+                try:
+                    from loaders.default_asset_loader import DefaultAssetLoader
+                    from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    )
+                    asset_file = f"{artifact_path}/tokens.json"
+                    temp_dir = tempfile.mkdtemp()
+                    try:
+                        content = DefaultAssetLoader().download(
+                            asset_file,
+                            download_dir=temp_dir,
+                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                            asset_tags={"git_slug": str(git_slug or "multi-repo"), "type": "tokens"},
+                        )
+                        if isinstance(content, dict) and "records" in content:
+                            other = TokenCostTracker.from_dict(content)
+                            self.merge(other)
+                            merged_any = True
+                        elif isinstance(content, str):
+                            data = json.loads(content)
+                            if isinstance(data, dict) and "records" in data:
+                                other = TokenCostTracker.from_dict(data)
+                                self.merge(other)
+                                merged_any = True
+                        downloaded_file = os.path.join(temp_dir, "tokens.json")
+                        if os.path.exists(downloaded_file):
+                            other = TokenCostTracker.load_from_file(downloaded_file)
+                            self.merge(other)
+                            merged_any = True
+                    finally:
+                        import shutil
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception as e:
+                    logging.debug(f"Failed to download tokens.json via DefaultAssetLoader: {e}")
+
+        return merged_any
 

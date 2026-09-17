@@ -591,9 +591,17 @@ class DependencyAnalyzer:
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
-            dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+            try:
+                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+            except Exception as e:
+                logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
             # Load prior pipeline stage durations from graphrag directory (e.g. Data Gen & Indexing)
-            for candidate in [self.graphrag_dir, os.path.join(self.graphrag_dir, "output")]:
+            for candidate in [
+                self.graphrag_dir,
+                os.path.join(self.graphrag_dir, "output"),
+                os.path.join(self.graphrag_dir, "input"),
+                os.path.dirname(self.graphrag_dir),
+            ]:
                 dur_file = os.path.join(candidate, "durations.json")
                 if os.path.exists(dur_file):
                     dur_tracker.load_and_merge(dur_file)
@@ -603,8 +611,16 @@ class DependencyAnalyzer:
 
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
-                self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
-                for candidate in [self.graphrag_dir, os.path.join(self.graphrag_dir, "output")]:
+                try:
+                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+                except Exception as e:
+                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
+                for candidate in [
+                    self.graphrag_dir,
+                    os.path.join(self.graphrag_dir, "output"),
+                    os.path.join(self.graphrag_dir, "input"),
+                    os.path.dirname(self.graphrag_dir),
+                ]:
                     tokens_file = os.path.join(candidate, "tokens.json")
                     if os.path.exists(tokens_file):
                         from utils.token_tracker import TokenCostTracker

@@ -37,6 +37,14 @@ def run_graphrag(root_dir: str) -> None:
     except Exception:
         dur_tracker = None
 
+    try:
+        from utils.token_tracker import TokenCostTracker
+        token_tracker = TokenCostTracker.get_instance()
+        token_tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
+        token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
+    except Exception as e:
+        log.debug(f"Failed to enable token tracking in run_graphrag: {e}")
+
     root_path = Path(root_dir)
 
     log.info("Initializing GraphRAG index...")

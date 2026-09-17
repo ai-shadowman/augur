@@ -449,6 +449,110 @@ class TestDurationTracker(unittest.TestCase):
         self.tracker.log_to_mlflow(run_id="run-child")
         mlflow_mock.start_run.assert_called_with(run_id="run-child", nested=True)
 
+    def test_mlflow_multi_run_durations_aggregation(self):
+        """Verify that download_from_mlflow searches runs across stages and merges records from all runs."""
+        tracker = DurationTracker()
+
+        run1 = MagicMock()
+        run1.info.run_id = "run-data-gen"
+        run2 = MagicMock()
+        run2.info.run_id = "run-indexing"
+
+        mock_experiment = MagicMock()
+        mock_experiment.experiment_id = "exp-123"
+
+        mock_client = MagicMock()
+        mock_client.search_runs.return_value = [run1, run2]
+
+        data_gen_tracker = DurationTracker()
+        data_gen_tracker.record_step("Data Generation", "Clone Repository", 4.5)
+        data_gen_tracker.record_step("Data Generation", "Detect Languages", 1.2)
+
+        indexing_tracker = DurationTracker()
+        indexing_tracker.record_step("Indexing", "Build GraphRAG Index", 120.0)
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            file1 = os.path.join(temp_dir, "durations1.json")
+            file2 = os.path.join(temp_dir, "durations2.json")
+            data_gen_tracker.save_to_file(file1)
+            indexing_tracker.save_to_file(file2)
+
+            def mock_download(run_id, artifact_path):
+                if run_id == "run-data-gen":
+                    return file1
+                elif run_id == "run-indexing":
+                    return file2
+                return None
+
+            mlflow_mock = sys.modules["mlflow"]
+            with patch('mlflow.tracking.MlflowClient', return_value=mock_client), \
+                 patch('loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name', return_value=mock_experiment), \
+                 patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
+
+                success = tracker.download_from_mlflow(git_slug="my-repo")
+                self.assertTrue(success)
+
+                steps = [r["step"] for r in tracker.records]
+                self.assertIn("Clone Repository", steps)
+                self.assertIn("Detect Languages", steps)
+                self.assertIn("Build GraphRAG Index", steps)
+                self.assertEqual(len(tracker.records), 3)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_generate_migration_report_candidate_path_discovery(self):
+        """Verify that generate_migration_report discovers durations.json and tokens.json in input/ directory."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+        from utils.token_tracker import TokenCostTracker
+
+        with tempfile.TemporaryDirectory() as temp_graphrag_dir:
+            input_dir = os.path.join(temp_graphrag_dir, "input")
+            os.makedirs(input_dir, exist_ok=True)
+
+            dur_file = os.path.join(input_dir, "durations.json")
+            tok_file = os.path.join(input_dir, "tokens.json")
+
+            prior_dur = DurationTracker()
+            prior_dur.record_step("Data Generation", "Reset Environment", 3.0)
+            prior_dur.record_step("Data Generation", "Clone Repository", 8.0)
+            prior_dur.save_to_file(dur_file)
+
+            prior_tok = TokenCostTracker()
+            prior_tok.track("Data Generation (python)", calls=5, prompt_tokens=2500, output_tokens=1000, model="gpt-4o")
+            prior_tok.save_to_file(tok_file)
+
+            analyzer_tok = TokenCostTracker.reset_instance()
+            DurationTracker.reset_instance()
+
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
+            mock_loader.download_prompt.side_effect = [
+                ("prompt 1", {"title": "### Overview", "skip_prompt": None}),
+                ("prompt 2", {"title": "### Code Migration Plan (JSON)", "skip_prompt": None}),
+            ]
+
+            with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+                 patch.object(DependencyAnalyzer, '_setup_search'), \
+                 patch.object(DependencyAnalyzer, '_setup_prompts'), \
+                 patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
+                 patch('utils.visualization_utils.log_interactive_dependency_graph'), \
+                 patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+
+                analyzer = DependencyAnalyzer(root_dir=temp_graphrag_dir, token_tracker=analyzer_tok)
+
+                with patch.object(analyzer, 'query_with_llm', side_effect=["Overview body", "### Code Migration Plan (JSON)\n[]"]):
+                    report = asyncio.run(analyzer.generate_migration_report())
+
+                    # Check that Data Generation metrics from input/ were loaded and displayed
+                    self.assertIn("Reset Environment", report)
+                    self.assertIn("Clone Repository", report)
+                    self.assertIn("Data Generation (python)", report)
+                    self.assertIn("### Pipeline Execution Duration Summary", report)
+                    self.assertIn("### LLM Token Usage & Cost Summary", report)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -191,6 +191,14 @@ def get_parsed_code_metadata(df, language, config=False):
 
         logging.info("Parsing code metadata...")
 
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.enable_litellm_callbacks(category=f"Data Generation ({language})")
+            token_tracker.enable_openai_tracking(category=f"Data Generation ({language})")
+        except Exception as e:
+            logging.debug(f"Failed to enable token tracking in get_parsed_code_metadata: {e}")
+
         dataset = Dataset.from_pandas(df)
 
         flow_dir = "config_generation" if config else "code_generation"
@@ -505,7 +513,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
             ),
 
-            tags={"git_slug": git_slug, "category": "data-generation", "code-metadata": True, "multi_repo": multi_repo},
+            tags={"git_slug": str(git_slug or "multi-repo"), "category": "data-generation", "code-metadata": "true", "multi_repo": str(multi_repo)},
 
         )
 

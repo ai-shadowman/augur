@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 import os
 import sys
+import tempfile
 
 # Ensure code_understanding package is on sys.path
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -561,6 +562,152 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 self.assertIn("### Pipeline Execution Duration Summary", report)
                 self.assertIn("Clone Repository", report)
                 self.assertIn("Data Generation", report)
+
+    def test_openai_tracking_interception(self):
+        """Verify that direct OpenAI completions and embeddings calls are intercepted and recorded."""
+        import types
+        import asyncio
+        tracker = TokenCostTracker()
+
+        openai_mod = types.ModuleType("openai")
+        chat_pkg = types.ModuleType("openai.resources.chat")
+        chat_mod = types.ModuleType("openai.resources.chat.completions")
+        embed_pkg = types.ModuleType("openai.resources")
+        embed_mod = types.ModuleType("openai.resources.embeddings")
+
+        class MockUsage:
+            def __init__(self, prompt_tokens, completion_tokens):
+                self.prompt_tokens = prompt_tokens
+                self.completion_tokens = completion_tokens
+
+        class MockResponse:
+            def __init__(self, model, prompt_tokens, completion_tokens):
+                self.model = model
+                self.usage = MockUsage(prompt_tokens, completion_tokens)
+
+        orig_async_create = AsyncMock(return_value=MockResponse("gpt-4o", 50, 25))
+        orig_sync_create = MagicMock(return_value=MockResponse("gpt-4o", 30, 15))
+        orig_async_embed = AsyncMock(return_value=MockResponse("text-embedding-3-small", 40, 0))
+        orig_sync_embed = MagicMock(return_value=MockResponse("text-embedding-3-small", 20, 0))
+
+        class MockAsyncCompletions:
+            create = orig_async_create
+
+        class MockCompletions:
+            create = orig_sync_create
+
+        class MockAsyncEmbeddings:
+            create = orig_async_embed
+
+        class MockEmbeddings:
+            create = orig_sync_embed
+
+        chat_mod.AsyncCompletions = MockAsyncCompletions
+        chat_mod.Completions = MockCompletions
+        embed_mod.AsyncEmbeddings = MockAsyncEmbeddings
+        embed_mod.Embeddings = MockEmbeddings
+
+        modules_patch = {
+            "openai": openai_mod,
+            "openai.resources": embed_pkg,
+            "openai.resources.chat": chat_pkg,
+            "openai.resources.chat.completions": chat_mod,
+            "openai.resources.embeddings": embed_mod,
+        }
+
+        with patch.dict(sys.modules, modules_patch):
+            tracker.enable_openai_tracking(category="GraphRAG Indexing")
+
+            # 1. Test async chat completion
+            resp1 = asyncio.run(chat_mod.AsyncCompletions.create(model="gpt-4o"))
+            self.assertEqual(resp1.model, "gpt-4o")
+
+            # 2. Test sync chat completion
+            resp2 = chat_mod.Completions.create(model="gpt-4o")
+            self.assertEqual(resp2.model, "gpt-4o")
+
+            # 3. Test async embedding
+            resp3 = asyncio.run(embed_mod.AsyncEmbeddings.create(model="text-embedding-3-small"))
+            self.assertEqual(resp3.model, "text-embedding-3-small")
+
+            # 4. Test sync embedding
+            resp4 = embed_mod.Embeddings.create(model="text-embedding-3-small")
+            self.assertEqual(resp4.model, "text-embedding-3-small")
+
+            # Verify recorded metrics
+            chat_key = "GraphRAG Indexing (gpt-4o)"
+            embed_key = "GraphRAG Indexing Embeddings (text-embedding-3-small)"
+            self.assertIn(chat_key, tracker.records)
+            self.assertEqual(tracker.records[chat_key]["calls"], 2)
+            self.assertEqual(tracker.records[chat_key]["prompt_tokens"], 80)
+            self.assertEqual(tracker.records[chat_key]["output_tokens"], 40)
+
+            self.assertIn(embed_key, tracker.records)
+            self.assertEqual(tracker.records[embed_key]["calls"], 2)
+            self.assertEqual(tracker.records[embed_key]["prompt_tokens"], 60)
+            self.assertEqual(tracker.records[embed_key]["output_tokens"], 0)
+
+            # Test disable restores originals
+            tracker.disable_openai_tracking()
+            self.assertEqual(chat_mod.AsyncCompletions.create, orig_async_create)
+            self.assertEqual(chat_mod.Completions.create, orig_sync_create)
+            self.assertEqual(embed_mod.AsyncEmbeddings.create, orig_async_embed)
+            self.assertEqual(embed_mod.Embeddings.create, orig_sync_embed)
+
+    def test_mlflow_multi_run_tokens_aggregation(self):
+        """Verify that download_from_mlflow searches runs across stages and merges records from all runs."""
+        tracker = TokenCostTracker()
+
+        # Create two fake runs
+        run1 = MagicMock()
+        run1.info.run_id = "run-data-gen"
+        run2 = MagicMock()
+        run2.info.run_id = "run-indexing"
+
+        mock_experiment = MagicMock()
+        mock_experiment.experiment_id = "exp-123"
+
+        mock_client = MagicMock()
+        mock_client.search_runs.return_value = [run1, run2]
+
+        # Prepare dummy json files for the runs
+        data_gen_tracker = TokenCostTracker()
+        data_gen_tracker.track("Data Generation (python)", calls=10, prompt_tokens=5000, output_tokens=2000, model="gpt-4o")
+
+        indexing_tracker = TokenCostTracker()
+        indexing_tracker.track("GraphRAG Indexing (gpt-4o)", calls=50, prompt_tokens=30000, output_tokens=8000, model="gpt-4o")
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            file1 = os.path.join(temp_dir, "tokens1.json")
+            file2 = os.path.join(temp_dir, "tokens2.json")
+            data_gen_tracker.save_to_file(file1)
+            indexing_tracker.save_to_file(file2)
+
+            def mock_download(run_id, artifact_path):
+                if run_id == "run-data-gen":
+                    return file1
+                elif run_id == "run-indexing":
+                    return file2
+                return None
+
+            mlflow_mock = sys.modules["mlflow"]
+            with patch('mlflow.tracking.MlflowClient', return_value=mock_client), \
+                 patch('loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name', return_value=mock_experiment), \
+                 patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
+
+                success = tracker.download_from_mlflow(git_slug="my-repo")
+                self.assertTrue(success)
+
+                # Both stages should be present in records
+                self.assertIn("Data Generation (python)", tracker.records)
+                self.assertIn("GraphRAG Indexing (gpt-4o)", tracker.records)
+                self.assertEqual(tracker.records["Data Generation (python)"]["prompt_tokens"], 5000)
+                self.assertEqual(tracker.records["GraphRAG Indexing (gpt-4o)"]["prompt_tokens"], 30000)
+                self.assertEqual(tracker.get_totals()["total_calls"], 60)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

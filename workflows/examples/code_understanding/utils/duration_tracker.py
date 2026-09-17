@@ -289,13 +289,13 @@ class DurationTracker:
                         multi_repo=multi_repo,
                     )
                     tags = {
-                        "git_slug": git_slug or "multi-repo",
+                        "git_slug": str(git_slug or "multi-repo"),
                         "category": "telemetry",
                         "type": "durations",
-                        "multi_repo": multi_repo,
+                        "multi_repo": str(multi_repo),
                     }
                     if stage:
-                        tags["stage"] = stage
+                        tags["stage"] = str(stage)
                     DefaultAssetLoader().log_results(
                         temp_file,
                         artifact_path=artifact_path,
@@ -315,7 +315,9 @@ class DurationTracker:
     ) -> bool:
         """Downloads and merges duration records from MLflow.
         Returns True if records were retrieved and merged, False otherwise."""
-        # 1. Try downloading via run_id
+        merged_any = False
+
+        # 1. Try downloading via run_id or MLFLOW_RUN_ID
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
         if target_run:
             try:
@@ -325,53 +327,98 @@ class DurationTracker:
                 )
                 if local_path and os.path.exists(local_path):
                     self.load_and_merge(local_path)
-                    return True
+                    merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download durations.json for run {target_run}: {e}")
 
-        # 2. Try downloading via DefaultAssetLoader / MLflow tag search
+        # 2. Try searching and aggregating across ALL telemetry runs in MLflow
         if git_slug or multi_repo:
             try:
-                from loaders.default_asset_loader import DefaultAssetLoader
+                import mlflow
+                from mlflow.tracking import MlflowClient
                 from loaders.mlflow_asset_loader import MlFlowAssetLoader
 
-                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
-                    git_slug=git_slug,
-                    multi_repo=multi_repo,
+                client = MlflowClient()
+                experiment = MlFlowAssetLoader().get_or_create_experiment_by_name(
+                    client, MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
                 )
-                asset_file = f"{artifact_path}/durations.json"
-                temp_dir = tempfile.mkdtemp()
-                try:
-                    content = DefaultAssetLoader().download(
-                        asset_file,
-                        download_dir=temp_dir,
-                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                        asset_tags={"git_slug": git_slug or "multi-repo", "type": "durations"},
-                    )
-                    if isinstance(content, dict) and "records" in content:
-                        other = DurationTracker()
-                        other.from_dict(content)
-                        self.merge(other)
-                        return True
-                    elif isinstance(content, str):
-                        data = json.loads(content)
-                        if isinstance(data, dict) and "records" in data:
-                            other = DurationTracker()
-                            other.from_dict(data)
-                            self.merge(other)
-                            return True
-                    downloaded_file = os.path.join(temp_dir, "durations.json")
-                    if os.path.exists(downloaded_file):
-                        self.load_and_merge(downloaded_file)
-                        return True
-                finally:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                logging.debug(f"Failed to download durations.json via DefaultAssetLoader: {e}")
 
-        return False
+                filter_parts = ["tags.category = 'telemetry'", "tags.type = 'durations'"]
+                if git_slug:
+                    filter_parts.append(f"tags.git_slug = '{git_slug}'")
+                elif multi_repo:
+                    filter_parts.append("tags.git_slug = 'multi-repo'")
+                filter_string = " AND ".join(filter_parts)
+
+                runs = client.search_runs(
+                    experiment_ids=[experiment.experiment_id],
+                    filter_string=filter_string,
+                    order_by=["attributes.start_time DESC"],
+                )
+
+                for run in runs:
+                    try:
+                        artifact_subpath = (
+                            f"results/telemetry/{git_slug}/durations.json"
+                            if git_slug
+                            else "results/telemetry/durations.json"
+                        )
+                        downloaded_path = mlflow.artifacts.download_artifacts(
+                            run_id=run.info.run_id,
+                            artifact_path=artifact_subpath,
+                        )
+                        if downloaded_path and os.path.exists(downloaded_path):
+                            self.load_and_merge(downloaded_path)
+                            merged_any = True
+                    except Exception as run_err:
+                        logging.debug(f"Failed to download durations artifact from run {run.info.run_id}: {run_err}")
+
+            except Exception as e:
+                logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
+
+            # Fallback to DefaultAssetLoader if not merged yet
+            if not merged_any:
+                try:
+                    from loaders.default_asset_loader import DefaultAssetLoader
+                    from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    )
+                    asset_file = f"{artifact_path}/durations.json"
+                    temp_dir = tempfile.mkdtemp()
+                    try:
+                        content = DefaultAssetLoader().download(
+                            asset_file,
+                            download_dir=temp_dir,
+                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                            asset_tags={"git_slug": str(git_slug or "multi-repo"), "type": "durations"},
+                        )
+                        if isinstance(content, dict) and "records" in content:
+                            other = DurationTracker()
+                            other.from_dict(content)
+                            self.merge(other)
+                            merged_any = True
+                        elif isinstance(content, str):
+                            data = json.loads(content)
+                            if isinstance(data, dict) and "records" in data:
+                                other = DurationTracker()
+                                other.from_dict(data)
+                                self.merge(other)
+                                merged_any = True
+                        downloaded_file = os.path.join(temp_dir, "durations.json")
+                        if os.path.exists(downloaded_file):
+                            self.load_and_merge(downloaded_file)
+                            merged_any = True
+                    finally:
+                        import shutil
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception as e:
+                    logging.debug(f"Failed to download durations.json via DefaultAssetLoader: {e}")
+
+        return merged_any
 
 
     def to_dict(self) -> Dict[str, Any]:

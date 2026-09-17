@@ -27,41 +27,47 @@ def prepare_environment_op(git_repo: str,
     source_dir: Output[Dataset]):
     """Clones the repository and archives it as a gzip tarball."""
 
-    from pipelines.base.data_generation import prepare_environment
+    from pipelines.base.data_generation import prepare_environment, generate_git_slug
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact, use_ephemeral_space
     setup_logging()
+    import logging, os
 
     with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
+        git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
+        dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
-        except Exception:
-            dur_tracker = None
+        except Exception as e:
+            logging.debug(f"DurationTracker initialization skipped in prepare_environment_op: {e}")
+
+        prepare_environment(
+            source_path=tmp_source,
+            target_path=tmp_target,
+            git_repo=git_repo,
+            git_branch=git_branch,
+            git_username=git_username,
+            git_token=git_token,
+        )
 
         if dur_tracker:
-            prepare_environment(
-                source_path=tmp_source,
-                target_path=tmp_target,
-                git_repo=git_repo,
-                git_branch=git_branch,
-                git_username=git_username,
-                git_token=git_token,
-            )
-            dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
             try:
-                dur_tracker.log_to_mlflow()
-            except Exception:
-                pass
-        else:
-            prepare_environment(
-                source_path=tmp_source,
-                target_path=tmp_target,
-                git_repo=git_repo,
-                git_branch=git_branch,
-                git_username=git_username,
-                git_token=git_token,
-            )
+                dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
+            except Exception as e:
+                logging.debug(f"Failed to save durations.json in prepare_environment_op: {e}")
+            try:
+                dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
+            except Exception as e:
+                logging.debug(f"Failed to upload durations to MLflow in prepare_environment_op: {e}")
+
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.save_to_file(os.path.join(tmp_source, "tokens.json"))
+            token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
+        except Exception as e:
+            logging.debug(f"TokenCostTracker handling in prepare_environment_op: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -80,16 +86,40 @@ def generate_code_and_meta_op(
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
-    import logging
+    import logging, os
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
+        git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
+        dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
-            dur_tracker.load_and_merge(os.path.join(tmp_source, "durations.json"))
-        except Exception:
-            dur_tracker = None
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"MLflow download durations skipped in generate_code_and_meta_op: {e}")
+            dur_file = os.path.join(tmp_source, "durations.json")
+            if os.path.exists(dur_file):
+                dur_tracker.load_and_merge(dur_file)
+        except Exception as e:
+            logging.debug(f"DurationTracker handling in generate_code_and_meta_op: {e}")
+
+        token_tracker = None
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.enable_litellm_callbacks(category="Data Generation")
+            token_tracker.enable_openai_tracking(category="Data Generation")
+            try:
+                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"MLflow download tokens skipped in generate_code_and_meta_op: {e}")
+            tokens_file = os.path.join(tmp_source, "tokens.json")
+            if os.path.exists(tokens_file):
+                token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
+        except Exception as e:
+            logging.debug(f"TokenCostTracker handling in generate_code_and_meta_op: {e}")
 
         try:
 
@@ -123,22 +153,25 @@ def generate_code_and_meta_op(
                             external_metadata=external_metadata,
                         )
 
-            git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
-
             if dur_tracker:
-                dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
+                try:
+                    dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save durations.json in generate_code_and_meta_op: {e}")
                 try:
                     dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.debug(f"Failed to upload durations to MLflow in generate_code_and_meta_op: {e}")
 
-            try:
-                from utils.token_tracker import TokenCostTracker
-                token_tracker = TokenCostTracker.get_instance()
-                token_tracker.save_to_file(os.path.join(tmp_target, "tokens.json"))
-                token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
-            except Exception:
-                pass
+            if token_tracker:
+                try:
+                    token_tracker.save_to_file(os.path.join(tmp_target, "tokens.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save tokens.json in generate_code_and_meta_op: {e}")
+                try:
+                    token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload tokens to MLflow in generate_code_and_meta_op: {e}")
 
 
         except Exception as e:
