@@ -31,17 +31,32 @@ def run_graphrag(root_dir: str) -> None:
     from graphrag.config.load_config import load_config
     import graphrag.api as graphrag_api
 
+    try:
+        from utils.duration_tracker import DurationTracker
+        dur_tracker = DurationTracker.get_instance()
+    except Exception:
+        dur_tracker = None
+
     root_path = Path(root_dir)
 
     log.info("Initializing GraphRAG index...")
-    initialize_project_at(root_path, force=True)
-
-    log.info("Copying settings.yaml...")
-    shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
+    if dur_tracker:
+        with dur_tracker.measure(stage="Indexing", step="Initialize GraphRAG Project"):
+            initialize_project_at(root_path, force=True)
+            log.info("Copying settings.yaml...")
+            shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
+    else:
+        initialize_project_at(root_path, force=True)
+        log.info("Copying settings.yaml...")
+        shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
 
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
-    results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
+    if dur_tracker:
+        with dur_tracker.measure(stage="Indexing", step="Build GraphRAG Index (Entities & Graph)"):
+            results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
+    else:
+        results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
 
     errors = [r for r in results if r.errors]
     if errors:

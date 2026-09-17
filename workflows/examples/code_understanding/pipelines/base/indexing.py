@@ -47,7 +47,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             dur_tracker = None
 
         if dur_tracker:
-            with dur_tracker.measure(stage="Indexing", step="Prepare Config and Inputs"):
+            with dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config"):
                 DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
                 from utils.prompt_utils import prepare_indexing_config
                 logging.info("Preparing GraphRAG config files...")
@@ -55,12 +55,13 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                                         git_slug=git_slug or "",
                                         git_repo=git_repo or "",
                                         multi_repo=multi_repo)
+
+            with dur_tracker.measure(stage="Indexing", step="Copy Codebase Inputs"):
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
 
             logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
-            with dur_tracker.measure(stage="Indexing", step="Build GraphRAG Index"):
-                run_graphrag(graphrag_source_path)
+            run_graphrag(graphrag_source_path)
         else:
             DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
             from utils.prompt_utils import prepare_indexing_config

@@ -304,8 +304,64 @@ class TestDurationTracker(unittest.TestCase):
 
                 # Duration table MUST be present even though tracker had 0 prior records
                 self.assertIn("### Pipeline Execution Duration Summary", report)
+                self.assertIn("Prompt 1: Overview", report)
                 self.assertIn("Dependency Graph Visualization", report)
                 self.assertIn("Migration Report Total", report)
+
+    def test_stage_breakdown_in_summary(self):
+        """Verify format_summary includes Stage Breakdown section with percentages when multiple stages exist."""
+        self.tracker.record_step("Data Generation", "Clone Repository", 30.0)
+        self.tracker.record_step("Indexing", "Build GraphRAG Index", 60.0)
+        self.tracker.record_step("Analysis", "Prompt 1: Overview", 10.0)
+
+        summary = self.tracker.format_summary()
+        self.assertIn("Stage Breakdown:", summary)
+        self.assertIn("Data Generation: 30.00s (30.0%)", summary)
+        self.assertIn("Indexing: 1m 0.0s (60.0%)", summary)
+        self.assertIn("Analysis: 10.00s (10.0%)", summary)
+        self.assertIn("Total Runtime", summary)
+
+    def test_granular_sub_steps_logging(self):
+        """Verify granular sub-steps across all three pipeline stages are tracked and MLflow compatible."""
+        # Data Generation
+        self.tracker.record_step("Data Generation", "Reset Environment", 0.5)
+        self.tracker.record_step("Data Generation", "Clone Repository", 4.2)
+        self.tracker.record_step("Data Generation", "Detect Languages", 0.2)
+        self.tracker.record_step("Data Generation", "Parse Raw Code (python)", 0.8)
+        self.tracker.record_step("Data Generation", "LLM Metadata Extraction (python)", 35.0)
+        self.tracker.record_step("Data Generation", "Save Metadata Files (python)", 0.3)
+
+        # Indexing
+        self.tracker.record_step("Indexing", "Prepare Settings & Config", 1.1)
+        self.tracker.record_step("Indexing", "Copy Codebase Inputs", 0.4)
+        self.tracker.record_step("Indexing", "Initialize GraphRAG Project", 1.5)
+        self.tracker.record_step("Indexing", "Build GraphRAG Index (Entities & Graph)", 120.0)
+
+        # Analysis
+        self.tracker.record_step("Analysis", "Prompt 1: High-Level Overview", 15.0)
+        self.tracker.record_step("Analysis", "Prompt 2: Dependency Mapping", 14.5)
+        self.tracker.record_step("Analysis", "Dependency Graph Visualization", 3.2)
+        self.tracker.record_step("Analysis", "Migration Report Total", 33.0)
+
+        summary = self.tracker.format_summary()
+        self.assertIn("Clone Repository", summary)
+        self.assertIn("LLM Metadata Extraction (python)", summary)
+        self.assertIn("Build GraphRAG Index (Entities & Graph)", summary)
+        self.assertIn("Prompt 1: High-Level Overview", summary)
+        self.assertIn("Stage Breakdown:", summary)
+
+        # Verify MLflow metric logging handles these step names cleanly
+        with patch('mlflow.active_run', return_value=None), \
+             patch('mlflow.start_run') as mock_start_run:
+            mock_run_ctx = MagicMock()
+            mock_start_run.return_value.__enter__.return_value = mock_run_ctx
+            with patch('mlflow.log_metrics') as mock_log_metrics:
+                self.tracker.log_to_mlflow()
+                self.assertTrue(mock_log_metrics.called)
+                logged_metrics = mock_log_metrics.call_args[0][0]
+                self.assertIn("duration_data_generation_clone_repository_sec", logged_metrics)
+                self.assertIn("duration_indexing_initialize_graphrag_project_sec", logged_metrics)
+                self.assertIn("pipeline_total_duration_sec", logged_metrics)
 
 
 if __name__ == "__main__":

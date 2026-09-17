@@ -40,15 +40,14 @@ def prepare_environment_op(git_repo: str,
             dur_tracker = None
 
         if dur_tracker:
-            with dur_tracker.measure(stage="Data Generation", step="Prepare Environment"):
-                prepare_environment(
-                    source_path=tmp_source,
-                    target_path=tmp_target,
-                    git_repo=git_repo,
-                    git_branch=git_branch,
-                    git_username=git_username,
-                    git_token=git_token,
-                )
+            prepare_environment(
+                source_path=tmp_source,
+                target_path=tmp_target,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                git_username=git_username,
+                git_token=git_token,
+            )
             dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
             try:
                 dur_tracker.log_to_mlflow()
@@ -102,15 +101,14 @@ def generate_code_and_meta_op(
                 with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
                     languages = detect_languages(tmp_source)
 
-                with dur_tracker.measure(stage="Data Generation", step="Generate Code Metadata"):
-                    for language in languages:
-                        for config in [False, True]:
-                            generate_code_and_meta(
-                                git_repo=git_repo, git_branch=git_branch,
-                                language=language, source_path=tmp_source, target_path=tmp_target,
-                                config=config, multi_repo=multi_repo,
-                                external_metadata=external_metadata,
-                            )
+                for language in languages:
+                    for config in [False, True]:
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=tmp_source, target_path=tmp_target,
+                            config=config, multi_repo=multi_repo,
+                            external_metadata=external_metadata,
+                        )
             else:
                 languages = detect_languages(tmp_source)
 

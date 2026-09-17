@@ -61,8 +61,8 @@ def prepare_environment(source_path: str,
                         target_path: str, 
                         git_repo: str, 
                         git_branch: str,
-                        git_username: str,
-                        git_token: str):
+                        git_username: str = "",
+                        git_token: str = ""):
     """Prepares the environment at the start of the pipeline."""
     import logging
     import os
@@ -72,14 +72,29 @@ def prepare_environment(source_path: str,
     logging.info("Preparing the environment for pipeline run...")
 
     try:
+        from utils.duration_tracker import DurationTracker
+        dur_tracker = DurationTracker.get_instance()
+    except Exception:
+        dur_tracker = None
 
-        reset_environment(source_path, target_path)
+    try:
+        if dur_tracker:
+            with dur_tracker.measure(stage="Data Generation", step="Reset Environment"):
+                reset_environment(source_path, target_path)
 
-        clone_from_repo(git_repo, 
-                        source_path, 
-                        branch=git_branch,
-                        git_username=git_username,
-                        git_token=git_token)
+            with dur_tracker.measure(stage="Data Generation", step="Clone Repository"):
+                clone_from_repo(git_repo, 
+                                source_path, 
+                                branch=git_branch,
+                                git_username=git_username,
+                                git_token=git_token)
+        else:
+            reset_environment(source_path, target_path)
+            clone_from_repo(git_repo, 
+                            source_path, 
+                            branch=git_branch,
+                            git_username=git_username,
+                            git_token=git_token)
 
     except Exception as e:
 
@@ -431,22 +446,46 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
               "status": "error", "fail_message": ""}
 
     try:
+        cfg_suffix = " config" if config else ""
+        step_label = f"{language}{cfg_suffix}"
 
-        code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
-                                       language=language, config=config, multi_repo=multi_repo)
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
 
-        if code_df is None:
-            logging.info(f"No {language} files found (config={config}).")
+        if dur_tracker:
+            with dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})"):
+                code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
+                                               language=language, config=config, multi_repo=multi_repo)
 
-            result["status"] = "skipped"
+            if code_df is None:
+                logging.info(f"No {language} files found (config={config}).")
+                result["status"] = "skipped"
+                return
 
-            return
+            with dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})"):
+                code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
 
-        code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            with dur_tracker.measure(stage="Data Generation", step=f"Save Metadata Files ({step_label})"):
+                save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
+                                             git_slug=git_slug, language=language, config=config,
+                                             external_metadata=external_metadata)
+        else:
+            code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
+                                           language=language, config=config, multi_repo=multi_repo)
 
-        save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
-                                     git_slug=git_slug, language=language, config=config,
-                                     external_metadata=external_metadata)
+            if code_df is None:
+                logging.info(f"No {language} files found (config={config}).")
+                result["status"] = "skipped"
+                return
+
+            code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+
+            save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
+                                         git_slug=git_slug, language=language, config=config,
+                                         external_metadata=external_metadata)
 
         logging.info(f"Successfully generated code metadata for '{git_repo}'.")
 
@@ -548,23 +587,21 @@ class DataGenerationPipeline:
 
         try:
             if dur_tracker:
-                with dur_tracker.measure(stage="Data Generation", step="Prepare Environment"):
-                    prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
+                prepare_environment(source_path=source_path, target_path=target_path,
+                                    git_repo=git_repo, git_branch=git_branch)
 
                 with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
                     languages = detect_languages(source_path)
 
                 external_metadata = load_external_data(source_path)
 
-                with dur_tracker.measure(stage="Data Generation", step="Generate Code Metadata"):
-                    for language in languages:
-                        for config in [False, True]:
-                            generate_code_and_meta(
-                                git_repo=git_repo, git_branch=git_branch,
-                                language=language, source_path=source_path, target_path=target_path,
-                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                            )
+                for language in languages:
+                    for config in [False, True]:
+                        generate_code_and_meta(
+                            git_repo=git_repo, git_branch=git_branch,
+                            language=language, source_path=source_path, target_path=target_path,
+                            config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                        )
             else:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)

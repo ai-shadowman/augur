@@ -142,32 +142,56 @@ class DurationTracker:
         return f"{hours}h {rem_minutes:02d}m {rem_seconds:.0f}s"
 
     def format_summary(self, include_active: bool = True) -> str:
-        """Renders an ASCII summary table of all recorded step durations."""
+        """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
 
+        stage_w = 18
+        step_w = 40
+        dur_w = 10
+        status_w = 8
+
+        col_sep = f"+{'-' * (stage_w + 2)}+{'-' * (step_w + 2)}+{'-' * (dur_w + 2)}+{'-' * (status_w + 2)}+"
+        total_w = len(col_sep)
+        border = f"+{'-' * (total_w - 2)}+"
+
         lines = [
-            "+" + "-" * 78 + "+",
-            f"| {'Pipeline Execution Duration Summary':<76} |",
-            "+" + "-" * 20 + "+" + "-" * 34 + "+" + "-" * 11 + "+" + "-" * 9 + "+",
-            f"| {'Pipeline Stage':<18} | {'Step / Sub-step':<32} | {'Duration':<9} | {'Status':<7} |",
-            "+" + "-" * 20 + "+" + "-" * 34 + "+" + "-" * 11 + "+" + "-" * 9 + "+",
+            border,
+            f"| {'Pipeline Execution Duration Summary':<{total_w - 4}} |",
+            col_sep,
+            f"| {'Pipeline Stage':<{stage_w}} | {'Step / Sub-step':<{step_w}} | {'Duration':<{dur_w}} | {'Status':<{status_w}} |",
+            col_sep,
         ]
 
         for rec in all_records:
             dur_str = self.format_duration(rec["duration"])
             status_str = rec.get("status", "success").capitalize()
-            stage_str = rec["stage"][:18]
-            step_str = rec["step"][:32]
+            stage_str = rec["stage"][:stage_w]
+            step_str = rec["step"][:step_w]
             lines.append(
-                f"| {stage_str:<18} | {step_str:<32} | {dur_str:>9} | {status_str:<7} |"
+                f"| {stage_str:<{stage_w}} | {step_str:<{step_w}} | {dur_str:>{dur_w}} | {status_str:<{status_w}} |"
             )
 
-        total_str = self.format_duration(sum(rec["duration"] for rec in all_records))
-        lines.append("+" + "-" * 20 + "+" + "-" * 34 + "+" + "-" * 11 + "+" + "-" * 9 + "+")
-        lines.append(f"| {'Total Runtime':<18} | {'':<32} | {total_str:>9} | {'':<7} |")
-        lines.append("+" + "-" * 78 + "+")
+        total_duration = sum(rec["duration"] for rec in all_records)
+        total_str = self.format_duration(total_duration)
+
+        # Stage breakdown if more than one stage exists
+        stages: Dict[str, float] = {}
+        for rec in all_records:
+            stages[rec["stage"]] = stages.get(rec["stage"], 0.0) + rec["duration"]
+
+        if len(stages) > 1:
+            lines.append(col_sep)
+            lines.append(f"| {'Stage Breakdown:':<{total_w - 4}} |")
+            for stage_name, stage_dur in stages.items():
+                pct = (stage_dur / total_duration * 100.0) if total_duration > 0 else 0.0
+                stage_line = f"  - {stage_name}: {self.format_duration(stage_dur)} ({pct:.1f}%)"
+                lines.append(f"| {stage_line:<{total_w - 4}} |")
+
+        lines.append(col_sep)
+        lines.append(f"| {'Total Runtime':<{stage_w}} | {'':<{step_w}} | {total_str:>{dur_w}} | {'':<{status_w}} |")
+        lines.append(border)
 
         return "\n".join(lines)
 
@@ -190,7 +214,7 @@ class DurationTracker:
             for rec in self.records:
                 stage_clean = re.sub(r"[^a-zA-Z0-9_]", "_", rec["stage"].lower()).strip("_")
                 step_clean = re.sub(r"[^a-zA-Z0-9_]", "_", rec["step"].lower()).strip("_")
-                metric_name = f"duration_{stage_clean}_{step_clean}_sec"
+                metric_name = f"duration_{stage_clean}_{step_clean}_sec"[:250]
                 metrics[metric_name] = rec["duration"]
 
             metrics["pipeline_total_duration_sec"] = self.get_total_duration()

@@ -647,9 +647,13 @@ class DependencyAnalyzer:
                 if dur_tracker:
                     p_dur = time.perf_counter() - p_start
                     p_title = meta.get('title') or prompt_path
+                    clean_title = re.sub(r"^#+\s*", "", str(p_title)).strip()
+                    if len(clean_title) > 28:
+                        clean_title = clean_title[:25] + "..."
+                    step_name = f"Prompt {i+1}: {clean_title}" if clean_title else f"Report Prompt {i+1}"
                     dur_tracker.record_step(
                         stage="Analysis",
-                        step=f"Report Prompt {i+1}",
+                        step=step_name,
                         duration=p_dur,
                         metadata={"title": p_title, "prompt": prompt_path},
                     )
