@@ -145,7 +145,7 @@ class TokenCostTracker:
         cost: Optional[float] = None,
         model: Optional[str] = None,
     ):
-        """Records token usage and cost for a given source or model."""
+        """Records token usage and cost for a given source or model, outputting live metrics to console."""
         target_model = model or (self.embed_model if "embed" in source.lower() else self.chat_model)
 
         if cost is None:
@@ -166,6 +166,16 @@ class TokenCostTracker:
         rec["output_tokens"] += output_tokens
         rec["total_tokens"] += prompt_tokens + output_tokens
         rec["cost"] += cost
+
+        # Real-time console output on every LLM call
+        total_tokens = prompt_tokens + output_tokens
+        console_msg = (
+            f"[LLM Call] Source: {source} | Model: {target_model} | Calls: {calls} | "
+            f"Prompt Tokens: {prompt_tokens:,} | Output Tokens: {output_tokens:,} | "
+            f"Total Tokens: {total_tokens:,} | Est. Cost: ${cost:.4f}"
+        )
+        logging.info(console_msg)
+        print(console_msg, flush=True)
 
     def track_chat(
         self, prompt_tokens: int, output_tokens: int, calls: int = 1, model: Optional[str] = None
@@ -212,7 +222,7 @@ class TokenCostTracker:
     def track_embedding(self, prompt_tokens: int, calls: int = 1, model: Optional[str] = None):
         """Records embedding model invocation."""
         target_model = model or self.embed_model
-        source = target_model
+        source = f"GraphRAG Embeddings ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -367,7 +377,13 @@ class TokenCostTracker:
                 if response_cost is None:
                     response_cost = getattr(completion_response, "_response_cost", None)
 
-                source = f"{category} ({model})"
+                call_type = kwargs.get("call_type", "")
+                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (o_tokens == 0 and p_tokens > 0 and (model == self.embed_model or "embed" in self.embed_model))
+                if is_embed:
+                    prefix = category if "Embeddings" in category else f"{category} Embeddings"
+                    source = f"{prefix} ({model})"
+                else:
+                    source = f"{category} ({model})"
                 self.track(
                     source=source,
                     calls=1,
@@ -626,10 +642,19 @@ class TokenCostTracker:
                     }
                     if stage:
                         tags["stage"] = str(stage)
+
+                    content_str = None
+                    try:
+                        with open(temp_file, "r", encoding="utf-8") as f:
+                            content_str = f.read()
+                    except Exception:
+                        pass
+
                     DefaultAssetLoader().log_results(
                         temp_file,
                         artifact_path=artifact_path,
                         tags=tags,
+                        content=content_str,
                     )
                 except Exception as e:
                     logging.debug(f"Failed to upload tokens.json via DefaultAssetLoader: {e}")
@@ -642,14 +667,18 @@ class TokenCostTracker:
         git_slug: Optional[str] = None,
         run_id: Optional[str] = None,
         multi_repo: bool = False,
+        current_stage: Optional[str] = None,
     ) -> bool:
         """Downloads and merges token usage records from MLflow.
+        If current_stage is specified, runs tagged with that stage are skipped.
         Returns True if records were retrieved and merged, False otherwise."""
         merged_any = False
+        if not hasattr(self, "_merged_runs"):
+            self._merged_runs = set()
 
         # 1. Try downloading via run_id or MLFLOW_RUN_ID
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
-        if target_run:
+        if target_run and target_run not in self._merged_runs:
             try:
                 import mlflow
                 local_path = mlflow.artifacts.download_artifacts(
@@ -658,6 +687,7 @@ class TokenCostTracker:
                 if local_path and os.path.exists(local_path):
                     other = TokenCostTracker.load_from_file(local_path)
                     self.merge(other)
+                    self._merged_runs.add(target_run)
                     merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download tokens.json for run {target_run}: {e}")
@@ -687,7 +717,22 @@ class TokenCostTracker:
                     order_by=["attributes.start_time DESC"],
                 )
 
+                seen_stages = set()
                 for run in runs:
+                    if run.info.run_id in self._merged_runs:
+                        continue
+                    stage = run.data.tags.get("stage")
+                    if current_stage and stage == current_stage:
+                        continue
+                    if stage:
+                        if stage in seen_stages:
+                            continue
+                        seen_stages.add(stage)
+                    else:
+                        if "untagged" in seen_stages:
+                            continue
+                        seen_stages.add("untagged")
+
                     try:
                         artifact_subpath = (
                             f"results/telemetry/{git_slug}/tokens.json"
@@ -701,6 +746,7 @@ class TokenCostTracker:
                         if downloaded_path and os.path.exists(downloaded_path):
                             other = TokenCostTracker.load_from_file(downloaded_path)
                             self.merge(other)
+                            self._merged_runs.add(run.info.run_id)
                             merged_any = True
                     except Exception as run_err:
                         logging.debug(f"Failed to download tokens artifact from run {run.info.run_id}: {run_err}")

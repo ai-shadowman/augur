@@ -709,6 +709,86 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_track_outputs_to_console(self):
+        """Verify that track() outputs live token usage and cost metrics to console (stdout)."""
+        import io
+        from contextlib import redirect_stdout
+
+        tracker = TokenCostTracker()
+        f = io.StringIO()
+        with redirect_stdout(f):
+            tracker.track(
+                source="GraphRAG Chat (gpt-4o)",
+                calls=1,
+                prompt_tokens=1500,
+                output_tokens=500,
+                cost=0.0125,
+                model="gpt-4o",
+            )
+
+        output = f.getvalue()
+        self.assertIn("[LLM Call]", output)
+        self.assertIn("Source: GraphRAG Chat (gpt-4o)", output)
+        self.assertIn("Model: gpt-4o", output)
+        self.assertIn("Calls: 1", output)
+        self.assertIn("Prompt Tokens: 1,500", output)
+        self.assertIn("Output Tokens: 500", output)
+        self.assertIn("Total Tokens: 2,000", output)
+        self.assertIn("Est. Cost: $0.0125", output)
+
+    def test_track_embedding_source_naming(self):
+        """Verify track_embedding standardizes source naming to GraphRAG Embeddings ({model})."""
+        tracker = TokenCostTracker(embed_model="e5-mistral-7b-instruct")
+        tracker.track_embedding(prompt_tokens=300, calls=1)
+        self.assertIn("GraphRAG Embeddings (e5-mistral-7b-instruct)", tracker.records)
+
+    def test_download_from_mlflow_skips_current_stage_and_deduplicates(self):
+        """Verify download_from_mlflow skips runs matching current_stage and only merges the latest run per stage."""
+        tracker = TokenCostTracker()
+        tracker.track("Analysis Chat", calls=1, prompt_tokens=100, output_tokens=50)
+
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+
+        run1 = MagicMock()
+        run1.info.run_id = "run-analysis-old"
+        run1.data.tags = {"stage": "Analysis", "category": "telemetry", "type": "tokens"}
+
+        run2 = MagicMock()
+        run2.info.run_id = "run-datagen-new"
+        run2.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "tokens"}
+
+        run3 = MagicMock()
+        run3.info.run_id = "run-datagen-old"
+        run3.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "tokens"}
+
+        mock_client = MagicMock()
+        mock_client.search_runs.return_value = [run1, run2, run3]
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            datagen_file = os.path.join(temp_dir, "tokens.json")
+            dt = TokenCostTracker()
+            dt.track("Data Generation Code", calls=2, prompt_tokens=2000, output_tokens=0)
+            dt.save_to_file(datagen_file)
+
+            mlflow_mock.artifacts.download_artifacts.return_value = datagen_file
+
+            with patch("mlflow.tracking.MlflowClient", return_value=mock_client), \
+                 patch("loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name"):
+                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+
+            # Verify Data Generation was merged once, and run1 (Analysis) was skipped
+            self.assertIn("Data Generation Code", tracker.records)
+            self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
+
+            # Test that calling download_from_mlflow a second time uses _merged_runs cache and does not double-count
+            tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+            self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         logging.info(
             f"MlFlowCustomTelemetry: default experiment resolved to '{self._DEFAULT_EXPERIMENT_NAME}'")
 
-    def track(self):
+    def track(self, category: str = "GraphRAG"):
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
         logging.debug(f"MlFlowCustomTelemetry.track() called. MLFLOW_TRACKING_URI={tracking_uri}")
@@ -49,7 +49,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         try:
             from utils.token_tracker import TokenCostTracker
             tracker = TokenCostTracker.get_instance()
-            tracker.enable_litellm_callbacks(category="Code Understanding")
+            tracker.enable_litellm_callbacks(category=category)
             logging.debug("TokenCostTracker callback registered with LiteLLM")
         except Exception as e:
             logging.debug(f"Could not register TokenCostTracker callback: {e}")

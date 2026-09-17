@@ -553,6 +553,86 @@ class TestDurationTracker(unittest.TestCase):
                     self.assertIn("### Pipeline Execution Duration Summary", report)
                     self.assertIn("### LLM Token Usage & Cost Summary", report)
 
+    def test_record_step_in_place_update(self):
+        """Verify that record_step updates an existing (stage, step) in-place instead of duplicating."""
+        tracker = DurationTracker()
+        tracker.record_step("Analysis", "Prompt 1: Overview", 10.0, status="running")
+        self.assertEqual(len(tracker.records), 1)
+        self.assertEqual(tracker.records[0]["duration"], 10.0)
+        self.assertEqual(tracker.records[0]["status"], "running")
+
+        # Update the step
+        tracker.record_step("Analysis", "Prompt 1: Overview", 12.5, status="success", metadata={"is_update": True})
+        self.assertEqual(len(tracker.records), 1, "Duplicate record was appended instead of updated in-place")
+        self.assertEqual(tracker.records[0]["duration"], 12.5)
+        self.assertEqual(tracker.records[0]["status"], "success")
+        self.assertTrue(tracker.records[0]["metadata"].get("is_update"))
+
+    def test_total_duration_excludes_aggregate_steps(self):
+        """Verify that aggregate / parent steps (e.g. Migration Report Total) are not double-counted in total runtime."""
+        tracker = DurationTracker()
+        tracker.record_step("Analysis", "Prompt 1: Overview", 10.0)
+        tracker.record_step("Analysis", "Prompt 2: Dependencies", 15.0)
+        tracker.record_step("Analysis", "Migration Report Total", 25.0, metadata={"is_aggregate": True})
+        tracker.record_step("Analysis", "Generate Migration Report", 25.5)
+
+        stage_durations = tracker.get_stage_durations()
+        self.assertEqual(stage_durations["Analysis"], 25.0, "Aggregate steps should not be added to sub-step totals")
+
+        total = tracker.get_total_duration()
+        self.assertEqual(total, 25.0)
+
+        summary = tracker.format_summary()
+        self.assertIn("Total Runtime", summary)
+        self.assertIn("25.00s", summary)
+
+    def test_download_from_mlflow_excludes_current_stage_and_deduplicates(self):
+        """Verify that download_from_mlflow skips runs matching current_stage and only merges the latest run per stage."""
+        tracker = DurationTracker()
+        tracker.record_step("Analysis", "Current Step", 5.0)
+
+        import sys
+        import shutil
+        mlflow_mock = sys.modules["mlflow"]
+
+        run1 = MagicMock()
+        run1.info.run_id = "run-analysis-old"
+        run1.data.tags = {"stage": "Analysis", "category": "telemetry", "type": "durations"}
+
+        run2 = MagicMock()
+        run2.info.run_id = "run-datagen-new"
+        run2.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "durations"}
+
+        run3 = MagicMock()
+        run3.info.run_id = "run-datagen-old"
+        run3.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "durations"}
+
+        mock_client = MagicMock()
+        mock_client.search_runs.return_value = [run1, run2, run3]
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            datagen_file = os.path.join(temp_dir, "durations.json")
+            dt = DurationTracker()
+            dt.record_step("Data Generation", "Clone", 10.0)
+            dt.save_to_file(datagen_file)
+
+            mlflow_mock.artifacts.download_artifacts.return_value = datagen_file
+
+            with patch("mlflow.tracking.MlflowClient", return_value=mock_client), \
+                 patch("loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name"):
+                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+
+            # Verify run1 (Analysis) was skipped because of current_stage="Analysis"
+            # Verify run3 was skipped because run2 was already processed for Data Generation
+            stages = {r["stage"] for r in tracker.records}
+            self.assertIn("Data Generation", stages)
+            # Only 1 Data Generation step should be present
+            dg_steps = [r for r in tracker.records if r["stage"] == "Data Generation"]
+            self.assertEqual(len(dg_steps), 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

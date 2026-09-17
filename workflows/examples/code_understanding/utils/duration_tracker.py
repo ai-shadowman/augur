@@ -47,13 +47,27 @@ class DurationTracker:
         status: str = "success",
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        """Records a single step timing record."""
+        """Records a single step timing record. If (stage, step) already exists, updates it in-place."""
+        dur = max(0.0, float(duration))
+        s_time = start_time if start_time is not None else time.time() - dur
+        e_time = end_time if end_time is not None else time.time()
+
+        for rec in self.records:
+            if rec.get("stage") == stage and rec.get("step") == step:
+                rec["duration"] = dur
+                rec["start_time"] = s_time
+                rec["end_time"] = e_time
+                rec["status"] = status
+                if metadata:
+                    rec.setdefault("metadata", {}).update(metadata)
+                return
+
         self.records.append({
             "stage": stage,
             "step": step,
-            "duration": max(0.0, float(duration)),
-            "start_time": start_time if start_time is not None else time.time() - duration,
-            "end_time": end_time if end_time is not None else time.time(),
+            "duration": dur,
+            "start_time": s_time,
+            "end_time": e_time,
             "status": status,
             "metadata": metadata or {},
         })
@@ -114,17 +128,38 @@ class DurationTracker:
         """Returns a copy of all recorded steps."""
         return list(self.records)
 
-    def get_total_duration(self) -> float:
-        """Returns the total elapsed duration across all recorded steps in seconds."""
-        return sum(rec["duration"] for rec in self.records)
+    @staticmethod
+    def _is_aggregate_step(rec: Dict[str, Any]) -> bool:
+        """Determines if a step is a parent or summary aggregate to avoid double-counting in totals."""
+        meta = rec.get("metadata") or {}
+        if meta.get("is_aggregate") or meta.get("is_parent"):
+            return True
+        step_name = rec.get("step", "").strip().lower()
+        if step_name in ["migration report total", "generate migration report"]:
+            return True
+        return False
 
-    def get_stage_durations(self) -> Dict[str, float]:
-        """Returns a mapping of stage names to total elapsed seconds."""
+    def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
+        """Returns a mapping of stage names to total elapsed seconds,
+        avoiding double-counting parent/aggregate steps when sub-steps exist."""
+        all_recs = self.get_all_records(include_active=include_active)
+        stages: Dict[str, List[Dict[str, Any]]] = {}
+        for rec in all_recs:
+            stages.setdefault(rec["stage"], []).append(rec)
+
         stage_totals: Dict[str, float] = {}
-        for rec in self.records:
-            stage = rec["stage"]
-            stage_totals[stage] = stage_totals.get(stage, 0.0) + rec["duration"]
+        for stage, recs in stages.items():
+            non_agg = [r for r in recs if not self._is_aggregate_step(r)]
+            if non_agg:
+                stage_totals[stage] = sum(r["duration"] for r in non_agg)
+            else:
+                stage_totals[stage] = sum(r["duration"] for r in recs)
         return stage_totals
+
+    def get_total_duration(self) -> float:
+        """Returns the total elapsed duration across all recorded stages in seconds,
+        avoiding double-counting parent/aggregate steps."""
+        return sum(self.get_stage_durations(include_active=False).values())
 
     @staticmethod
     def format_duration(seconds: float) -> str:
@@ -175,14 +210,11 @@ class DurationTracker:
                 f"| {stage_str:<{stage_w}} | {step_str:<{step_w}} | {dur_str:>{dur_w}} | {status_str:<{status_w}} |"
             )
 
-        total_duration = sum(rec["duration"] for rec in all_records)
+        stages = self.get_stage_durations(include_active=include_active)
+        total_duration = sum(stages.values())
         total_str = self.format_duration(total_duration)
 
         # Stage breakdown if more than one stage exists
-        stages: Dict[str, float] = {}
-        for rec in all_records:
-            stages[rec["stage"]] = stages.get(rec["stage"], 0.0) + rec["duration"]
-
         if len(stages) > 1:
             lines.append(col_sep)
             lines.append(f"| {'Stage Breakdown:':<{total_w - 4}} |")
@@ -296,10 +328,19 @@ class DurationTracker:
                     }
                     if stage:
                         tags["stage"] = str(stage)
+
+                    content_str = None
+                    try:
+                        with open(temp_file, "r", encoding="utf-8") as f:
+                            content_str = f.read()
+                    except Exception:
+                        pass
+
                     DefaultAssetLoader().log_results(
                         temp_file,
                         artifact_path=artifact_path,
                         tags=tags,
+                        content=content_str,
                     )
                 except Exception as e:
                     logging.debug(f"Failed to upload durations.json via DefaultAssetLoader: {e}")
@@ -312,21 +353,26 @@ class DurationTracker:
         git_slug: Optional[str] = None,
         run_id: Optional[str] = None,
         multi_repo: bool = False,
+        current_stage: Optional[str] = None,
     ) -> bool:
         """Downloads and merges duration records from MLflow.
+        If current_stage is specified, runs and records belonging to current_stage are skipped.
         Returns True if records were retrieved and merged, False otherwise."""
         merged_any = False
+        if not hasattr(self, "_merged_runs"):
+            self._merged_runs = set()
 
         # 1. Try downloading via run_id or MLFLOW_RUN_ID
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
-        if target_run:
+        if target_run and target_run not in self._merged_runs:
             try:
                 import mlflow
                 local_path = mlflow.artifacts.download_artifacts(
                     run_id=target_run, artifact_path="telemetry/durations.json"
                 )
                 if local_path and os.path.exists(local_path):
-                    self.load_and_merge(local_path)
+                    self.load_and_merge(local_path, current_stage=current_stage)
+                    self._merged_runs.add(target_run)
                     merged_any = True
             except Exception as e:
                 logging.debug(f"Failed to download durations.json for run {target_run}: {e}")
@@ -356,7 +402,22 @@ class DurationTracker:
                     order_by=["attributes.start_time DESC"],
                 )
 
+                seen_stages = set()
                 for run in runs:
+                    if run.info.run_id in self._merged_runs:
+                        continue
+                    stage = run.data.tags.get("stage")
+                    if current_stage and stage == current_stage:
+                        continue
+                    if stage:
+                        if stage in seen_stages:
+                            continue
+                        seen_stages.add(stage)
+                    else:
+                        if "untagged" in seen_stages:
+                            continue
+                        seen_stages.add("untagged")
+
                     try:
                         artifact_subpath = (
                             f"results/telemetry/{git_slug}/durations.json"
@@ -368,7 +429,8 @@ class DurationTracker:
                             artifact_path=artifact_subpath,
                         )
                         if downloaded_path and os.path.exists(downloaded_path):
-                            self.load_and_merge(downloaded_path)
+                            self.load_and_merge(downloaded_path, current_stage=current_stage)
+                            self._merged_runs.add(run.info.run_id)
                             merged_any = True
                     except Exception as run_err:
                         logging.debug(f"Failed to download durations artifact from run {run.info.run_id}: {run_err}")
@@ -399,18 +461,18 @@ class DurationTracker:
                         if isinstance(content, dict) and "records" in content:
                             other = DurationTracker()
                             other.from_dict(content)
-                            self.merge(other)
+                            self.merge(other, current_stage=current_stage)
                             merged_any = True
                         elif isinstance(content, str):
                             data = json.loads(content)
                             if isinstance(data, dict) and "records" in data:
                                 other = DurationTracker()
                                 other.from_dict(data)
-                                self.merge(other)
+                                self.merge(other, current_stage=current_stage)
                                 merged_any = True
                         downloaded_file = os.path.join(temp_dir, "durations.json")
                         if os.path.exists(downloaded_file):
-                            self.load_and_merge(downloaded_file)
+                            self.load_and_merge(downloaded_file, current_stage=current_stage)
                             merged_any = True
                     finally:
                         import shutil
@@ -419,7 +481,6 @@ class DurationTracker:
                     logging.debug(f"Failed to download durations.json via DefaultAssetLoader: {e}")
 
         return merged_any
-
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes records to dictionary."""
@@ -447,25 +508,35 @@ class DurationTracker:
             data = json.load(f)
         self.from_dict(data)
 
-    def load_and_merge(self, filepath: str):
+    def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
         """Loads duration records from a JSON file and merges them into this instance."""
         if not os.path.exists(filepath):
             return
         try:
             other = DurationTracker()
             other.load_from_file(filepath)
-            self.merge(other)
+            self.merge(other, current_stage=current_stage)
         except Exception as e:
             logging.debug(f"Failed to load and merge durations from {filepath}: {e}")
 
-    def merge(self, other: "DurationTracker"):
-        """Merges records from another DurationTracker instance into this one, deduplicating identical records."""
-        existing_keys = {(r.get("stage"), r.get("step")) for r in self.records}
+    def merge(self, other: "DurationTracker", current_stage: Optional[str] = None):
+        """Merges records from another DurationTracker instance into this one, deduplicating identical records.
+        If current_stage is provided, records belonging to that stage are ignored so current measurements are not overwritten."""
+        if not other:
+            return
+        existing_indices = {(r.get("stage"), r.get("step")): i for i, r in enumerate(self.records)}
         for rec in other.records:
+            if current_stage and rec.get("stage") == current_stage:
+                continue
             key = (rec.get("stage"), rec.get("step"))
-            if key not in existing_keys:
+            if key not in existing_indices:
                 self.records.append(rec)
-                existing_keys.add(key)
+                existing_indices[key] = len(self.records) - 1
+            else:
+                idx = existing_indices[key]
+                existing_rec = self.records[idx]
+                if existing_rec.get("duration", 0.0) <= 0.0 or existing_rec.get("status") == "running":
+                    self.records[idx] = rec
 
 
 def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None):

@@ -32,7 +32,7 @@ class AnalysisPipeline:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
             try:
-                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in analysis: {e}")
             for check_path in [
@@ -43,7 +43,7 @@ class AnalysisPipeline:
             ]:
                 dur_file = os.path.join(check_path, "durations.json")
                 if os.path.exists(dur_file):
-                    dur_tracker.load_and_merge(dur_file)
+                    dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
                     break
         except Exception as e:
             logging.debug(f"DurationTracker handling in analysis: {e}")
@@ -51,7 +51,7 @@ class AnalysisPipeline:
         try:
             if hasattr(analyzer, "token_tracker") and analyzer.token_tracker:
                 try:
-                    analyzer.token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+                    analyzer.token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
                 except Exception as e:
                     logging.debug(f"Failed to download tokens from MLflow in analysis: {e}")
                 for check_path in [
@@ -68,11 +68,7 @@ class AnalysisPipeline:
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Analysis", step="Generate Migration Report"):
-                report = asyncio.run(analyzer.generate_migration_report())
-        else:
-            report = asyncio.run(analyzer.generate_migration_report())
+        report = asyncio.run(analyzer.generate_migration_report())
 
         # Safeguard: ensure duration summary is present in the markdown report
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:

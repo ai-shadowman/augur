@@ -410,6 +410,11 @@ class DependencyAnalyzer:
 
                 else:
 
+                    embed_count_before = sum(
+                        r.get("calls", 0) for s, r in self.token_tracker.records.items()
+                        if "embed" in s.lower()
+                    )
+
                     result, context_data = await api.local_search(
                         config=config,
                         entities=self.entity_df,
@@ -423,8 +428,14 @@ class DependencyAnalyzer:
                         query=question,
                     )
 
-                    embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
-                    self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
+                    # Only manually track embedding if active callbacks didn't already intercept it
+                    embed_count_after = sum(
+                        r.get("calls", 0) for s, r in self.token_tracker.records.items()
+                        if "embed" in s.lower()
+                    )
+                    if embed_count_after == embed_count_before:
+                        embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
+                        self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
 
                     p_tokens = None
                     o_tokens = None
@@ -592,7 +603,7 @@ class DependencyAnalyzer:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
             try:
-                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
             # Load prior pipeline stage durations from graphrag directory (e.g. Data Gen & Indexing)
@@ -604,7 +615,7 @@ class DependencyAnalyzer:
             ]:
                 dur_file = os.path.join(candidate, "durations.json")
                 if os.path.exists(dur_file):
-                    dur_tracker.load_and_merge(dur_file)
+                    dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
                     break
         except Exception as e:
             logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
@@ -612,7 +623,7 @@ class DependencyAnalyzer:
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
                 try:
-                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
                 except Exception as e:
                     logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
                 for candidate in [
@@ -709,6 +720,7 @@ class DependencyAnalyzer:
                 stage="Analysis",
                 step="Migration Report Total",
                 duration=time.perf_counter() - report_start_perf,
+                metadata={"is_aggregate": True},
             )
             try:
                 dur_tracker.save_to_file(os.path.join(self.graphrag_dir, "durations.json"))
