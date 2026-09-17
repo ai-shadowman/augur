@@ -23,6 +23,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
     logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
     status = "fail"
@@ -35,19 +37,23 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         os.makedirs(f"{graphrag_source_path}/output", exist_ok=True)
 
+        from utils.duration_tracker import find_telemetry_file
+
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            dur_file = find_telemetry_file([codebase_path, os.path.dirname(codebase_path), graphrag_source_path], "durations.json")
+            if dur_file:
+                dur_tracker.load_and_merge(dur_file, current_stage="Indexing")
+                if not git_slug and dur_tracker.git_slug:
+                    git_slug = dur_tracker.git_slug
+                if not git_repo and dur_tracker.git_repo:
+                    git_repo = dur_tracker.git_repo
             try:
-                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in indexing: {e}")
-            for check_path in [codebase_path, os.path.dirname(codebase_path), os.path.join(graphrag_source_path, "input")]:
-                dur_file = os.path.join(check_path, "durations.json")
-                if os.path.exists(dur_file):
-                    dur_tracker.load_and_merge(dur_file)
-                    break
         except Exception as e:
             logging.debug(f"DurationTracker handling in indexing: {e}")
 
@@ -57,15 +63,18 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             token_tracker = TokenCostTracker.get_instance()
             token_tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
             token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
+            tokens_file = find_telemetry_file([codebase_path, os.path.dirname(codebase_path), graphrag_source_path], "tokens.json")
+            if tokens_file:
+                loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
+                token_tracker.merge(loaded_tokens)
+                if not git_slug and loaded_tokens.git_slug:
+                    git_slug = loaded_tokens.git_slug
+                if not git_repo and loaded_tokens.git_repo:
+                    git_repo = loaded_tokens.git_repo
             try:
-                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download tokens from MLflow in indexing: {e}")
-            for check_path in [codebase_path, os.path.dirname(codebase_path), os.path.join(graphrag_source_path, "input")]:
-                tokens_file = os.path.join(check_path, "tokens.json")
-                if os.path.exists(tokens_file):
-                    token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
-                    break
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in indexing: {e}")
 
@@ -154,6 +163,22 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
             except Exception as e:
                 logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
+        if dur_tracker:
+            try:
+                summary = dur_tracker.format_summary()
+                logging.info("\n" + summary)
+                print("\n" + summary, flush=True)
+            except Exception as e:
+                logging.debug(f"Failed to log duration summary: {e}")
+
+        if token_tracker:
+            try:
+                summary = token_tracker.format_summary()
+                logging.info("\n" + summary)
+                print("\n" + summary, flush=True)
+            except Exception as e:
+                logging.debug(f"Failed to log token summary: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,

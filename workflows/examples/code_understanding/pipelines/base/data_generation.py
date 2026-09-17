@@ -649,6 +649,23 @@ class DataGenerationPipeline:
                 logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
 
+            if dur_tracker:
+                try:
+                    summary = dur_tracker.format_summary()
+                    logging.info("\n" + summary)
+                    print("\n" + summary, flush=True)
+                except Exception as e:
+                    logging.debug(f"Failed to print duration summary in data generation pipeline: {e}")
+
+            try:
+                from utils.token_tracker import TokenCostTracker
+                tok_tr = TokenCostTracker.get_instance()
+                summary = tok_tr.format_summary()
+                logging.info("\n" + summary)
+                print("\n" + summary, flush=True)
+            except Exception as e:
+                logging.debug(f"Failed to print token summary in data generation pipeline: {e}")
+
             logging.info("Data generation pipeline complete.")
 
             result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import shutil
 import tempfile
 import time
 
@@ -307,8 +308,8 @@ class TestDurationTracker(unittest.TestCase):
                 # Duration table MUST be present even though tracker had 0 prior records
                 self.assertIn("### Pipeline Execution Duration Summary", report)
                 self.assertIn("Prompt 1: Overview", report)
-                self.assertIn("Dependency Graph Visualization", report)
-                self.assertIn("Migration Report Total", report)
+                # Aggregate step is recorded in tracker but excluded from detailed rows to prevent duplicate stage rows
+                self.assertTrue(any(s["step"] == "Migration Report Total" for s in DurationTracker.get_instance().get_steps()))
 
     def test_stage_breakdown_in_summary(self):
         """Verify format_summary includes Stage Breakdown section with percentages when multiple stages exist."""
@@ -633,9 +634,43 @@ class TestDurationTracker(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_find_telemetry_file_recursive(self):
+        """Verify find_telemetry_file discovers files in deeply nested subdirectories."""
+        from utils.duration_tracker import find_telemetry_file
+        temp_dir = tempfile.mkdtemp()
+        try:
+            nested_dir = os.path.join(temp_dir, "stage", "output", "nested")
+            os.makedirs(nested_dir, exist_ok=True)
+            target_file = os.path.join(nested_dir, "durations.json")
+            with open(target_file, "w") as f:
+                f.write("{}")
+
+            found = find_telemetry_file([temp_dir], "durations.json")
+            self.assertIsNotNone(found)
+            self.assertEqual(os.path.abspath(found), os.path.abspath(target_file))
+
+            # Non-existent file
+            not_found = find_telemetry_file([temp_dir], "non_existent.json")
+            self.assertIsNone(not_found)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_git_slug_persistence(self):
+        """Verify git_slug and git_repo are saved and restored during serialization."""
+        tracker = DurationTracker(git_slug="org-repo-main", git_repo="https://github.com/org/repo")
+        tracker.record_step("Data Generation", "Extract", 5.0)
+        d = tracker.to_dict()
+        self.assertEqual(d["git_slug"], "org-repo-main")
+        self.assertEqual(d["git_repo"], "https://github.com/org/repo")
+
+        restored = DurationTracker.from_dict(d)
+        self.assertEqual(restored.git_slug, "org-repo-main")
+        self.assertEqual(restored.git_repo, "https://github.com/org/repo")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

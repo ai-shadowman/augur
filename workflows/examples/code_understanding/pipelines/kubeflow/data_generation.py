@@ -162,6 +162,12 @@ def generate_code_and_meta_op(
                     dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
                 except Exception as e:
                     logging.debug(f"Failed to upload durations to MLflow in generate_code_and_meta_op: {e}")
+                try:
+                    summary = dur_tracker.format_summary()
+                    logging.info("\n" + summary)
+                    print("\n" + summary, flush=True)
+                except Exception as e:
+                    logging.debug(f"Failed to print duration summary in data generation pod: {e}")
 
             if token_tracker:
                 try:
@@ -172,6 +178,12 @@ def generate_code_and_meta_op(
                     token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
                 except Exception as e:
                     logging.debug(f"Failed to upload tokens to MLflow in generate_code_and_meta_op: {e}")
+                try:
+                    summary = token_tracker.format_summary()
+                    logging.info("\n" + summary)
+                    print("\n" + summary, flush=True)
+                except Exception as e:
+                    logging.debug(f"Failed to print token summary in data generation pod: {e}")
 
 
         except Exception as e:

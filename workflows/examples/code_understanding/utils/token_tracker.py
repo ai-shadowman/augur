@@ -47,6 +47,8 @@ class TokenCostTracker:
         chat_prompt_price: Optional[float] = None,
         chat_output_price: Optional[float] = None,
         embed_prompt_price: Optional[float] = None,
+        git_slug: Optional[str] = None,
+        git_repo: Optional[str] = None,
     ):
         self.chat_model = chat_model or os.getenv("GRAPHRAG_LLM_ID", "openai/gpt-oss-120b")
         self.embed_model = embed_model or os.getenv("EMBED_LLM_ID", "e5-mistral-7b-instruct")
@@ -64,6 +66,8 @@ class TokenCostTracker:
 
         # Registered usage entries: dict of source_label -> metrics dict
         self.records: Dict[str, Dict[str, Any]] = {}
+        self.git_slug: Optional[str] = git_slug
+        self.git_repo: Optional[str] = git_repo
 
         self._register_models_in_litellm()
 
@@ -295,7 +299,7 @@ class TokenCostTracker:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes tracker records and config to a dictionary."""
-        return {
+        d = {
             "chat_model": self.chat_model,
             "embed_model": self.embed_model,
             "chat_prompt_price": self.chat_prompt_price,
@@ -304,6 +308,11 @@ class TokenCostTracker:
             "embed_output_price": self.embed_output_price,
             "records": self.records,
         }
+        if self.git_slug:
+            d["git_slug"] = self.git_slug
+        if self.git_repo:
+            d["git_repo"] = self.git_repo
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TokenCostTracker":
@@ -316,6 +325,8 @@ class TokenCostTracker:
             embed_prompt_price=data.get("embed_prompt_price"),
         )
         tracker.records = data.get("records", {})
+        tracker.git_slug = data.get("git_slug")
+        tracker.git_repo = data.get("git_repo")
         return tracker
 
     def save_to_file(self, filepath: str):
@@ -722,34 +733,45 @@ class TokenCostTracker:
                     if run.info.run_id in self._merged_runs:
                         continue
                     stage = run.data.tags.get("stage")
-                    if current_stage and stage == current_stage:
+                    if current_stage and stage and stage.lower() == current_stage.lower():
+                        continue
+                    if current_stage and not stage:
                         continue
                     if stage:
-                        if stage in seen_stages:
+                        if stage.lower() in seen_stages:
                             continue
-                        seen_stages.add(stage)
+                        seen_stages.add(stage.lower())
                     else:
                         if "untagged" in seen_stages:
                             continue
                         seen_stages.add("untagged")
 
-                    try:
-                        artifact_subpath = (
-                            f"results/telemetry/{git_slug}/tokens.json"
-                            if git_slug
-                            else "results/telemetry/tokens.json"
-                        )
-                        downloaded_path = mlflow.artifacts.download_artifacts(
-                            run_id=run.info.run_id,
-                            artifact_path=artifact_subpath,
-                        )
-                        if downloaded_path and os.path.exists(downloaded_path):
-                            other = TokenCostTracker.load_from_file(downloaded_path)
-                            self.merge(other)
-                            self._merged_runs.add(run.info.run_id)
-                            merged_any = True
-                    except Exception as run_err:
-                        logging.debug(f"Failed to download tokens artifact from run {run.info.run_id}: {run_err}")
+                    candidate_subpaths = []
+                    if git_slug:
+                        candidate_subpaths.append(f"results/telemetry/{git_slug}/tokens.json")
+                    if multi_repo:
+                        candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/tokens.json".replace("//", "/"))
+                        candidate_subpaths.append("results/telemetry/multi-repo/tokens.json")
+                    candidate_subpaths.extend([
+                        "results/telemetry/tokens.json",
+                        "telemetry/tokens.json",
+                        "tokens.json",
+                    ])
+
+                    for subpath in candidate_subpaths:
+                        try:
+                            downloaded_path = mlflow.artifacts.download_artifacts(
+                                run_id=run.info.run_id,
+                                artifact_path=subpath,
+                            )
+                            if downloaded_path and os.path.exists(downloaded_path):
+                                other = TokenCostTracker.load_from_file(downloaded_path)
+                                self.merge(other)
+                                self._merged_runs.add(run.info.run_id)
+                                merged_any = True
+                                break
+                        except Exception:
+                            continue
 
             except Exception as e:
                 logging.debug(f"MLflow client multi-run search for tokens.json failed: {e}")

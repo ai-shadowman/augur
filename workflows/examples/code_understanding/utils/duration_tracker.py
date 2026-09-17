@@ -28,9 +28,11 @@ class DurationTracker:
         cls._global_instance = cls()
         return cls._global_instance
 
-    def __init__(self):
+    def __init__(self, git_slug: Optional[str] = None, git_repo: Optional[str] = None):
         self.records: List[Dict[str, Any]] = []
         self._active_measurements: List[Dict[str, Any]] = []
+        self.git_slug: Optional[str] = git_slug
+        self.git_repo: Optional[str] = git_repo
 
     def reset(self):
         """Clears all recorded timing records."""
@@ -201,7 +203,14 @@ class DurationTracker:
             col_sep,
         ]
 
+        stages_with_substeps = set()
         for rec in all_records:
+            if not self._is_aggregate_step(rec):
+                stages_with_substeps.add(rec["stage"])
+
+        for rec in all_records:
+            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec):
+                continue
             dur_str = self.format_duration(rec["duration"])
             status_str = rec.get("status", "success").capitalize()
             stage_str = rec["stage"][:stage_w]
@@ -407,33 +416,44 @@ class DurationTracker:
                     if run.info.run_id in self._merged_runs:
                         continue
                     stage = run.data.tags.get("stage")
-                    if current_stage and stage == current_stage:
+                    if current_stage and stage and stage.lower() == current_stage.lower():
+                        continue
+                    if current_stage and not stage:
                         continue
                     if stage:
-                        if stage in seen_stages:
+                        if stage.lower() in seen_stages:
                             continue
-                        seen_stages.add(stage)
+                        seen_stages.add(stage.lower())
                     else:
                         if "untagged" in seen_stages:
                             continue
                         seen_stages.add("untagged")
 
-                    try:
-                        artifact_subpath = (
-                            f"results/telemetry/{git_slug}/durations.json"
-                            if git_slug
-                            else "results/telemetry/durations.json"
-                        )
-                        downloaded_path = mlflow.artifacts.download_artifacts(
-                            run_id=run.info.run_id,
-                            artifact_path=artifact_subpath,
-                        )
-                        if downloaded_path and os.path.exists(downloaded_path):
-                            self.load_and_merge(downloaded_path, current_stage=current_stage)
-                            self._merged_runs.add(run.info.run_id)
-                            merged_any = True
-                    except Exception as run_err:
-                        logging.debug(f"Failed to download durations artifact from run {run.info.run_id}: {run_err}")
+                    candidate_subpaths = []
+                    if git_slug:
+                        candidate_subpaths.append(f"results/telemetry/{git_slug}/durations.json")
+                    if multi_repo:
+                        candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/durations.json".replace("//", "/"))
+                        candidate_subpaths.append("results/telemetry/multi-repo/durations.json")
+                    candidate_subpaths.extend([
+                        "results/telemetry/durations.json",
+                        "telemetry/durations.json",
+                        "durations.json",
+                    ])
+
+                    for subpath in candidate_subpaths:
+                        try:
+                            downloaded_path = mlflow.artifacts.download_artifacts(
+                                run_id=run.info.run_id,
+                                artifact_path=subpath,
+                            )
+                            if downloaded_path and os.path.exists(downloaded_path):
+                                self.load_and_merge(downloaded_path, current_stage=current_stage)
+                                self._merged_runs.add(run.info.run_id)
+                                merged_any = True
+                                break
+                        except Exception:
+                            continue
 
             except Exception as e:
                 logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
@@ -459,15 +479,13 @@ class DurationTracker:
                             asset_tags={"git_slug": str(git_slug or "multi-repo"), "type": "durations"},
                         )
                         if isinstance(content, dict) and "records" in content:
-                            other = DurationTracker()
-                            other.from_dict(content)
+                            other = DurationTracker.from_dict(content)
                             self.merge(other, current_stage=current_stage)
                             merged_any = True
                         elif isinstance(content, str):
                             data = json.loads(content)
                             if isinstance(data, dict) and "records" in data:
-                                other = DurationTracker()
-                                other.from_dict(data)
+                                other = DurationTracker.from_dict(data)
                                 self.merge(other, current_stage=current_stage)
                                 merged_any = True
                         downloaded_file = os.path.join(temp_dir, "durations.json")
@@ -484,14 +502,30 @@ class DurationTracker:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes records to dictionary."""
-        return {
+        d = {
             "records": self.records,
             "total_duration": self.get_total_duration(),
         }
+        if self.git_slug:
+            d["git_slug"] = self.git_slug
+        if self.git_repo:
+            d["git_repo"] = self.git_repo
+        return d
 
-    def from_dict(self, data: Dict[str, Any]):
-        """Populates records from dictionary."""
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DurationTracker":
+        """Reconstructs a DurationTracker from a dictionary."""
+        tracker = cls(git_slug=data.get("git_slug"), git_repo=data.get("git_repo"))
+        tracker.records = list(data.get("records", []))
+        return tracker
+
+    def load_from_dict(self, data: Dict[str, Any]):
+        """Populates records from dictionary into this instance."""
         self.records = list(data.get("records", []))
+        if "git_slug" in data and not self.git_slug:
+            self.git_slug = data["git_slug"]
+        if "git_repo" in data and not self.git_repo:
+            self.git_repo = data["git_repo"]
 
     def save_to_file(self, filepath: str):
         """Saves duration records to a JSON file."""
@@ -506,7 +540,7 @@ class DurationTracker:
             return
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-        self.from_dict(data)
+        self.load_from_dict(data)
 
     def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
         """Loads duration records from a JSON file and merges them into this instance."""
@@ -552,3 +586,22 @@ def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Di
         return wrapper
 
     return decorator
+
+
+def find_telemetry_file(base_paths: List[str], filename: str) -> Optional[str]:
+    """Searches given base paths and their subdirectories recursively for filename."""
+    for base in base_paths:
+        if not base or not os.path.exists(base):
+            continue
+        direct = os.path.join(base, filename)
+        if os.path.isfile(direct):
+            return direct
+        try:
+            for root, _dirs, files in os.walk(base):
+                if filename in files:
+                    found = os.path.join(root, filename)
+                    if os.path.isfile(found):
+                        return found
+        except Exception:
+            pass
+    return None

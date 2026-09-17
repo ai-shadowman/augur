@@ -26,9 +26,13 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
                           git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
 
+    import logging
     from pipelines.base.indexing import generate_graphrag_index
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
+
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
 
     with read_from_input_artifact(codebase_dir) as tmp_codebase, \
          write_to_output_artifact(graphrag_dir) as tmp_graphrag:
@@ -43,6 +47,24 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 
         result.log_metric("success", 1)
 
+    try:
+        from utils.duration_tracker import DurationTracker
+        dur_tr = DurationTracker.get_instance()
+        summary = dur_tr.format_summary()
+        logging.info("\n" + summary)
+        print("\n" + summary, flush=True)
+    except Exception as e:
+        logging.debug(f"Failed to print duration summary in indexing pod: {e}")
+
+    try:
+        from utils.token_tracker import TokenCostTracker
+        tok_tr = TokenCostTracker.get_instance()
+        summary = tok_tr.format_summary()
+        logging.info("\n" + summary)
+        print("\n" + summary, flush=True)
+    except Exception as e:
+        logging.debug(f"Failed to print token summary in indexing pod: {e}")
+
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
@@ -55,6 +77,9 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     import pandas as pd
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
+
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
 
     if not git_repo or multi_repo:
         logging.info("Skipping evaluation: git_repo not provided or multi_repo=True.")
@@ -102,8 +127,8 @@ def run_indexing_multi_repo_op(parent_target_path: str,
 @dsl.pipeline(name="graphrag-indexing-pipeline")
 def _run_pipeline(
     codebase_dir: Input[Dataset],
-    git_repo: str = "",
-    git_branch: str = "",
+    git_repo: str = os.getenv("GIT_REPO", ""),
+    git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
 ) -> Dataset:
 

@@ -86,6 +86,18 @@ class DependencyAnalyzer:
             else 0
         )
 
+        if not self.git_slug and not self.multi_repo:
+            try:
+                urls = self._extract_indexed_git_urls()
+                if len(urls) == 1:
+                    from pipelines.base.data_generation import generate_git_slug
+                    first_url = next(iter(urls))
+                    self.git_slug = generate_git_slug(first_url, os.getenv("GIT_BRANCH", "main"))
+                elif len(urls) > 1:
+                    self.multi_repo = True
+            except Exception as e:
+                logging.debug(f"Could not auto-detect git_slug from entity URLs: {e}")
+
     def _extract_indexed_git_urls(self) -> frozenset:
         """Return the set of unique git repository URLs found in REPOSITORY entity descriptions."""
         import re
@@ -600,43 +612,44 @@ class DependencyAnalyzer:
 
         dur_tracker = None
         try:
-            from utils.duration_tracker import DurationTracker
+            from utils.duration_tracker import DurationTracker, find_telemetry_file
             dur_tracker = DurationTracker.get_instance()
-            try:
-                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
-            except Exception as e:
-                logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
-            # Load prior pipeline stage durations from graphrag directory (e.g. Data Gen & Indexing)
-            for candidate in [
+            dur_file = find_telemetry_file([
                 self.graphrag_dir,
                 os.path.join(self.graphrag_dir, "output"),
                 os.path.join(self.graphrag_dir, "input"),
                 os.path.dirname(self.graphrag_dir),
-            ]:
-                dur_file = os.path.join(candidate, "durations.json")
-                if os.path.exists(dur_file):
-                    dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
-                    break
+            ], "durations.json")
+            if dur_file:
+                dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
+                if not self.git_slug and dur_tracker.git_slug:
+                    self.git_slug = dur_tracker.git_slug
+            try:
+                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+            except Exception as e:
+                logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
 
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
-                try:
-                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
-                except Exception as e:
-                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
-                for candidate in [
+                from utils.duration_tracker import find_telemetry_file
+                tokens_file = find_telemetry_file([
                     self.graphrag_dir,
                     os.path.join(self.graphrag_dir, "output"),
                     os.path.join(self.graphrag_dir, "input"),
                     os.path.dirname(self.graphrag_dir),
-                ]:
-                    tokens_file = os.path.join(candidate, "tokens.json")
-                    if os.path.exists(tokens_file):
-                        from utils.token_tracker import TokenCostTracker
-                        self.token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
-                        break
+                ], "tokens.json")
+                if tokens_file:
+                    from utils.token_tracker import TokenCostTracker
+                    loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
+                    self.token_tracker.merge(loaded_tokens)
+                    if not self.git_slug and loaded_tokens.git_slug:
+                        self.git_slug = loaded_tokens.git_slug
+                try:
+                    self.token_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+                except Exception as e:
+                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 
@@ -726,6 +739,16 @@ class DependencyAnalyzer:
                 dur_tracker.save_to_file(os.path.join(self.graphrag_dir, "durations.json"))
             except Exception as e:
                 logging.debug(f"Failed to persist durations.json to {self.graphrag_dir}: {e}")
+            try:
+                dur_tracker.upload_to_mlflow(git_slug=self.git_slug, stage="Analysis", multi_repo=self.multi_repo)
+            except Exception as e:
+                logging.debug(f"Failed to upload durations to MLflow in generate_migration_report: {e}")
+
+        try:
+            self.token_tracker.save_to_file(os.path.join(self.graphrag_dir, "tokens.json"))
+            self.token_tracker.upload_to_mlflow(git_slug=self.git_slug, stage="Analysis", multi_repo=self.multi_repo)
+        except Exception as e:
+            logging.debug(f"Failed to upload tokens to MLflow in generate_migration_report: {e}")
 
         token_summary_section = self.token_tracker.format_markdown_section()
 

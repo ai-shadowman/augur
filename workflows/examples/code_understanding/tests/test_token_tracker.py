@@ -789,6 +789,18 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_git_slug_persistence(self):
+        """Verify git_slug and git_repo are preserved in to_dict() and from_dict()."""
+        tracker = TokenCostTracker(git_slug="org-repo-main", git_repo="https://github.com/org/repo")
+        tracker.track("Embedding", calls=1, prompt_tokens=100, output_tokens=0)
+        d = tracker.to_dict()
+        self.assertEqual(d["git_slug"], "org-repo-main")
+        self.assertEqual(d["git_repo"], "https://github.com/org/repo")
+
+        restored = TokenCostTracker.from_dict(d)
+        self.assertEqual(restored.git_slug, "org-repo-main")
+        self.assertEqual(restored.git_repo, "https://github.com/org/repo")
+
 
 if __name__ == "__main__":
     unittest.main()

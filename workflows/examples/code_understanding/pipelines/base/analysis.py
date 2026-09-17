@@ -23,48 +23,48 @@ class AnalysisPipeline:
 
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+        git_repo = git_repo or os.getenv("GIT_REPO", "")
+        git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
+        from utils.duration_tracker import find_telemetry_file
 
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            dur_file = find_telemetry_file([graphrag_source_path, os.path.dirname(graphrag_source_path)], "durations.json")
+            if dur_file:
+                dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
+                if not git_slug and dur_tracker.git_slug:
+                    git_slug = dur_tracker.git_slug
+                if not git_repo and dur_tracker.git_repo:
+                    git_repo = dur_tracker.git_repo
             try:
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in analysis: {e}")
-            for check_path in [
-                graphrag_source_path,
-                os.path.join(graphrag_source_path, "output"),
-                os.path.join(graphrag_source_path, "input"),
-                os.path.dirname(graphrag_source_path),
-            ]:
-                dur_file = os.path.join(check_path, "durations.json")
-                if os.path.exists(dur_file):
-                    dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
-                    break
         except Exception as e:
             logging.debug(f"DurationTracker handling in analysis: {e}")
 
+        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug or "", multi_repo=multi_repo)
+
         try:
             if hasattr(analyzer, "token_tracker") and analyzer.token_tracker:
+                tokens_file = find_telemetry_file([graphrag_source_path, os.path.dirname(graphrag_source_path)], "tokens.json")
+                if tokens_file:
+                    from utils.token_tracker import TokenCostTracker
+                    loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
+                    analyzer.token_tracker.merge(loaded_tokens)
+                    if not git_slug and loaded_tokens.git_slug:
+                        git_slug = loaded_tokens.git_slug
+                        analyzer.git_slug = git_slug
+                    if not git_repo and loaded_tokens.git_repo:
+                        git_repo = loaded_tokens.git_repo
                 try:
                     analyzer.token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
                 except Exception as e:
                     logging.debug(f"Failed to download tokens from MLflow in analysis: {e}")
-                for check_path in [
-                    graphrag_source_path,
-                    os.path.join(graphrag_source_path, "output"),
-                    os.path.join(graphrag_source_path, "input"),
-                    os.path.dirname(graphrag_source_path),
-                ]:
-                    tokens_file = os.path.join(check_path, "tokens.json")
-                    if os.path.exists(tokens_file):
-                        from utils.token_tracker import TokenCostTracker
-                        analyzer.token_tracker.merge(TokenCostTracker.load_from_file(tokens_file))
-                        break
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 
