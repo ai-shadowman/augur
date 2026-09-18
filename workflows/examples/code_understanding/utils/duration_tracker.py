@@ -177,20 +177,29 @@ class DurationTracker:
         if meta.get("is_aggregate") or meta.get("is_parent"):
             return True
         step_name = rec.get("step", "").strip().lower()
-        if step_name in ["migration report total", "generate migration report"]:
+        if step_name in [
+            "migration report total",
+            "generate migration report",
+            "graphrag indexing total",
+            "data generation total",
+            "indexing total",
+        ]:
             return True
         return False
 
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
-        """Returns a mapping of stage names to total elapsed seconds,
+        """Returns a mapping of stage names to total elapsed seconds in canonical stage order,
         avoiding double-counting parent/aggregate steps when sub-steps exist."""
+        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
         all_recs = self.get_all_records(include_active=include_active)
         stages: Dict[str, List[Dict[str, Any]]] = {}
         for rec in all_recs:
             stages.setdefault(rec["stage"], []).append(rec)
 
         stage_totals: Dict[str, float] = {}
-        for stage, recs in stages.items():
+        sorted_stages = sorted(stages.keys(), key=lambda s: stage_order.get(s.lower(), 99))
+        for stage in sorted_stages:
+            recs = stages[stage]
             non_agg = [r for r in recs if not self._is_aggregate_step(r)]
             if non_agg:
                 stage_totals[stage] = sum(r["duration"] for r in non_agg)
@@ -222,9 +231,17 @@ class DurationTracker:
 
     def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
+        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
+
+        # Sort records into canonical stage order (Data Generation -> Indexing -> Analysis)
+        # while preserving step execution order within each stage.
+        all_records = sorted(
+            all_records,
+            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+        )
 
         stage_w = 18
         step_w = 40
@@ -283,9 +300,15 @@ class DurationTracker:
 
     def format_markdown_table(self, include_active: bool = False) -> str:
         """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
+        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
         records = self.get_all_records(include_active=include_active)
         if not records:
             return ""
+
+        records = sorted(
+            records,
+            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+        )
 
         self.capture_mlflow_context()
 
@@ -570,175 +593,230 @@ class DurationTracker:
 
         # 2. Try searching and aggregating across ALL telemetry runs in MLflow
         seen_stages = set()
-        if git_slug or multi_repo:
-            try:
-                import mlflow
-                from mlflow.tracking import MlflowClient
-                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+        try:
+            import mlflow
+            from mlflow.tracking import MlflowClient
+            from loaders.mlflow_asset_loader import MlFlowAssetLoader
 
-                client = MlflowClient()
-                experiment = MlFlowAssetLoader().get_or_create_experiment_by_name(
+            client = MlflowClient()
+            experiment_ids = []
+
+            # 1. Search in active MLflow experiment
+            try:
+                active_run = mlflow.active_run()
+                if active_run and hasattr(active_run, "info") and getattr(active_run.info, "experiment_id", None):
+                    experiment_ids.append(str(active_run.info.experiment_id))
+            except Exception:
+                pass
+
+            # 2. Search in MLFLOW_EXPERIMENT_NAME if set
+            exp_name = os.environ.get("MLFLOW_EXPERIMENT_NAME")
+            if exp_name:
+                try:
+                    exp = client.get_experiment_by_name(exp_name)
+                    if exp and exp.experiment_id:
+                        experiment_ids.append(str(exp.experiment_id))
+                except Exception:
+                    pass
+
+            # 3. Search in self.mlflow_experiment_id
+            if getattr(self, "mlflow_experiment_id", None):
+                experiment_ids.append(str(self.mlflow_experiment_id))
+
+            # 4. Search in MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
+            try:
+                result_exp = MlFlowAssetLoader().get_or_create_experiment_by_name(
                     client, MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
                 )
+                if result_exp and result_exp.experiment_id:
+                    experiment_ids.append(str(result_exp.experiment_id))
+            except Exception:
+                pass
 
-                filter_parts = ["tags.category = 'telemetry'", "tags.type = 'durations'"]
-                if git_slug:
-                    filter_parts.append(f"tags.git_slug = '{git_slug}'")
-                elif multi_repo:
-                    filter_parts.append("tags.git_slug = 'multi-repo'")
-                filter_string = " AND ".join(filter_parts)
+            # 5. Default experiment "0"
+            experiment_ids.append("0")
 
-                try:
-                    runs = client.search_runs(
-                        experiment_ids=[experiment.experiment_id],
-                        filter_string=filter_string,
-                        order_by=["attributes.start_time DESC"],
-                    )
-                except Exception:
-                    # Fallback to quoted tag keys in filter
-                    quoted_parts = [
-                        f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
-                        for p in filter_parts
-                    ]
-                    runs = client.search_runs(
-                        experiment_ids=[experiment.experiment_id],
-                        filter_string=" AND ".join(quoted_parts),
-                        order_by=["attributes.start_time DESC"],
-                    )
+            # Deduplicate while preserving order
+            unique_exp_ids = [eid for i, eid in enumerate(experiment_ids) if eid and eid not in experiment_ids[:i]]
 
-                allowed_stages = None
-                if current_stage and current_stage.lower() == "analysis":
-                    allowed_stages = {"data generation", "indexing"}
-                elif current_stage and current_stage.lower() == "indexing":
-                    allowed_stages = {"data generation"}
+            filter_parts = ["tags.category = 'telemetry'", "tags.type = 'durations'"]
+            if git_slug:
+                filter_parts.append(f"tags.git_slug = '{git_slug}'")
+            elif multi_repo:
+                filter_parts.append("tags.git_slug = 'multi-repo'")
+            filter_string = " AND ".join(filter_parts)
 
-                for run in runs:
-                    if run.info.run_id in self._merged_runs:
-                        continue
-                    stage = run.data.tags.get("stage")
-                    if current_stage and stage and stage.lower() == current_stage.lower():
-                        continue
-                    if allowed_stages is not None:
-                        if not stage or stage.lower() not in allowed_stages:
-                            continue
-                    elif current_stage and not stage:
-                        continue
-
-                    if stage:
-                        if stage.lower() in seen_stages:
-                            continue
-                    else:
-                        if "untagged" in seen_stages:
-                            continue
-
-                    candidate_subpaths = []
-                    if git_slug:
-                        candidate_subpaths.append(f"results/telemetry/{git_slug}/durations.json")
-                        candidate_subpaths.append(f"results/telemetry/{git_slug}")
-                    if multi_repo:
-                        candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/durations.json".replace("//", "/"))
-                        candidate_subpaths.append("results/telemetry/multi-repo/durations.json")
-                    candidate_subpaths.extend([
-                        "results/telemetry/durations.json",
-                        "telemetry/durations.json",
-                        "durations.json",
-                    ])
-
-                    run_merged = False
-                    for subpath in candidate_subpaths:
-                        try:
-                            downloaded_path = mlflow.artifacts.download_artifacts(
-                                run_id=run.info.run_id,
-                                artifact_path=subpath,
-                            )
-                            if downloaded_path:
-                                target_file = None
-                                if os.path.isfile(downloaded_path):
-                                    target_file = downloaded_path
-                                elif os.path.isdir(downloaded_path):
-                                    cand = os.path.join(downloaded_path, "durations.json")
-                                    if os.path.isfile(cand):
-                                        target_file = cand
-                                if target_file and os.path.exists(target_file):
-                                    self.load_and_merge(target_file, current_stage=current_stage)
-                                    self._merged_runs.add(run.info.run_id)
-                                    if not self.mlflow_run_id:
-                                        self.mlflow_run_id = run.info.run_id
-                                        self.mlflow_experiment_id = run.info.experiment_id
-                                    merged_any = True
-                                    run_merged = True
-                                    if stage:
-                                        seen_stages.add(stage.lower())
-                                    else:
-                                        seen_stages.add("untagged")
-                                    break
-                        except Exception:
-                            continue
-                    if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
-                        break
-
-            except Exception as e:
-                logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
-
-            # Fallback to DefaultAssetLoader for missing upstream stages
-            upstream_targets = []
-            if current_stage and current_stage.lower() == "analysis":
-                upstream_targets = ["Data Generation", "Indexing"]
-            elif current_stage and current_stage.lower() == "indexing":
-                upstream_targets = ["Data Generation"]
-            else:
-                upstream_targets = [None]
-
-            for target_stage in upstream_targets:
-                if target_stage and target_stage.lower() in seen_stages:
-                    continue
-                try:
-                    from loaders.default_asset_loader import DefaultAssetLoader
-                    from loaders.mlflow_asset_loader import MlFlowAssetLoader
-
-                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
-                        git_slug=git_slug,
-                        multi_repo=multi_repo,
-                    )
-                    asset_file = f"{artifact_path}/durations.json"
-                    temp_dir = tempfile.mkdtemp()
+            runs = []
+            try:
+                runs = client.search_runs(
+                    experiment_ids=unique_exp_ids,
+                    filter_string=filter_string,
+                    order_by=["attributes.start_time DESC"],
+                )
+            except Exception:
+                for eid in unique_exp_ids:
                     try:
-                        asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "durations"}
-                        if target_stage:
-                            asset_tags["stage"] = target_stage
-                        content = DefaultAssetLoader().download(
-                            asset_file,
-                            download_dir=temp_dir,
-                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                            asset_tags=asset_tags,
+                        found_runs = client.search_runs(
+                            experiment_ids=[eid],
+                            filter_string=filter_string,
+                            order_by=["attributes.start_time DESC"],
                         )
-                        loaded_from_content = False
-                        if isinstance(content, dict) and "records" in content:
-                            other = DurationTracker.from_dict(content)
+                        if found_runs:
+                            runs.extend(found_runs)
+                    except Exception:
+                        pass
+                if not runs:
+                    try:
+                        quoted_parts = [
+                            f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
+                            for p in filter_parts
+                        ]
+                        quoted_filter = " AND ".join(quoted_parts)
+                        for eid in unique_exp_ids:
+                            try:
+                                found_runs = client.search_runs(
+                                    experiment_ids=[eid],
+                                    filter_string=quoted_filter,
+                                    order_by=["attributes.start_time DESC"],
+                                )
+                                if found_runs:
+                                    runs.extend(found_runs)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            allowed_stages = None
+            if current_stage and current_stage.lower() == "analysis":
+                allowed_stages = {"data generation", "indexing"}
+            elif current_stage and current_stage.lower() == "indexing":
+                allowed_stages = {"data generation"}
+
+            for run in runs:
+                if run.info.run_id in self._merged_runs:
+                    continue
+                stage = run.data.tags.get("stage")
+                if current_stage and stage and stage.lower() == current_stage.lower():
+                    continue
+                if allowed_stages is not None and stage:
+                    if stage.lower() not in allowed_stages:
+                        continue
+
+                if stage:
+                    if stage.lower() in seen_stages:
+                        continue
+                else:
+                    if "untagged" in seen_stages:
+                        continue
+
+                candidate_subpaths = []
+                if git_slug:
+                    candidate_subpaths.append(f"results/telemetry/{git_slug}/durations.json")
+                    candidate_subpaths.append(f"results/telemetry/{git_slug}")
+                if multi_repo:
+                    candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/durations.json".replace("//", "/"))
+                    candidate_subpaths.append("results/telemetry/multi-repo/durations.json")
+                candidate_subpaths.extend([
+                    "results/telemetry/durations.json",
+                    "telemetry/durations.json",
+                    "durations.json",
+                ])
+
+                run_merged = False
+                for subpath in candidate_subpaths:
+                    try:
+                        downloaded_path = mlflow.artifacts.download_artifacts(
+                            run_id=run.info.run_id,
+                            artifact_path=subpath,
+                        )
+                        if downloaded_path:
+                            target_file = None
+                            if os.path.isfile(downloaded_path):
+                                target_file = downloaded_path
+                            elif os.path.isdir(downloaded_path):
+                                cand = os.path.join(downloaded_path, "durations.json")
+                                if os.path.isfile(cand):
+                                    target_file = cand
+                            if target_file and os.path.exists(target_file):
+                                self.load_and_merge(target_file, current_stage=current_stage)
+                                self._merged_runs.add(run.info.run_id)
+                                if not self.mlflow_run_id:
+                                    self.mlflow_run_id = run.info.run_id
+                                    self.mlflow_experiment_id = run.info.experiment_id
+                                merged_any = True
+                                run_merged = True
+                                if stage:
+                                    seen_stages.add(stage.lower())
+                                else:
+                                    seen_stages.add("untagged")
+                                break
+                    except Exception:
+                        continue
+                if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
+                    break
+
+        except Exception as e:
+            logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
+
+        # Fallback to DefaultAssetLoader for missing upstream stages
+        upstream_targets = []
+        if current_stage and current_stage.lower() == "analysis":
+            upstream_targets = ["Data Generation", "Indexing"]
+        elif current_stage and current_stage.lower() == "indexing":
+            upstream_targets = ["Data Generation"]
+        else:
+            upstream_targets = [None]
+
+        for target_stage in upstream_targets:
+            if target_stage and target_stage.lower() in seen_stages:
+                continue
+            try:
+                from loaders.default_asset_loader import DefaultAssetLoader
+                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                    git_slug=git_slug,
+                    multi_repo=multi_repo,
+                )
+                asset_file = f"{artifact_path}/durations.json"
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "durations"}
+                    if target_stage:
+                        asset_tags["stage"] = target_stage
+                    content = DefaultAssetLoader().download(
+                        asset_file,
+                        download_dir=temp_dir,
+                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                        asset_tags=asset_tags,
+                    )
+                    loaded_from_content = False
+                    if isinstance(content, dict) and "records" in content:
+                        other = DurationTracker.from_dict(content)
+                        self.merge(other, current_stage=current_stage)
+                        merged_any = True
+                        loaded_from_content = True
+                    elif isinstance(content, str):
+                        data = json.loads(content)
+                        if isinstance(data, dict) and "records" in data:
+                            other = DurationTracker.from_dict(data)
                             self.merge(other, current_stage=current_stage)
                             merged_any = True
                             loaded_from_content = True
-                        elif isinstance(content, str):
-                            data = json.loads(content)
-                            if isinstance(data, dict) and "records" in data:
-                                other = DurationTracker.from_dict(data)
-                                self.merge(other, current_stage=current_stage)
-                                merged_any = True
-                                loaded_from_content = True
 
-                        if not loaded_from_content:
-                            downloaded_file = os.path.join(temp_dir, "durations.json")
-                            if os.path.exists(downloaded_file):
-                                self.load_and_merge(downloaded_file, current_stage=current_stage)
-                                merged_any = True
-                        if target_stage:
-                            seen_stages.add(target_stage.lower())
-                    finally:
-                        import shutil
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception as e:
-                    logging.debug(f"Failed to download durations.json for {target_stage} via DefaultAssetLoader: {e}")
+                    if not loaded_from_content:
+                        downloaded_file = os.path.join(temp_dir, "durations.json")
+                        if os.path.exists(downloaded_file):
+                            self.load_and_merge(downloaded_file, current_stage=current_stage)
+                            merged_any = True
+                    if target_stage:
+                        seen_stages.add(target_stage.lower())
+                finally:
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logging.debug(f"Failed to download durations.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
 
@@ -867,20 +945,142 @@ def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Di
     return decorator
 
 
-def find_telemetry_file(base_paths: List[str], filename: str) -> Optional[str]:
-    """Searches given base paths and their subdirectories recursively for filename."""
+def find_all_telemetry_files(base_paths: List[str], filename: str) -> List[str]:
+    """Searches given base paths and their subdirectories recursively for filename.
+    Returns a deduplicated list of all existing file paths found."""
+    found_files = []
+    seen = set()
     for base in base_paths:
         if not base or not os.path.exists(base):
             continue
         direct = os.path.join(base, filename)
         if os.path.isfile(direct):
-            return direct
+            norm = os.path.normpath(direct)
+            if norm not in seen:
+                seen.add(norm)
+                found_files.append(direct)
         try:
             for root, _dirs, files in os.walk(base):
                 if filename in files:
                     found = os.path.join(root, filename)
                     if os.path.isfile(found):
-                        return found
+                        norm = os.path.normpath(found)
+                        if norm not in seen:
+                            seen.add(norm)
+                            found_files.append(found)
         except Exception:
             pass
-    return None
+    return found_files
+
+
+def find_telemetry_file(base_paths: List[str], filename: str) -> Optional[str]:
+    """Searches given base paths and their subdirectories recursively for filename."""
+    files = find_all_telemetry_files(base_paths, filename)
+    return files[0] if files else None
+
+
+def extract_graphrag_indexing_durations(graphrag_dir: str, dur_tracker: DurationTracker) -> bool:
+    """Extracts Indexing durations from GraphRAG stats.json or output files and records them in dur_tracker.
+    Returns True if any indexing duration was extracted, False otherwise."""
+    if not graphrag_dir or not dur_tracker:
+        return False
+
+    candidate_stats_files = [
+        os.path.join(graphrag_dir, "output", "stats.json"),
+        os.path.join(graphrag_dir, "output", "artifacts", "stats.json"),
+        os.path.join(graphrag_dir, "logs", "stats.json"),
+        os.path.join(graphrag_dir, "stats.json"),
+    ]
+    base_output = os.path.join(graphrag_dir, "output")
+    if os.path.isdir(base_output):
+        try:
+            for root, _, files in os.walk(base_output):
+                if "stats.json" in files:
+                    p = os.path.join(root, "stats.json")
+                    if p not in candidate_stats_files:
+                        candidate_stats_files.append(p)
+        except Exception:
+            pass
+
+    stats_file = next((f for f in candidate_stats_files if os.path.isfile(f)), None)
+    if not stats_file:
+        return False
+
+    extracted_any = False
+    try:
+        with open(stats_file, "r", encoding="utf-8") as f:
+            stats_data = json.load(f)
+
+        if not isinstance(stats_data, dict):
+            return False
+
+        # Extract per-workflow durations if available
+        workflows = stats_data.get("workflows")
+        recorded_workflows = False
+        if isinstance(workflows, dict) and workflows:
+            for wf_name, wf_info in workflows.items():
+                if not isinstance(wf_info, dict):
+                    continue
+                overall = wf_info.get("overall", wf_info.get("runtime", wf_info.get("duration", 0.0)))
+                try:
+                    overall_float = float(overall)
+                except (ValueError, TypeError):
+                    overall_float = 0.0
+
+                if overall_float > 0.0:
+                    clean_name = wf_name.replace("_", " ").title()
+                    step_name = f"GraphRAG: {clean_name}"
+                    existing = any(
+                        r.get("stage", "").lower() == "indexing" and r.get("step") == step_name
+                        for r in dur_tracker.records
+                    )
+                    if not existing:
+                        dur_tracker.record_step(
+                            stage="Indexing",
+                            step=step_name,
+                            duration=overall_float,
+                            status="success",
+                        )
+                        extracted_any = True
+                        recorded_workflows = True
+
+        # Total runtime handling
+        total_runtime = stats_data.get("total_runtime", stats_data.get("runtime", stats_data.get("duration", 0.0)))
+        try:
+            total_float = float(total_runtime)
+        except (ValueError, TypeError):
+            total_float = 0.0
+
+        if total_float > 0.0:
+            if recorded_workflows:
+                existing = any(
+                    r.get("stage", "").lower() == "indexing" and r.get("step") == "GraphRAG Indexing Total"
+                    for r in dur_tracker.records
+                )
+                if not existing:
+                    dur_tracker.record_step(
+                        stage="Indexing",
+                        step="GraphRAG Indexing Total",
+                        duration=total_float,
+                        status="success",
+                        metadata={"is_aggregate": True},
+                    )
+                    extracted_any = True
+            else:
+                existing = any(
+                    r.get("stage", "").lower() == "indexing" and "GraphRAG Indexing" in r.get("step", "")
+                    for r in dur_tracker.records
+                )
+                if not existing:
+                    dur_tracker.record_step(
+                        stage="Indexing",
+                        step="GraphRAG Indexing",
+                        duration=total_float,
+                        status="success",
+                    )
+                    extracted_any = True
+
+    except Exception as e:
+        logging.debug(f"Failed to extract indexing durations from {stats_file}: {e}")
+
+    return extracted_any

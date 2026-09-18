@@ -612,15 +612,27 @@ class DependencyAnalyzer:
 
         dur_tracker = None
         try:
-            from utils.duration_tracker import DurationTracker, find_telemetry_file
+            from utils.duration_tracker import (
+                DurationTracker,
+                find_all_telemetry_files,
+                extract_graphrag_indexing_durations,
+            )
             dur_tracker = DurationTracker.get_instance()
-            dur_file = find_telemetry_file([
+            candidate_dirs = [
                 self.graphrag_dir,
                 os.path.join(self.graphrag_dir, "output"),
                 os.path.join(self.graphrag_dir, "input"),
                 os.path.dirname(self.graphrag_dir),
-            ], "durations.json")
-            if dur_file:
+                os.getenv("PARENT_TARGET_PATH", "target"),
+                os.getenv("PARENT_SOURCE_PATH", "source"),
+            ]
+            if self.git_slug:
+                candidate_dirs.extend([
+                    os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), self.git_slug),
+                    os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), self.git_slug),
+                    os.path.join(os.path.dirname(self.graphrag_dir), self.git_slug),
+                ])
+            for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
                 if not self.git_slug and dur_tracker.git_slug:
                     self.git_slug = dur_tracker.git_slug
@@ -628,20 +640,18 @@ class DependencyAnalyzer:
                 dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
+
+            has_indexing_dur = any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records)
+            if not has_indexing_dur:
+                extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
         except Exception as e:
             logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
 
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
-                from utils.duration_tracker import find_telemetry_file
+                from utils.duration_tracker import find_all_telemetry_files
                 from utils.token_tracker import extract_graphrag_indexing_tokens
-                tokens_file = find_telemetry_file([
-                    self.graphrag_dir,
-                    os.path.join(self.graphrag_dir, "output"),
-                    os.path.join(self.graphrag_dir, "input"),
-                    os.path.dirname(self.graphrag_dir),
-                ], "tokens.json")
-                if tokens_file:
+                for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
                     self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
                     if not self.git_slug and self.token_tracker.git_slug:
                         self.git_slug = self.token_tracker.git_slug

@@ -27,14 +27,28 @@ class AnalysisPipeline:
         git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-        from utils.duration_tracker import find_telemetry_file
+        from utils.duration_tracker import find_all_telemetry_files
+
+        candidate_dirs = [
+            graphrag_source_path,
+            os.path.join(graphrag_source_path, "output"),
+            os.path.join(graphrag_source_path, "input"),
+            os.path.dirname(graphrag_source_path),
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            os.getenv("PARENT_SOURCE_PATH", "source"),
+        ]
+        if git_slug:
+            candidate_dirs.extend([
+                os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), git_slug),
+                os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), git_slug),
+                os.path.join(os.path.dirname(graphrag_source_path), git_slug),
+            ])
 
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
-            dur_file = find_telemetry_file([graphrag_source_path, os.path.dirname(graphrag_source_path)], "durations.json")
-            if dur_file:
+            for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
                 if not git_slug and dur_tracker.git_slug:
                     git_slug = dur_tracker.git_slug
@@ -51,8 +65,7 @@ class AnalysisPipeline:
 
         try:
             if hasattr(analyzer, "token_tracker") and analyzer.token_tracker:
-                tokens_file = find_telemetry_file([graphrag_source_path, os.path.dirname(graphrag_source_path)], "tokens.json")
-                if tokens_file:
+                for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
                     analyzer.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
                     if not git_slug and analyzer.token_tracker.git_slug:
                         git_slug = analyzer.token_tracker.git_slug

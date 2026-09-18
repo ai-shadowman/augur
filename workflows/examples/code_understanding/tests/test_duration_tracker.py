@@ -24,7 +24,13 @@ for pkg_name in [
         m.__path__ = []
         sys.modules[pkg_name] = m
 
-from utils.duration_tracker import DurationTracker, track_duration
+from utils.duration_tracker import (
+    DurationTracker,
+    track_duration,
+    extract_graphrag_indexing_durations,
+    find_all_telemetry_files,
+    find_telemetry_file,
+)
 
 
 class TestDurationTracker(unittest.TestCase):
@@ -815,6 +821,204 @@ class TestDurationTracker(unittest.TestCase):
         self.assertEqual(t4.mlflow_run_id, "run-001")
         self.assertEqual(t4.mlflow_experiment_id, "exp-7")
         self.assertEqual(t4.mlflow_tracking_uri, "http://localhost:5000")
+
+    def test_extract_graphrag_indexing_durations_with_workflows(self):
+        """Verify extracting indexing durations from stats.json with individual workflows."""
+        tracker = DurationTracker()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats = {
+                "total_runtime": 125.5,
+                "workflows": {
+                    "create_base_extracted_entities": {"overall": 45.2},
+                    "create_summarized_entities": {"overall": 35.8},
+                    "create_base_text_units": {"overall": 15.0},
+                }
+            }
+            with open(os.path.join(output_dir, "stats.json"), "w", encoding="utf-8") as f:
+                json.dump(stats, f)
+
+            result = extract_graphrag_indexing_durations(tmp_dir, tracker)
+            self.assertTrue(result)
+            self.assertEqual(len(tracker.records), 4)
+
+            steps = {r["step"]: r for r in tracker.records}
+            self.assertIn("GraphRAG: Create Base Extracted Entities", steps)
+            self.assertIn("GraphRAG: Create Summarized Entities", steps)
+            self.assertIn("GraphRAG: Create Base Text Units", steps)
+            self.assertIn("GraphRAG Indexing Total", steps)
+
+            for step_name, record in steps.items():
+                self.assertEqual(record["stage"], "Indexing")
+                self.assertEqual(record["status"], "success")
+
+            self.assertEqual(steps["GraphRAG: Create Base Extracted Entities"]["duration"], 45.2)
+            self.assertEqual(steps["GraphRAG Indexing Total"]["duration"], 125.5)
+            self.assertTrue(steps["GraphRAG Indexing Total"]["metadata"]["is_aggregate"])
+
+            # Total duration should not double-count the aggregate step
+            expected_total = 45.2 + 35.8 + 15.0
+            self.assertAlmostEqual(tracker.get_total_duration(), expected_total, places=2)
+
+    def test_extract_graphrag_indexing_durations_total_only(self):
+        """Verify extracting indexing durations when only total_runtime is present."""
+        tracker = DurationTracker()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats = {"total_runtime": 88.0}
+            with open(os.path.join(output_dir, "stats.json"), "w", encoding="utf-8") as f:
+                json.dump(stats, f)
+
+            result = extract_graphrag_indexing_durations(tmp_dir, tracker)
+            self.assertTrue(result)
+            self.assertEqual(len(tracker.records), 1)
+            self.assertEqual(tracker.records[0]["step"], "GraphRAG Indexing")
+            self.assertEqual(tracker.records[0]["duration"], 88.0)
+            self.assertAlmostEqual(tracker.get_total_duration(), 88.0, places=2)
+
+    def test_extract_graphrag_indexing_durations_missing_or_corrupt(self):
+        """Verify extract_graphrag_indexing_durations handles missing or corrupt files gracefully."""
+        tracker = DurationTracker()
+        self.assertFalse(extract_graphrag_indexing_durations("", tracker))
+        self.assertFalse(extract_graphrag_indexing_durations("/nonexistent/path", tracker))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            with open(os.path.join(output_dir, "stats.json"), "w", encoding="utf-8") as f:
+                f.write("not valid json")
+            self.assertFalse(extract_graphrag_indexing_durations(tmp_dir, tracker))
+
+    def test_find_all_telemetry_files(self):
+        """Verify finding multiple telemetry files across multiple directories."""
+        with tempfile.TemporaryDirectory() as tmp_dir1, tempfile.TemporaryDirectory() as tmp_dir2:
+            f1 = os.path.join(tmp_dir1, "durations.json")
+            f2 = os.path.join(tmp_dir2, "durations.json")
+            with open(f1, "w") as f:
+                f.write("{}")
+            with open(f2, "w") as f:
+                f.write("{}")
+
+            found = find_all_telemetry_files([tmp_dir1, tmp_dir2, tmp_dir1], "durations.json")
+            self.assertEqual(len(found), 2)
+            self.assertEqual(set(found), {os.path.abspath(f1), os.path.abspath(f2)})
+
+            empty_found = find_all_telemetry_files(["/nonexistent/dir"], "durations.json")
+            self.assertEqual(empty_found, [])
+
+    def test_canonical_stage_ordering(self):
+        """Verify canonical stage sorting (Data Generation -> Indexing -> Analysis) in summaries and breakdowns."""
+        tracker = DurationTracker()
+        # Record in reverse / arbitrary order
+        tracker.record_step("Analysis", "Prompt 1: Dependency Graph", 25.0)
+        tracker.record_step("Indexing", "GraphRAG: Extract Entities", 40.0)
+        tracker.record_step("Data Generation", "Clone Repo", 10.0)
+        tracker.record_step("Custom Stage", "Custom Step", 5.0)
+
+        # Stage durations keys order
+        stage_durations = tracker.get_stage_durations()
+        stages = list(stage_durations.keys())
+        self.assertEqual(stages[:3], ["Data Generation", "Indexing", "Analysis"])
+        self.assertEqual(stages[3], "Custom Stage")
+
+        # format_summary table row ordering
+        summary = tracker.format_summary()
+        dg_pos = summary.find("Data Generation")
+        idx_pos = summary.find("Indexing")
+        an_pos = summary.find("Analysis")
+        self.assertTrue(dg_pos != -1 and idx_pos != -1 and an_pos != -1)
+        self.assertTrue(dg_pos < idx_pos < an_pos)
+
+        # format_markdown_table ordering
+        md_table = tracker.format_markdown_table()
+        dg_pos_md = md_table.find("Data Generation")
+        idx_pos_md = md_table.find("Indexing")
+        an_pos_md = md_table.find("Analysis")
+        self.assertTrue(dg_pos_md < idx_pos_md < an_pos_md)
+
+    def test_download_from_mlflow_multi_experiment_search(self):
+        """Verify download_from_mlflow queries active, env, instance, and default experiments."""
+        import sys
+        mlflow_mock = sys.modules["mlflow"]
+        active_mock = MagicMock()
+        active_mock.info.experiment_id = "exp-active-99"
+        mlflow_mock.active_run.return_value = active_mock
+
+        client_mock = MagicMock()
+        env_exp_mock = MagicMock()
+        env_exp_mock.experiment_id = "exp-env-88"
+        client_mock.get_experiment_by_name.return_value = env_exp_mock
+        client_mock.search_runs.return_value = []
+
+        tracker = DurationTracker()
+        tracker.mlflow_experiment_id = "exp-inst-77"
+
+        with patch.dict(os.environ, {"MLFLOW_EXPERIMENT_NAME": "custom-exp"}), \
+             patch('mlflow.tracking.MlflowClient', return_value=client_mock), \
+             patch('loaders.default_asset_loader.DefaultAssetLoader'):
+            tracker.download_from_mlflow(git_slug="slug-test", current_stage="Analysis")
+
+            self.assertTrue(client_mock.search_runs.called)
+            call_kwargs = client_mock.search_runs.call_args[1]
+            exp_ids = call_kwargs.get("experiment_ids", [])
+            self.assertIn("exp-active-99", exp_ids)
+            self.assertIn("exp-env-88", exp_ids)
+            self.assertIn("exp-inst-77", exp_ids)
+            self.assertIn("0", exp_ids)
+
+    def test_generate_migration_report_includes_all_pipeline_stages(self):
+        """Verify generate_migration_report produces a summary table containing Data Generation, Indexing, and Analysis."""
+        from utils.graphrag_utils import DependencyAnalyzer
+        import asyncio
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Set up target dir with Data Generation durations
+            target_dir = os.path.join(tmp_dir, "target", "test-slug")
+            os.makedirs(target_dir, exist_ok=True)
+            dg_dur = DurationTracker(git_slug="test-slug")
+            dg_dur.record_step("Data Generation", "Reset Environment", 2.5)
+            dg_dur.record_step("Data Generation", "Detect Languages", 1.5)
+            dg_dur.save_to_file(os.path.join(target_dir, "durations.json"))
+
+            # Set up graphrag dir with Indexing stats.json
+            graphrag_dir = os.path.join(tmp_dir, "graph_rag_app", "source", "test-slug")
+            output_dir = os.path.join(graphrag_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats = {
+                "total_runtime": 60.0,
+                "workflows": {
+                    "create_base_extracted_entities": {"overall": 35.0},
+                    "create_summarized_entities": {"overall": 25.0},
+                }
+            }
+            with open(os.path.join(output_dir, "stats.json"), "w", encoding="utf-8") as f:
+                json.dump(stats, f)
+
+            analyzer = DependencyAnalyzer(graphrag_dir, git_slug="test-slug", multi_repo=False)
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
+            mock_loader.download_prompt.side_effect = [
+                ("prompt 1", {"title": "### Overview", "skip_prompt": None}),
+                ("prompt 2", {"title": "### Code Migration Plan (JSON)", "skip_prompt": None}),
+            ]
+
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+                 patch.object(analyzer, 'query_with_llm', side_effect=["Overview content", '{"plan": []}']), \
+                 patch('utils.visualization_utils.log_interactive_dependency_graph'), \
+                 patch.dict(os.environ, {
+                     "PARENT_TARGET_PATH": os.path.join(tmp_dir, "target"),
+                     "PARENT_SOURCE_PATH": os.path.join(tmp_dir, "source"),
+                 }):
+                report = asyncio.run(analyzer.generate_migration_report())
+
+            self.assertIn("### Pipeline Execution Duration Summary", report)
+            self.assertIn("Data Generation", report)
+            self.assertIn("Indexing", report)
+            self.assertIn("Analysis", report)
+            self.assertIn("Reset Environment", report)
+            self.assertIn("GraphRAG: Create Base Extracted Entities", report)
 
 
 if __name__ == "__main__":

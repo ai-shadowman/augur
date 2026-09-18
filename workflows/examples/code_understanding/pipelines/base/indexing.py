@@ -37,14 +37,28 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         os.makedirs(f"{graphrag_source_path}/output", exist_ok=True)
 
-        from utils.duration_tracker import find_telemetry_file
+        from utils.duration_tracker import find_all_telemetry_files
+
+        candidate_dirs = [
+            codebase_path,
+            os.path.dirname(codebase_path),
+            graphrag_source_path,
+            os.path.dirname(graphrag_source_path),
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            os.getenv("PARENT_SOURCE_PATH", "source"),
+        ]
+        if git_slug:
+            candidate_dirs.extend([
+                os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), git_slug),
+                os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), git_slug),
+                os.path.join(os.path.dirname(codebase_path), git_slug),
+            ])
 
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
-            dur_file = find_telemetry_file([codebase_path, os.path.dirname(codebase_path), graphrag_source_path], "durations.json")
-            if dur_file:
+            for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Indexing")
                 if not git_slug and dur_tracker.git_slug:
                     git_slug = dur_tracker.git_slug
@@ -63,14 +77,12 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             token_tracker = TokenCostTracker.get_instance()
             token_tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
             token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
-            tokens_file = find_telemetry_file([codebase_path, os.path.dirname(codebase_path), graphrag_source_path], "tokens.json")
-            if tokens_file:
-                loaded_tokens = TokenCostTracker.load_from_file(tokens_file)
-                token_tracker.merge(loaded_tokens)
-                if not git_slug and loaded_tokens.git_slug:
-                    git_slug = loaded_tokens.git_slug
-                if not git_repo and loaded_tokens.git_repo:
-                    git_repo = loaded_tokens.git_repo
+            for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
+                token_tracker.load_and_merge(tokens_file, current_stage="Indexing")
+                if not git_slug and token_tracker.git_slug:
+                    git_slug = token_tracker.git_slug
+                if not git_repo and token_tracker.git_repo:
+                    git_repo = token_tracker.git_repo
             try:
                 token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing", only_current_run=False)
             except Exception as e:
@@ -141,6 +153,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
         if dur_tracker:
+            try:
+                from utils.duration_tracker import extract_graphrag_indexing_durations
+                extract_graphrag_indexing_durations(graphrag_source_path, dur_tracker)
+            except Exception as e:
+                logging.debug(f"Failed to extract indexing durations: {e}")
             for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     dur_tracker.save_to_file(os.path.join(save_dir, "durations.json"))

@@ -32,10 +32,29 @@ def run_graphrag(root_dir: str) -> None:
     import graphrag.api as graphrag_api
 
     logging.info("Starting Graphic Rag Indexing")
+    root_path = Path(root_dir)
+
     try:
-        from utils.duration_tracker import DurationTracker
+        from utils.duration_tracker import (
+            DurationTracker,
+            find_all_telemetry_files,
+            extract_graphrag_indexing_durations,
+        )
         dur_tracker = DurationTracker.get_instance()
-    except Exception:
+        candidate_dirs = [
+            str(root_path),
+            str(root_path / "output"),
+            str(root_path / "input"),
+            str(root_path.parent),
+        ]
+        if root_path.parent and root_path.parent.parent:
+            candidate_dirs.append(str(root_path.parent.parent / "target"))
+            candidate_dirs.append(str(root_path.parent.parent / "target" / root_path.name))
+        existing_dur_files = find_all_telemetry_files(candidate_dirs, "durations.json")
+        for fpath in existing_dur_files:
+            dur_tracker.load_and_merge(fpath, current_stage="Indexing")
+    except Exception as e:
+        log.debug(f"Failed to initialize/load durations in run_graphrag: {e}")
         dur_tracker = None
 
     try:
@@ -45,8 +64,6 @@ def run_graphrag(root_dir: str) -> None:
         token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
     except Exception as e:
         log.debug(f"Failed to enable token tracking in run_graphrag: {e}")
-
-    root_path = Path(root_dir)
 
     log.info("Initializing GraphRAG index...")
     if dur_tracker:
@@ -83,11 +100,9 @@ def run_graphrag(root_dir: str) -> None:
                 tracker.save_to_file(os.path.join(d, "tokens.json"))
             except Exception:
                 pass
-    except Exception as e:
-        log.debug(f"Failed to extract/save indexing tokens in run_graphrag: {e}")
-
     try:
         if dur_tracker:
+            extract_graphrag_indexing_durations(str(root_path), dur_tracker)
             for d in [str(root_path), str(root_path / "output")]:
                 try:
                     os.makedirs(d, exist_ok=True)

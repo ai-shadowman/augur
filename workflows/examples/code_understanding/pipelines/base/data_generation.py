@@ -723,6 +723,30 @@ class DataGenerationPipeline:
 
             pipeline_results.append(result)
 
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tr = DurationTracker.get_instance()
+            if parent_target_path:
+                try:
+                    dur_tr.save_to_file(os.path.join(parent_target_path, "durations.json"))
+                except Exception:
+                    pass
+            dur_tr.upload_to_mlflow(git_slug=None, stage="Data Generation", multi_repo=True)
+        except Exception as e:
+            logging.debug(f"Failed to persist aggregate durations in DataGenerationPipeline.run_multi_repo: {e}")
+
+        try:
+            from utils.token_tracker import TokenCostTracker
+            tok_tr = TokenCostTracker.get_instance()
+            if parent_target_path:
+                try:
+                    tok_tr.save_to_file(os.path.join(parent_target_path, "tokens.json"))
+                except Exception:
+                    pass
+            tok_tr.upload_to_mlflow(git_slug=None, stage="Data Generation", multi_repo=True)
+        except Exception as e:
+            logging.debug(f"Failed to persist aggregate tokens in DataGenerationPipeline.run_multi_repo: {e}")
+
         return pipeline_results
 
 
