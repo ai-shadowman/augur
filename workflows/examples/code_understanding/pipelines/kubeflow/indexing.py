@@ -27,6 +27,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
 
     import logging
+    import os
     from pipelines.base.indexing import generate_graphrag_index
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
@@ -47,7 +48,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
             )
             result.log_metric("success", 1)
         finally:
-            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output")]:
                 try:
                     os.makedirs(save_dir, exist_ok=True)
                     from utils.duration_tracker import DurationTracker
@@ -90,6 +91,7 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
                             multi_repo: bool = False):
 
     import logging
+    import os
     import pandas as pd
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
@@ -125,6 +127,8 @@ def run_indexing_multi_repo_op(parent_target_path: str,
                                 eval_results: Output[Dataset]):
     """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
 
+    import logging
+    import os
     import pandas as pd
     from pipelines.base.indexing import IndexingPipeline
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact
@@ -134,7 +138,7 @@ def run_indexing_multi_repo_op(parent_target_path: str,
         try:
             IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
         finally:
-            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output")]:
                 try:
                     os.makedirs(save_dir, exist_ok=True)
                     from utils.duration_tracker import DurationTracker

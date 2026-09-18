@@ -18,7 +18,8 @@ for pkg_name in [
     "pandas", "yaml", "mlflow", "mlflow.tracking", "mlflow.metrics", "mlflow.metrics.genai",
     "requests", "deepeval",
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
-    "sdg_hub", "sdg_hub.core", "sdg_hub.core.flow", "flows.flow_extensions", "datasets"
+    "sdg_hub", "sdg_hub.core", "sdg_hub.core.flow", "flows.flow_extensions", "datasets",
+    "lancedb", "nest_asyncio", "jsonpath_ng", "github", "pygments", "pygments.lexers", "pygments.util"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
@@ -379,6 +380,61 @@ class TestFallbackExtraction(unittest.TestCase):
             # Verify totals and tables
             self.assertIn("### LLM Token Usage & Cost Summary", report)
             self.assertIn("### Pipeline Execution Duration Summary", report)
+
+    def test_save_code_and_metadata_files_fallback_when_metadata_missing(self):
+        """Verify save_code_and_metadata_files still writes .txt and _metadata.txt even when extracted_data is missing."""
+        import pandas as pd
+        from pipelines.base.data_generation import save_code_and_metadata_files
+
+        target_dir = os.path.join(self.temp_dir, "fallback_target")
+        os.makedirs(target_dir, exist_ok=True)
+
+        df = MagicMock()
+        df.iterrows.return_value = [
+            (0, {"file_path": "src/Main.java", "code": "public class Main {}"})
+        ]
+
+        with patch("utils.json_utils.flatten_code_metadata", return_value="mock_meta: true"):
+            save_code_and_metadata_files(
+                df=df,
+                target_path=target_dir,
+                git_repo="https://github.com/test/repo",
+                git_slug="test-repo-main",
+                language="java",
+                config=False,
+            )
+
+        code_txt = os.path.join(target_dir, "src", "Main.txt")
+        meta_txt = os.path.join(target_dir, "src", "Main_metadata.txt")
+
+        self.assertTrue(os.path.exists(code_txt), "Expected Main.txt to be created")
+        self.assertTrue(os.path.exists(meta_txt), "Expected Main_metadata.txt to be created")
+
+        with open(code_txt) as f:
+            content = f.read()
+            self.assertIn("public class Main {}", content)
+
+    def test_indexing_raises_descriptive_error_when_no_txt_files(self):
+        """Verify generate_graphrag_index raises a clear RuntimeError when input codebase has 0 .txt files."""
+        from pipelines.base.indexing import generate_graphrag_index
+
+        codebase_dir = os.path.join(self.temp_dir, "empty_codebase")
+        graphrag_source = os.path.join(self.temp_dir, "empty_graphrag")
+        os.makedirs(codebase_dir, exist_ok=True)
+        # Put only a JSON file
+        with open(os.path.join(codebase_dir, "durations.json"), "w") as f:
+            f.write("{}")
+
+        with patch("utils.graphrag_utils.DependencyAnalyzer.prepare_settings"), \
+             patch("utils.prompt_utils.prepare_indexing_config"):
+            with self.assertRaises(RuntimeError) as ctx:
+                generate_graphrag_index(
+                    codebase_path=codebase_dir,
+                    graphrag_source_path=graphrag_source,
+                    git_repo="https://github.com/test/repo",
+                    git_branch="main",
+                )
+            self.assertIn("No .txt files found", str(ctx.exception))
 
 
 if __name__ == "__main__":

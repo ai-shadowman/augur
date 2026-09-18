@@ -96,13 +96,13 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         # Immediately preserve prior durations.json and tokens.json in graphrag_source_path
         if dur_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     dur_tracker.save_to_file(os.path.join(d, "durations.json"))
                 except Exception:
                     pass
         if token_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
                 except Exception:
@@ -121,6 +121,19 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 with dur_tracker.measure(stage="Indexing", step="Copy Source to Input"):
                     logging.info("Copying source code to GraphRAG directory...")
                     shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
+                    for fname in ["durations.json", "tokens.json"]:
+                        fpath = os.path.join(f"{graphrag_source_path}/input", fname)
+                        if os.path.exists(fpath):
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
+                    txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
+                    if not txt_files:
+                        raise RuntimeError(
+                            f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
+                            f"for git_slug='{git_slug}'. Ensure data generation produced code files."
+                        )
                 with dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution"):
                     logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
                     run_graphrag(graphrag_source_path)
@@ -134,6 +147,19 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                                         multi_repo=multi_repo)
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
+                for fname in ["durations.json", "tokens.json"]:
+                    fpath = os.path.join(f"{graphrag_source_path}/input", fname)
+                    if os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+                txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
+                if not txt_files:
+                    raise RuntimeError(
+                        f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
+                        f"for git_slug='{git_slug}'. Ensure data generation produced code files."
+                    )
                 logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
                 run_graphrag(graphrag_source_path)
         finally:
@@ -146,7 +172,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     logging.debug(f"Indexing token extraction: {e}")
 
             if token_tracker:
-                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                     try:
                         token_tracker.save_to_file(os.path.join(save_dir, "tokens.json"))
                     except Exception:
@@ -162,7 +188,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     extract_graphrag_indexing_durations(graphrag_source_path, dur_tracker)
                 except Exception as e:
                     logging.debug(f"Failed to extract indexing durations: {e}")
-                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                     try:
                         dur_tracker.save_to_file(os.path.join(save_dir, "durations.json"))
                     except Exception as e:

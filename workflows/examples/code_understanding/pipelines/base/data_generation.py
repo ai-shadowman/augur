@@ -428,17 +428,26 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
         for _, row in df.iterrows():
 
-            logging.debug(f"**Processing file {row['file_path']}...**")
-
-            code = row["code"]
-
-            metadata = json_utils.extract_json_from_string(row["extracted_data"])
-
-            if not metadata:
-                logging.info(f"No metadata found for file {row['file_path']}. Skipping...")
+            rel_file_path = row.get("file_path", "")
+            if not rel_file_path:
                 continue
 
-            rel_file_path = row["file_path"]
+            logging.debug(f"**Processing file {rel_file_path}...**")
+
+            code = row.get("code", "")
+
+            extracted = row.get("extracted_data") if "extracted_data" in row else None
+            metadata = json_utils.extract_json_from_string(extracted) if extracted else None
+
+            if not metadata:
+                logging.info(f"No LLM metadata found for file {rel_file_path}. Using fallback metadata.")
+                metadata = {
+                    "file_path": rel_file_path,
+                    "language": language,
+                    "git_repo": git_repo,
+                    "git_slug": git_slug,
+                    "multi_repo": str(row.get("multi_repo", False)).lower(),
+                }
 
             if not metadata.get('language'):
                 metadata['language'] = language
@@ -509,8 +518,15 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                 result["status"] = "skipped"
                 return
 
-            with dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})"):
-                code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            try:
+                with dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})"):
+                    code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            except Exception as e:
+                logging.warning(
+                    f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
+                    f"Falling back to saving raw code files without LLM metadata."
+                )
+                code_and_metadata_df = code_df
 
             with dur_tracker.measure(stage="Data Generation", step=f"Save Metadata Files ({step_label})"):
                 save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
@@ -525,7 +541,14 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                 result["status"] = "skipped"
                 return
 
-            code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            try:
+                code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            except Exception as e:
+                logging.warning(
+                    f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
+                    f"Falling back to saving raw code files without LLM metadata."
+                )
+                code_and_metadata_df = code_df
 
             save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
                                          git_slug=git_slug, language=language, config=config,

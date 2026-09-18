@@ -169,8 +169,17 @@ def generate_code_and_meta_op(
                 )
                 raise
             logging.error(
-                f"Skipping repo '{git_repo}' (branch='{git_branch}'): {e}"
+                f"Error processing repo '{git_repo}' (branch='{git_branch}'): {e}"
             )
+            if not multi_repo:
+                raise
+        else:
+            has_txt = any(f.endswith(".txt") for _, _, files in os.walk(tmp_target) for f in files)
+            if not has_txt:
+                err_msg = f"No text or code files were generated in target directory for repo '{git_repo}'."
+                logging.error(err_msg)
+                if not multi_repo:
+                    raise RuntimeError(err_msg)
         finally:
             if dur_tracker:
                 try:
