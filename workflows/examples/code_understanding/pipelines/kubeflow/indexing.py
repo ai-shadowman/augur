@@ -37,29 +37,31 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
     with read_from_input_artifact(codebase_dir) as tmp_codebase, \
          write_to_output_artifact(graphrag_dir) as tmp_graphrag:
 
-        generate_graphrag_index(
-            codebase_path=tmp_codebase,
-            graphrag_source_path=tmp_graphrag,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            multi_repo=multi_repo,
-        )
-
         try:
-            from utils.duration_tracker import DurationTracker
-            dur_tr = DurationTracker.get_instance()
-            dur_tr.save_to_file(os.path.join(tmp_graphrag, "durations.json"))
-        except Exception as e:
-            logging.debug(f"Failed to persist durations.json to tmp_graphrag: {e}")
+            generate_graphrag_index(
+                codebase_path=tmp_codebase,
+                graphrag_source_path=tmp_graphrag,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
+            result.log_metric("success", 1)
+        finally:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    from utils.duration_tracker import DurationTracker
+                    dur_tr = DurationTracker.get_instance()
+                    dur_tr.save_to_file(os.path.join(save_dir, "durations.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist durations.json to {save_dir}: {e}")
 
-        try:
-            from utils.token_tracker import TokenCostTracker
-            tok_tr = TokenCostTracker.get_instance()
-            tok_tr.save_to_file(os.path.join(tmp_graphrag, "tokens.json"))
-        except Exception as e:
-            logging.debug(f"Failed to persist tokens.json to tmp_graphrag: {e}")
-
-        result.log_metric("success", 1)
+                try:
+                    from utils.token_tracker import TokenCostTracker
+                    tok_tr = TokenCostTracker.get_instance()
+                    tok_tr.save_to_file(os.path.join(save_dir, "tokens.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist tokens.json to {save_dir}: {e}")
 
     try:
         from utils.duration_tracker import DurationTracker
@@ -129,7 +131,24 @@ def run_indexing_multi_repo_op(parent_target_path: str,
     setup_logging()
 
     with write_to_output_artifact(graphrag_dir) as tmp_graphrag:
-        IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
+        try:
+            IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
+        finally:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    from utils.duration_tracker import DurationTracker
+                    dur_tr = DurationTracker.get_instance()
+                    dur_tr.save_to_file(os.path.join(save_dir, "durations.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist durations.json in run_indexing_multi_repo_op: {e}")
+
+                try:
+                    from utils.token_tracker import TokenCostTracker
+                    tok_tr = TokenCostTracker.get_instance()
+                    tok_tr.save_to_file(os.path.join(save_dir, "tokens.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist tokens.json in run_indexing_multi_repo_op: {e}")
 
     pd.DataFrame().to_csv(eval_results.path, index=False)
 

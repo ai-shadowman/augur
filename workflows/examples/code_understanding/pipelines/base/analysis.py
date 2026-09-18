@@ -86,7 +86,18 @@ class AnalysisPipeline:
 
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Safeguard: ensure duration summary is present in the markdown report
+        # Safeguard: ensure token and duration summaries are present in the markdown report
+        if analyzer.token_tracker and "### LLM Token Usage & Cost Summary" not in report:
+            tok_md = analyzer.token_tracker.format_markdown_section()
+            if tok_md.strip():
+                import re
+                match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+                if match:
+                    idx = match.start()
+                    report = report[:idx] + tok_md.strip() + "\n\n" + report[idx:]
+                else:
+                    report = f"{report.rstrip()}\n\n{tok_md.strip()}\n"
+
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
             dur_md = dur_tracker.format_markdown_section()
             if dur_md.strip():

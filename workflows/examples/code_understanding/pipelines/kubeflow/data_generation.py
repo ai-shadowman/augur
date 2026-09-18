@@ -120,8 +120,19 @@ def generate_code_and_meta_op(
             logging.debug(f"TokenCostTracker handling in generate_code_and_meta_op: {e}")
 
         try:
-
             from pipelines.base.data_generation import load_external_data
+
+            # Immediately write initial telemetry files to tmp_target
+            if dur_tracker:
+                try:
+                    dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
+                except Exception:
+                    pass
+            if token_tracker:
+                try:
+                    token_tracker.save_to_file(os.path.join(tmp_target, "tokens.json"))
+                except Exception:
+                    pass
 
             if dur_tracker:
                 with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
@@ -143,16 +154,24 @@ def generate_code_and_meta_op(
                 languages = detect_languages(tmp_source)
 
                 for language in languages:
-
                     for config in [False, True]:
-
                         generate_code_and_meta(
                             git_repo=git_repo, git_branch=git_branch,
                             language=language, source_path=tmp_source, target_path=tmp_target,
                             config=config, multi_repo=multi_repo,
                             external_metadata=external_metadata,
                         )
-
+        except Exception as e:
+            if type(e).__name__ == "RateLimitError" or "429" in str(e):
+                logging.error(
+                    f"Rate limit exceeded for repo '{git_repo}' (branch='{git_branch}'). "
+                    f"Consider reducing GRAPHRAG_PARALLEL_REPOS: {e}"
+                )
+                raise
+            logging.error(
+                f"Skipping repo '{git_repo}' (branch='{git_branch}'): {e}"
+            )
+        finally:
             if dur_tracker:
                 try:
                     dur_tracker.save_to_file(os.path.join(tmp_target, "durations.json"))
@@ -184,20 +203,6 @@ def generate_code_and_meta_op(
                     print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to print token summary in data generation pod: {e}")
-
-
-        except Exception as e:
-
-            if type(e).__name__ == "RateLimitError" or "429" in str(e):
-                logging.error(
-                    f"Rate limit exceeded for repo '{git_repo}' (branch='{git_branch}'). "
-                    f"Consider reducing GRAPHRAG_PARALLEL_REPOS: {e}"
-                )
-                raise
-
-            logging.error(
-                f"Skipping repo '{git_repo}' (branch='{git_branch}'): {e}"
-            )
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

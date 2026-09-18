@@ -166,6 +166,7 @@ class TokenCostTracker:
         output_tokens: int = 0,
         cost: Optional[float] = None,
         model: Optional[str] = None,
+        **kwargs,
     ):
         """Records token usage and cost for a given source or model, outputting live metrics to console."""
         target_model = model or (self.embed_model if "embed" in source.lower() else self.chat_model)
@@ -183,6 +184,9 @@ class TokenCostTracker:
             }
 
         rec = self.records[source]
+        for k, v in kwargs.items():
+            if k not in rec:
+                rec[k] = v
         rec["calls"] += calls
         rec["prompt_tokens"] += prompt_tokens
         rec["output_tokens"] += output_tokens
@@ -1295,5 +1299,144 @@ def extract_graphrag_indexing_tokens(
                 pass
 
     return extracted_any
+
+
+def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tracker: TokenCostTracker) -> bool:
+    """Extracts/reconstructs Data Generation token usage from generated code and metadata files if not already tracked.
+    Returns True if any Data Generation tokens were extracted/recorded, False otherwise."""
+    if not search_paths or not token_tracker:
+        return False
+
+    # If tracker already contains Data Generation records, do nothing
+    has_data_gen = any("Data Generation" in k for k in token_tracker.records)
+    if has_data_gen:
+        return False
+
+    if isinstance(search_paths, str):
+        search_paths = [search_paths]
+
+    model_name = os.getenv("METADATA_LLM_ID") or os.getenv("GRAPHRAG_LLM_ID") or "gpt-oss-120b"
+
+    # Find metadata files (*_metadata.txt) or parsed code files
+    metadata_files = []
+    for sp in search_paths:
+        if not sp or not os.path.exists(sp):
+            continue
+        if os.path.isfile(sp):
+            if sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json"):
+                metadata_files.append(sp)
+        elif os.path.isdir(sp):
+            for root, _, files in os.walk(sp):
+                for f in files:
+                    if f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json"):
+                        metadata_files.append(os.path.join(root, f))
+
+    if not metadata_files:
+        # Check for input code files (.txt) if no _metadata.txt
+        txt_files = []
+        for sp in search_paths:
+            if not sp or not os.path.exists(sp):
+                continue
+            cand_dirs = [sp, os.path.join(sp, "input")] if os.path.isdir(sp) else [sp]
+            for cd in cand_dirs:
+                if os.path.isdir(cd):
+                    for root, _, files in os.walk(cd):
+                        for f in files:
+                            if f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
+                                txt_files.append(os.path.join(root, f))
+        if not txt_files:
+            return False
+
+        calls = len(txt_files)
+        total_chars = 0
+        lang_counts = {}
+        for tf in txt_files:
+            try:
+                size = os.path.getsize(tf)
+                total_chars += size
+                parts = os.path.basename(tf).split(".")
+                lang = parts[-2] if len(parts) >= 3 else "code"
+                lang_counts[lang] = lang_counts.get(lang, 0) + 1
+            except Exception:
+                pass
+
+        prompt_tokens = max(calls * 300, total_chars // 4 + calls * 150)
+        output_tokens = max(calls * 150, calls * 100)
+        for lang, count in lang_counts.items():
+            frac = count / calls
+            source_key = f"Data Generation ({lang}) ({model_name})"
+            token_tracker.track(
+                source=source_key,
+                calls=count,
+                prompt_tokens=int(prompt_tokens * frac),
+                output_tokens=int(output_tokens * frac),
+                model=model_name,
+                stage="Data Generation",
+                category="Data Generation",
+            )
+        return True
+
+    # Group by language
+    per_lang_stats = {}
+    for mf in metadata_files:
+        if mf.endswith(".json"):
+            try:
+                with open(mf, "r", encoding="utf-8") as jf:
+                    jdata = json.load(jf)
+                items = jdata if isinstance(jdata, list) else [jdata]
+                for item in items:
+                    lang = item.get("language", "code") if isinstance(item, dict) else "code"
+                    if lang not in per_lang_stats:
+                        per_lang_stats[lang] = {"calls": 0, "prompt_chars": 0, "output_chars": 0}
+                    per_lang_stats[lang]["calls"] += 1
+                    per_lang_stats[lang]["prompt_chars"] += len(str(item.get("code", ""))) or 1000
+                    per_lang_stats[lang]["output_chars"] += len(str(item.get("metadata", ""))) or 500
+            except Exception:
+                pass
+            continue
+
+        base_code_path = mf[:-len("_metadata.txt")] + ".txt"
+        fname = os.path.basename(mf)
+        parts = fname.replace("_metadata.txt", "").split(".")
+        lang = parts[-1] if len(parts) >= 2 else "code"
+        if lang not in per_lang_stats:
+            per_lang_stats[lang] = {"calls": 0, "prompt_chars": 0, "output_chars": 0}
+        per_lang_stats[lang]["calls"] += 1
+
+        output_size = 500
+        try:
+            output_size = os.path.getsize(mf)
+        except Exception:
+            pass
+        per_lang_stats[lang]["output_chars"] += output_size
+
+        prompt_size = 1200
+        if os.path.exists(base_code_path):
+            try:
+                prompt_size = os.path.getsize(base_code_path)
+            except Exception:
+                pass
+        per_lang_stats[lang]["prompt_chars"] += prompt_size
+
+    extracted_any = False
+    for lang, stats in per_lang_stats.items():
+        if stats["calls"] <= 0:
+            continue
+        p_tokens = max(stats["calls"] * 200, stats["prompt_chars"] // 4 + stats["calls"] * 150)
+        o_tokens = max(stats["calls"] * 100, stats["output_chars"] // 4)
+        source_key = f"Data Generation ({lang}) ({model_name})"
+        token_tracker.track(
+            source=source_key,
+            calls=stats["calls"],
+            prompt_tokens=p_tokens,
+            output_tokens=o_tokens,
+            model=model_name,
+            stage="Data Generation",
+            category="Data Generation",
+        )
+        extracted_any = True
+
+    return extracted_any
+
 
 

@@ -535,6 +535,19 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result["status"] = "complete"
 
+        # Immediately persist telemetry to target_path before asset logging
+        try:
+            if dur_tracker:
+                dur_tracker.save_to_file(os.path.join(target_path, "durations.json"))
+        except Exception:
+            pass
+        try:
+            from utils.token_tracker import TokenCostTracker
+            t_tr = TokenCostTracker.get_instance()
+            t_tr.save_to_file(os.path.join(target_path, "tokens.json"))
+        except Exception:
+            pass
+
         if dur_tracker:
             with dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})"):
                 DefaultAssetLoader().log_results(
@@ -681,6 +694,23 @@ class DataGenerationPipeline:
 
             git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
+            logging.info("Data generation pipeline complete.")
+
+            result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}
+
+        except Exception as e:
+
+            logging.error("PIPELINE FAILED!")
+
+            error_message = traceback.format_exc()
+
+            logging.error(error_message)
+
+            reset_environment(source_path, target_path)
+
+            result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
+
+        finally:
             if dur_tracker:
                 if target_path:
                     try:
@@ -714,7 +744,6 @@ class DataGenerationPipeline:
             except Exception as e:
                 logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
-
             if dur_tracker:
                 try:
                     summary = dur_tracker.format_summary()
@@ -731,22 +760,6 @@ class DataGenerationPipeline:
                 print("\n" + summary, flush=True)
             except Exception as e:
                 logging.debug(f"Failed to print token summary in data generation pipeline: {e}")
-
-            logging.info("Data generation pipeline complete.")
-
-            result = {"git_slug": git_slug, "status": "complete", "fail_message": ""}
-
-        except Exception as e:
-
-            logging.error("PIPELINE FAILED!")
-
-            error_message = traceback.format_exc()
-
-            logging.error(error_message)
-
-            reset_environment(source_path, target_path)
-
-            result = {"git_slug": git_slug, "status": "error", "fail_message": error_message}
 
         return result
 

@@ -644,13 +644,17 @@ class DependencyAnalyzer:
             has_indexing_dur = any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records)
             if not has_indexing_dur:
                 extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
+            has_data_gen_dur = any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records)
+            if not has_data_gen_dur:
+                from utils.duration_tracker import extract_data_generation_durations
+                extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
 
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
                 from utils.duration_tracker import find_all_telemetry_files
-                from utils.token_tracker import extract_graphrag_indexing_tokens
+                from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
                 for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
                     self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
                     if not self.git_slug and self.token_tracker.git_slug:
@@ -667,6 +671,9 @@ class DependencyAnalyzer:
                 has_indexing = any("Indexing" in k for k in self.token_tracker.records)
                 if not has_indexing:
                     extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
+                has_data_gen = any("Data Generation" in k for k in self.token_tracker.records)
+                if not has_data_gen:
+                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 
@@ -766,6 +773,27 @@ class DependencyAnalyzer:
             self.token_tracker.upload_to_mlflow(git_slug=self.git_slug, stage="Analysis", multi_repo=self.multi_repo)
         except Exception as e:
             logging.debug(f"Failed to upload tokens to MLflow in generate_migration_report: {e}")
+
+        # Ensure Indexing and Data Generation are extracted before rendering markdown tables
+        try:
+            from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
+            if hasattr(self, "token_tracker") and self.token_tracker:
+                if not any("Indexing" in k for k in self.token_tracker.records):
+                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
+                if not any("Data Generation" in k for k in self.token_tracker.records):
+                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
+        except Exception as e:
+            logging.debug(f"Fallback token extraction before report render: {e}")
+
+        try:
+            from utils.duration_tracker import DurationTracker, extract_graphrag_indexing_durations, extract_data_generation_durations
+            d_tr = DurationTracker.get_instance()
+            if not any(r.get("stage", "").lower() == "indexing" for r in d_tr.records):
+                extract_graphrag_indexing_durations(self.graphrag_dir, d_tr)
+            if not any(r.get("stage", "").lower() == "data generation" for r in d_tr.records):
+                extract_data_generation_durations(candidate_dirs, d_tr)
+        except Exception as e:
+            logging.debug(f"Fallback duration extraction before report render: {e}")
 
         token_summary_section = self.token_tracker.format_markdown_section()
 

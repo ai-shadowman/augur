@@ -244,5 +244,142 @@ class TestMultiStageReportAssembly(unittest.TestCase):
         self.assertIn("Analysis", dur_section)
 
 
+class TestFallbackExtraction(unittest.TestCase):
+    """Tests for fallback extraction of Data Generation telemetry from files."""
+
+    def setUp(self):
+        TokenCostTracker.reset_instance()
+        DurationTracker.reset_instance()
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        TokenCostTracker.reset_instance()
+        DurationTracker.reset_instance()
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_extract_data_generation_tokens_from_metadata_files(self):
+        """Verify extract_data_generation_tokens scans _metadata.txt files and tracks usage."""
+        from utils.token_tracker import extract_data_generation_tokens
+
+        input_dir = os.path.join(self.temp_dir, "input")
+        os.makedirs(input_dir, exist_ok=True)
+
+        # Create dummy code and metadata files
+        code_file = os.path.join(input_dir, "app.py.txt")
+        with open(code_file, "w", encoding="utf-8") as f:
+            f.write("def run():\n    print('hello world')\n" * 20)
+
+        meta_file = os.path.join(input_dir, "app.py_metadata.txt")
+        with open(meta_file, "w", encoding="utf-8") as f:
+            f.write("Functions: run\nSummary: Prints hello world\nDependencies: none\n")
+
+        tracker = TokenCostTracker()
+        extracted = extract_data_generation_tokens(self.temp_dir, tracker)
+
+        self.assertTrue(extracted)
+        matching = [k for k in tracker.records if "Data Generation" in k]
+        self.assertEqual(len(matching), 1)
+        record = tracker.records[matching[0]]
+        self.assertEqual(record["calls"], 1)
+        self.assertGreater(record["prompt_tokens"], 0)
+        self.assertGreater(record["output_tokens"], 0)
+
+    def test_extract_data_generation_durations_from_metadata_files(self):
+        """Verify extract_data_generation_durations reconstructs canonical duration steps."""
+        from utils.duration_tracker import extract_data_generation_durations
+
+        input_dir = os.path.join(self.temp_dir, "input")
+        os.makedirs(input_dir, exist_ok=True)
+
+        meta_file = os.path.join(input_dir, "service.java_metadata.txt")
+        with open(meta_file, "w", encoding="utf-8") as f:
+            f.write("class Service {}\n")
+
+        dur_tr = DurationTracker()
+        extracted = extract_data_generation_durations(self.temp_dir, dur_tr)
+
+        self.assertTrue(extracted)
+        stage_records = [r for r in dur_tr.records if r.get("stage") == "Data Generation"]
+        self.assertGreaterEqual(len(stage_records), 5)
+        step_names = [r.get("step") for r in stage_records]
+        self.assertIn("Load External Data", step_names)
+        self.assertIn("Detect Languages", step_names)
+        self.assertIn("Parse Raw Code", step_names)
+        self.assertIn("LLM Metadata Extraction", step_names)
+
+    def test_cross_pod_run_id_merge_for_upstream_stages(self):
+        """Verify TokenCostTracker.merge allows upstream stages (Data Generation, Indexing) from different run_id across pods."""
+        tok_tracker_analysis = TokenCostTracker(run_id="analysis-pod-run-123")
+        tok_tracker_analysis.track("GraphRAG Chat (gpt-oss-120b)", calls=4, prompt_tokens=1000, output_tokens=500, model="gpt-oss-120b")
+
+        tok_tracker_datagen = TokenCostTracker(run_id="datagen-pod-run-456")
+        tok_tracker_datagen.track("Data Generation (python)", calls=10, prompt_tokens=8000, output_tokens=1500, model="gpt-oss-120b")
+
+        # When current_stage is Analysis, upstream stage should merge despite different run_id across pods
+        tok_tracker_analysis.merge(tok_tracker_datagen, current_stage="Analysis")
+
+        self.assertIn("Data Generation (python)", tok_tracker_analysis.records)
+        self.assertEqual(tok_tracker_analysis.records["Data Generation (python)"]["calls"], 10)
+
+    def test_single_repo_report_assembly_includes_data_generation_and_indexing(self):
+        """Verify report generation includes Data Generation and Indexing when telemetry files exist in input/."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        graphrag_dir = os.path.join(self.temp_dir, "graphrag")
+        input_dir = os.path.join(graphrag_dir, "input")
+        output_dir = os.path.join(graphrag_dir, "output")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Place Data Generation durations.json and tokens.json in input_dir
+        dg_dur = DurationTracker(run_id="dg-run-1")
+        dg_dur.record_step(stage="Data Generation", step="Detect Languages", duration=1.2)
+        dg_dur.record_step(stage="Data Generation", step="LLM Metadata Extraction (python)", duration=8.5)
+        dg_dur.save_to_file(os.path.join(input_dir, "durations.json"))
+
+        dg_tok = TokenCostTracker(run_id="dg-run-1")
+        dg_tok.track("Data Generation (python)", calls=5, prompt_tokens=5200, output_tokens=1100, model="gpt-oss-120b")
+        dg_tok.save_to_file(os.path.join(input_dir, "tokens.json"))
+
+        # Place stats.json in output_dir
+        stats_file = os.path.join(output_dir, "stats.json")
+        with open(stats_file, "w") as f:
+            json.dump({
+                "total_runtime": 45.0,
+                "workflows": {
+                    "generate_text_embeddings": {"overall": 10.0},
+                    "extract_graph": {"overall": 35.0},
+                }
+            }, f)
+
+        # Build DependencyAnalyzer with mock query_with_llm
+        analyzer = DependencyAnalyzer(graphrag_dir, git_slug="test-repo_main")
+        analyzer.token_tracker = TokenCostTracker(run_id="analysis-run-3")
+        async def mock_query(*args, **kwargs):
+            return "Mocked analysis answer"
+        analyzer.query_with_llm = mock_query
+        analyzer._extract_indexed_git_urls = MagicMock(return_value=["https://github.com/test/repo"])
+
+        from loaders.default_asset_loader import DefaultAssetLoader
+        with patch.object(DefaultAssetLoader, "num_prompts", side_effect=lambda path: 1 if "enhanced" not in path else 0), \
+             patch.object(DefaultAssetLoader, "download_prompt", return_value=("What is this service?", {"title": "Service Summary"})):
+
+            report = asyncio.run(analyzer.generate_migration_report())
+
+            # Verify Data Generation appears in both tables
+            self.assertIn("Data Generation", report)
+            self.assertIn("Data Generation (python)", report)
+            # Verify Indexing appears in both tables
+            self.assertIn("Indexing", report)
+            self.assertIn("GraphRAG", report)
+            # Verify Analysis appears in both tables
+            self.assertIn("Analysis", report)
+            # Verify totals and tables
+            self.assertIn("### LLM Token Usage & Cost Summary", report)
+            self.assertIn("### Pipeline Execution Duration Summary", report)
+
+
 if __name__ == "__main__":
     unittest.main()
