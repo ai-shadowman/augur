@@ -280,11 +280,19 @@ class TokenCostTracker:
         """Formats the ASCII token usage and cost summary table."""
         totals = self.get_totals()
 
-        divider_eq = "=" * 78
-        divider_dash = "-" * 78
+        max_source_len = max([len(s) for s in self.records.keys()] or [0])
+        source_col_w = max(33, max_source_len + 2)
+
+        header_str = "Source / Model".ljust(source_col_w)
+        header_line = f" {header_str}Calls   Prompt     Output     Total      Est. Cost "
+        table_w = max(78, len(header_line.rstrip()))
+
+        divider_eq = "=" * table_w
+        divider_dash = "-" * table_w
+        title = "LLM TOKEN USAGE & COST SUMMARY"
 
         lines = [
-            "                      LLM TOKEN USAGE & COST SUMMARY",
+            f"{title:^{table_w}}",
             divider_eq,
             f" Total LLM Invocations : {totals['total_calls']}",
             f" Total Prompt Tokens   : {totals['total_prompt_tokens']:,}",
@@ -292,7 +300,7 @@ class TokenCostTracker:
             f" Total Tokens Used     : {totals['total_tokens']:,}",
             f" Estimated Total Cost  : ${totals['total_cost']:.4f}",
             divider_dash,
-            " Source / Model                   Calls   Prompt     Output     Total      Est. Cost ",
+            header_line,
             divider_dash,
         ]
 
@@ -310,13 +318,8 @@ class TokenCostTracker:
         )
 
         for source, r in sorted_records:
-            if len(source) > 32:
-                name_display = source[:29] + "..."
-            else:
-                name_display = source
-
             row = (
-                f" {name_display:<33}"
+                f" {source:<{source_col_w}}"
                 f"{r['calls']:<8,}"
                 f"{r['prompt_tokens']:<11,}"
                 f"{r['output_tokens']:<11,}"

@@ -116,10 +116,12 @@ class TestTokenCostTracker(unittest.TestCase):
         # Title check
         self.assertIn("LLM TOKEN USAGE & COST SUMMARY", lines[0])
 
-        # Border widths check (78 characters)
-        self.assertEqual(lines[1], "=" * 78)
-        self.assertEqual(lines[7], "-" * 78)
-        self.assertEqual(lines[9], "-" * 78)
+        # Border widths check (dynamic table width)
+        table_w = len(lines[1])
+        self.assertGreaterEqual(table_w, 78)
+        self.assertEqual(lines[1], "=" * table_w)
+        self.assertEqual(lines[7], "-" * table_w)
+        self.assertEqual(lines[9], "-" * table_w)
 
         # Totals section check
         self.assertIn("Total LLM Invocations : 15", lines[2])
@@ -129,19 +131,26 @@ class TestTokenCostTracker(unittest.TestCase):
         self.assertIn("Estimated Total Cost  : $0.1536", lines[6])
 
         # Column header check
+        self.assertIn("Source / Model", lines[8])
+        self.assertIn("Calls   Prompt     Output     Total      Est. Cost", lines[8])
+
+        # Default header format with <=33 character names
+        empty_tracker = TokenCostTracker()
+        empty_lines = empty_tracker.format_summary().split("\n")
         self.assertEqual(
-            lines[8],
+            empty_lines[8],
             " Source / Model                   Calls   Prompt     Output     Total      Est. Cost "
         )
 
         # Row count check (4 rows after header divider)
         self.assertEqual(len(lines), 14)
 
-        # Check name truncation for source names exceeding 32 characters
+        # Verify source names exceeding 32 characters are NOT cut off
         long_tracker = TokenCostTracker()
         long_tracker.track("A" * 40, calls=1, prompt_tokens=100, output_tokens=50)
         long_summary = long_tracker.format_summary()
-        self.assertIn("A" * 29 + "...", long_summary)
+        self.assertIn("A" * 40, long_summary)
+        self.assertNotIn("...", long_summary)
 
     def test_format_markdown_section(self):
         """Verify markdown section wrapping."""
