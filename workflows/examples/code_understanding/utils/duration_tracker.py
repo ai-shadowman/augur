@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import functools
 import json
 import logging
@@ -6,7 +8,7 @@ import re
 import tempfile
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 
 
