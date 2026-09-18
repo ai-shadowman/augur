@@ -290,7 +290,20 @@ class TokenCostTracker:
             divider_dash,
         ]
 
-        for source, r in self.records.items():
+        def get_source_stage_order(src: str) -> int:
+            src_lower = src.lower()
+            if "data generation" in src_lower:
+                return 1
+            if "indexing" in src_lower:
+                return 2
+            return 3
+
+        sorted_records = sorted(
+            self.records.items(),
+            key=lambda item: get_source_stage_order(item[0]),
+        )
+
+        for source, r in sorted_records:
             if len(source) > 32:
                 name_display = source[:29] + "..."
             else:
@@ -428,9 +441,15 @@ class TokenCostTracker:
                     "cost": 0.0,
                 }
             rec = self.records[source]
-            rec["calls"] += r.get("calls", 0)
-            rec["prompt_tokens"] += r.get("prompt_tokens", 0)
-            rec["output_tokens"] += r.get("output_tokens", 0)
+            other_calls = r.get("calls", 0)
+            other_prompt = r.get("prompt_tokens", 0)
+            other_output = r.get("output_tokens", 0)
+            # If the exact same record is encountered again (e.g. from copies across candidate dirs), do not double-count
+            if rec["calls"] == other_calls and rec["prompt_tokens"] == other_prompt and rec["output_tokens"] == other_output and other_calls > 0:
+                continue
+            rec["calls"] += other_calls
+            rec["prompt_tokens"] += other_prompt
+            rec["output_tokens"] += other_output
             rec["total_tokens"] += r.get("total_tokens", 0)
             rec["cost"] += r.get("cost", 0.0)
 
@@ -450,22 +469,25 @@ class TokenCostTracker:
         except Exception as e:
             logging.debug(f"Failed to load and merge tokens from {filepath}: {e}")
 
+    def set_category(self, category: str):
+        """Sets the active category used by callback interceptors for upcoming calls."""
+        self._active_category = category
+
     def enable_litellm_callbacks(self, category: str = "LiteLLM"):
         """Registers a callback with litellm.success_callback to intercept and track
         all direct LiteLLM invocations (e.g. from sdg_hub, custom evaluators).
         """
+        self._active_category = category
         if not HAS_LITELLM or litellm is None:
             logging.debug("LiteLLM not available; skipping callback registration.")
             return
 
-        if hasattr(self, "_litellm_callback") and self._litellm_callback is not None:
-            if hasattr(litellm, "success_callback") and isinstance(litellm.success_callback, list):
-                if self._litellm_callback in litellm.success_callback:
-                    return
+        tracker_self = self
 
         def _litellm_success_handler(kwargs, completion_response, start_time, end_time):
             try:
-                model = kwargs.get("model") or getattr(completion_response, "model", self.chat_model)
+                cat = getattr(tracker_self, "_active_category", None) or category
+                model = kwargs.get("model") or getattr(completion_response, "model", tracker_self.chat_model)
                 usage = getattr(completion_response, "usage", None)
                 p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
                 o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
@@ -475,13 +497,13 @@ class TokenCostTracker:
                     response_cost = getattr(completion_response, "_response_cost", None)
 
                 call_type = kwargs.get("call_type", "")
-                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (o_tokens == 0 and p_tokens > 0 and (model == self.embed_model or "embed" in self.embed_model))
+                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (o_tokens == 0 and p_tokens > 0 and (model == tracker_self.embed_model or "embed" in tracker_self.embed_model))
                 if is_embed:
-                    prefix = category if "Embeddings" in category else f"{category} Embeddings"
+                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
                     source = f"{prefix} ({model})"
                 else:
-                    source = f"{category} ({model})"
-                self.track(
+                    source = f"{cat} ({model})"
+                tracker_self.track(
                     source=source,
                     calls=1,
                     prompt_tokens=p_tokens,
@@ -499,18 +521,30 @@ class TokenCostTracker:
         if _litellm_success_handler not in litellm.success_callback:
             litellm.success_callback.append(_litellm_success_handler)
 
+        if hasattr(litellm, "_async_success_callback") and isinstance(litellm._async_success_callback, list):
+            if _litellm_success_handler not in litellm._async_success_callback:
+                litellm._async_success_callback.append(_litellm_success_handler)
+
+        if hasattr(litellm, "callbacks") and isinstance(litellm.callbacks, list):
+            if _litellm_success_handler not in litellm.callbacks:
+                litellm.callbacks.append(_litellm_success_handler)
+
     def disable_litellm_callbacks(self):
         """Unregisters the callback from litellm.success_callback."""
         if not HAS_LITELLM or litellm is None or not hasattr(self, "_litellm_callback"):
             return
-        if hasattr(litellm, "success_callback") and isinstance(litellm.success_callback, list):
-            if self._litellm_callback in litellm.success_callback:
-                litellm.success_callback.remove(self._litellm_callback)
+        cb = self._litellm_callback
+        for cb_list_name in ["success_callback", "_async_success_callback", "callbacks"]:
+            if hasattr(litellm, cb_list_name) and isinstance(getattr(litellm, cb_list_name), list):
+                cb_list = getattr(litellm, cb_list_name)
+                if cb in cb_list:
+                    cb_list.remove(cb)
         self._litellm_callback = None
 
     def enable_openai_tracking(self, category: str = "GraphRAG Indexing"):
         """Intercepts OpenAI chat completions and embeddings calls when direct OpenAI client
         is used (e.g. by GraphRAG indexing) so token usage is captured."""
+        self._active_category = category
         try:
             import openai
         except ImportError:
@@ -536,11 +570,12 @@ class TokenCostTracker:
             async def wrapped_async_chat(*args, **kwargs):
                 resp = await tracker_self._orig_async_chat(*args, **kwargs)
                 try:
+                    cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
                     usage = getattr(resp, "usage", None)
                     p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
                     o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-                    source = f"{category} ({model})"
+                    source = f"{cat} ({model})"
                     tracker_self.track(
                         source=source,
                         calls=1,
@@ -561,11 +596,12 @@ class TokenCostTracker:
             def wrapped_sync_chat(*args, **kwargs):
                 resp = tracker_self._orig_sync_chat(*args, **kwargs)
                 try:
+                    cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
                     usage = getattr(resp, "usage", None)
                     p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
                     o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-                    source = f"{category} ({model})"
+                    source = f"{cat} ({model})"
                     tracker_self.track(
                         source=source,
                         calls=1,
@@ -586,10 +622,12 @@ class TokenCostTracker:
             async def wrapped_async_embed(*args, **kwargs):
                 resp = await tracker_self._orig_async_embed(*args, **kwargs)
                 try:
+                    cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
                     usage = getattr(resp, "usage", None)
                     p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
-                    source = f"{category} Embeddings ({model})"
+                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
+                    source = f"{prefix} ({model})"
                     tracker_self.track(
                         source=source,
                         calls=1,
@@ -610,10 +648,12 @@ class TokenCostTracker:
             def wrapped_sync_embed(*args, **kwargs):
                 resp = tracker_self._orig_sync_embed(*args, **kwargs)
                 try:
+                    cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
                     usage = getattr(resp, "usage", None)
                     p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
-                    source = f"{category} Embeddings ({model})"
+                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
+                    source = f"{prefix} ({model})"
                     tracker_self.track(
                         source=source,
                         calls=1,
@@ -821,171 +861,224 @@ class TokenCostTracker:
 
         # 2. Try searching and aggregating across ALL telemetry runs in MLflow
         seen_stages = set()
-        if git_slug or multi_repo:
-            try:
-                import mlflow
-                from mlflow.tracking import MlflowClient
-                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+        try:
+            import mlflow
+            from mlflow.tracking import MlflowClient
+            from loaders.mlflow_asset_loader import MlFlowAssetLoader
 
-                client = MlflowClient()
-                experiment = MlFlowAssetLoader().get_or_create_experiment_by_name(
+            client = MlflowClient()
+
+            experiment_ids = []
+            try:
+                active_run = mlflow.active_run()
+                if active_run and hasattr(active_run, "info") and getattr(active_run.info, "experiment_id", None):
+                    experiment_ids.append(str(active_run.info.experiment_id))
+            except Exception:
+                pass
+
+            exp_name = os.environ.get("MLFLOW_EXPERIMENT_NAME")
+            if exp_name:
+                try:
+                    exp = client.get_experiment_by_name(exp_name)
+                    if exp and exp.experiment_id:
+                        experiment_ids.append(str(exp.experiment_id))
+                except Exception:
+                    pass
+
+            if getattr(self, "mlflow_experiment_id", None):
+                experiment_ids.append(str(self.mlflow_experiment_id))
+
+            try:
+                result_exp = MlFlowAssetLoader().get_or_create_experiment_by_name(
                     client, MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
                 )
+                if result_exp and result_exp.experiment_id:
+                    experiment_ids.append(str(result_exp.experiment_id))
+            except Exception:
+                pass
 
-                filter_parts = ["tags.category = 'telemetry'", "tags.type = 'tokens'"]
-                if git_slug:
-                    filter_parts.append(f"tags.git_slug = '{git_slug}'")
-                elif multi_repo:
-                    filter_parts.append("tags.git_slug = 'multi-repo'")
-                filter_string = " AND ".join(filter_parts)
+            experiment_ids.append("0")
+            unique_exp_ids = [eid for i, eid in enumerate(experiment_ids) if eid and eid not in experiment_ids[:i]]
 
-                try:
-                    runs = client.search_runs(
-                        experiment_ids=[experiment.experiment_id],
-                        filter_string=filter_string,
-                        order_by=["attributes.start_time DESC"],
-                    )
-                except Exception:
-                    quoted_parts = [
-                        f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
-                        for p in filter_parts
-                    ]
-                    runs = client.search_runs(
-                        experiment_ids=[experiment.experiment_id],
-                        filter_string=" AND ".join(quoted_parts),
-                        order_by=["attributes.start_time DESC"],
-                    )
+            filter_parts = ["tags.category = 'telemetry'", "tags.type = 'tokens'"]
+            if git_slug:
+                filter_parts.append(f"tags.git_slug = '{git_slug}'")
+            elif multi_repo:
+                filter_parts.append("tags.git_slug = 'multi-repo'")
+            filter_string = " AND ".join(filter_parts)
 
-                allowed_stages = None
-                if current_stage and current_stage.lower() == "analysis":
-                    allowed_stages = {"data generation", "indexing"}
-                elif current_stage and current_stage.lower() == "indexing":
-                    allowed_stages = {"data generation"}
-
-                for run in runs:
-                    if run.info.run_id in self._merged_runs:
-                        continue
-                    stage = run.data.tags.get("stage")
-                    if current_stage and stage and stage.lower() == current_stage.lower():
-                        continue
-                    if allowed_stages is not None:
-                        if not stage or stage.lower() not in allowed_stages:
-                            continue
-                    elif current_stage and not stage:
-                        continue
-
-                    if stage:
-                        if stage.lower() in seen_stages:
-                            continue
-                    else:
-                        if "untagged" in seen_stages:
-                            continue
-
-                    candidate_subpaths = []
-                    if git_slug:
-                        candidate_subpaths.append(f"results/telemetry/{git_slug}/tokens.json")
-                        candidate_subpaths.append(f"results/telemetry/{git_slug}")
-                    if multi_repo:
-                        candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/tokens.json".replace("//", "/"))
-                        candidate_subpaths.append("results/telemetry/multi-repo/tokens.json")
-                    candidate_subpaths.extend([
-                        "results/telemetry/tokens.json",
-                        "telemetry/tokens.json",
-                        "tokens.json",
-                    ])
-
-                    run_merged = False
-                    for subpath in candidate_subpaths:
-                        try:
-                            downloaded_path = mlflow.artifacts.download_artifacts(
-                                run_id=run.info.run_id,
-                                artifact_path=subpath,
-                            )
-                            if downloaded_path:
-                                target_file = None
-                                if os.path.isfile(downloaded_path):
-                                    target_file = downloaded_path
-                                elif os.path.isdir(downloaded_path):
-                                    cand = os.path.join(downloaded_path, "tokens.json")
-                                    if os.path.isfile(cand):
-                                        target_file = cand
-                                if target_file and os.path.exists(target_file):
-                                    self.load_and_merge(target_file, current_stage=current_stage)
-                                    self._merged_runs.add(run.info.run_id)
-                                    merged_any = True
-                                    run_merged = True
-                                    if stage:
-                                        seen_stages.add(stage.lower())
-                                    else:
-                                        seen_stages.add("untagged")
-                                    break
-                        except Exception:
-                            continue
-                    if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
-                        break
-
-            except Exception as e:
-                logging.debug(f"MLflow client multi-run search for tokens.json failed: {e}")
-
-            # Fallback to DefaultAssetLoader for missing upstream stages
-            upstream_targets = []
-            if current_stage and current_stage.lower() == "analysis":
-                upstream_targets = ["Data Generation", "Indexing"]
-            elif current_stage and current_stage.lower() == "indexing":
-                upstream_targets = ["Data Generation"]
-            else:
-                upstream_targets = [None]
-
-            for target_stage in upstream_targets:
-                if target_stage and target_stage.lower() in seen_stages:
-                    continue
-                try:
-                    from loaders.default_asset_loader import DefaultAssetLoader
-                    from loaders.mlflow_asset_loader import MlFlowAssetLoader
-
-                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
-                        git_slug=git_slug,
-                        multi_repo=multi_repo,
-                    )
-                    asset_file = f"{artifact_path}/tokens.json"
-                    temp_dir = tempfile.mkdtemp()
+            runs = []
+            try:
+                runs = client.search_runs(
+                    experiment_ids=unique_exp_ids,
+                    filter_string=filter_string,
+                    order_by=["attributes.start_time DESC"],
+                )
+            except Exception:
+                for eid in unique_exp_ids:
                     try:
-                        asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "tokens"}
-                        if target_stage:
-                            asset_tags["stage"] = target_stage
-                        content = DefaultAssetLoader().download(
-                            asset_file,
-                            download_dir=temp_dir,
-                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                            asset_tags=asset_tags,
+                        found_runs = client.search_runs(
+                            experiment_ids=[eid],
+                            filter_string=filter_string,
+                            order_by=["attributes.start_time DESC"],
                         )
-                        loaded_from_content = False
-                        if isinstance(content, dict) and "records" in content:
-                            other = TokenCostTracker.from_dict(content)
+                        if found_runs:
+                            runs.extend(found_runs)
+                    except Exception:
+                        pass
+                if not runs:
+                    try:
+                        quoted_parts = [
+                            f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
+                            for p in filter_parts
+                        ]
+                        quoted_filter = " AND ".join(quoted_parts)
+                        for eid in unique_exp_ids:
+                            try:
+                                found_runs = client.search_runs(
+                                    experiment_ids=[eid],
+                                    filter_string=quoted_filter,
+                                    order_by=["attributes.start_time DESC"],
+                                )
+                                if found_runs:
+                                    runs.extend(found_runs)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            allowed_stages = None
+            if current_stage and current_stage.lower() == "analysis":
+                allowed_stages = {"data generation", "indexing"}
+            elif current_stage and current_stage.lower() == "indexing":
+                allowed_stages = {"data generation"}
+
+            for run in runs:
+                if run.info.run_id in self._merged_runs:
+                    continue
+                stage = run.data.tags.get("stage")
+                if current_stage and stage and stage.lower() == current_stage.lower():
+                    continue
+                if allowed_stages is not None:
+                    if not stage or stage.lower() not in allowed_stages:
+                        continue
+                elif current_stage and not stage:
+                    continue
+
+                if stage:
+                    if stage.lower() in seen_stages:
+                        continue
+                else:
+                    if "untagged" in seen_stages:
+                        continue
+
+                candidate_subpaths = []
+                if git_slug:
+                    candidate_subpaths.append(f"results/telemetry/{git_slug}/tokens.json")
+                    candidate_subpaths.append(f"results/telemetry/{git_slug}")
+                if multi_repo:
+                    candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/tokens.json".replace("//", "/"))
+                    candidate_subpaths.append("results/telemetry/multi-repo/tokens.json")
+                candidate_subpaths.extend([
+                    "results/telemetry/tokens.json",
+                    "telemetry/tokens.json",
+                    "tokens.json",
+                ])
+
+                run_merged = False
+                for subpath in candidate_subpaths:
+                    try:
+                        downloaded_path = mlflow.artifacts.download_artifacts(
+                            run_id=run.info.run_id,
+                            artifact_path=subpath,
+                        )
+                        if downloaded_path:
+                            target_file = None
+                            if os.path.isfile(downloaded_path):
+                                target_file = downloaded_path
+                            elif os.path.isdir(downloaded_path):
+                                cand = os.path.join(downloaded_path, "tokens.json")
+                                if os.path.isfile(cand):
+                                    target_file = cand
+                            if target_file and os.path.exists(target_file):
+                                self.load_and_merge(target_file, current_stage=current_stage)
+                                self._merged_runs.add(run.info.run_id)
+                                merged_any = True
+                                run_merged = True
+                                if stage:
+                                    seen_stages.add(stage.lower())
+                                else:
+                                    seen_stages.add("untagged")
+                                break
+                    except Exception:
+                        continue
+                if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
+                    break
+
+        except Exception as e:
+            logging.debug(f"MLflow client multi-run search for tokens.json failed: {e}")
+
+        # Fallback to DefaultAssetLoader for missing upstream stages
+        upstream_targets = []
+        if current_stage and current_stage.lower() == "analysis":
+            upstream_targets = ["Data Generation", "Indexing"]
+        elif current_stage and current_stage.lower() == "indexing":
+            upstream_targets = ["Data Generation"]
+        else:
+            upstream_targets = [None]
+
+        for target_stage in upstream_targets:
+            if target_stage and target_stage.lower() in seen_stages:
+                continue
+            if not (git_slug or multi_repo):
+                continue
+            try:
+                from loaders.default_asset_loader import DefaultAssetLoader
+                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                    git_slug=git_slug,
+                    multi_repo=multi_repo,
+                )
+                asset_file = f"{artifact_path}/tokens.json"
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "tokens"}
+                    if target_stage:
+                        asset_tags["stage"] = target_stage
+                    content = DefaultAssetLoader().download(
+                        asset_file,
+                        download_dir=temp_dir,
+                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                        asset_tags=asset_tags,
+                    )
+                    loaded_from_content = False
+                    if isinstance(content, dict) and "records" in content:
+                        other = TokenCostTracker.from_dict(content)
+                        self.merge(other, current_stage=current_stage)
+                        merged_any = True
+                        loaded_from_content = True
+                    elif isinstance(content, str):
+                        data = json.loads(content)
+                        if isinstance(data, dict) and "records" in data:
+                            other = TokenCostTracker.from_dict(data)
                             self.merge(other, current_stage=current_stage)
                             merged_any = True
                             loaded_from_content = True
-                        elif isinstance(content, str):
-                            data = json.loads(content)
-                            if isinstance(data, dict) and "records" in data:
-                                other = TokenCostTracker.from_dict(data)
-                                self.merge(other, current_stage=current_stage)
-                                merged_any = True
-                                loaded_from_content = True
 
-                        if not loaded_from_content:
-                            downloaded_file = os.path.join(temp_dir, "tokens.json")
-                            if os.path.exists(downloaded_file):
-                                self.load_and_merge(downloaded_file, current_stage=current_stage)
-                                merged_any = True
-                        if target_stage:
-                            seen_stages.add(target_stage.lower())
-                    finally:
-                        import shutil
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception as e:
-                    logging.debug(f"Failed to download tokens.json for {target_stage} via DefaultAssetLoader: {e}")
+                    if not loaded_from_content:
+                        downloaded_file = os.path.join(temp_dir, "tokens.json")
+                        if os.path.exists(downloaded_file):
+                            self.load_and_merge(downloaded_file, current_stage=current_stage)
+                            merged_any = True
+                    if target_stage:
+                        seen_stages.add(target_stage.lower())
+                finally:
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logging.debug(f"Failed to download tokens.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
 

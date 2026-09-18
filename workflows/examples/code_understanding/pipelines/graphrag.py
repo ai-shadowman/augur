@@ -62,6 +62,9 @@ def run_graphrag(root_dir: str) -> None:
         token_tracker = TokenCostTracker.get_instance()
         token_tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
         token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
+        existing_tok_files = find_all_telemetry_files(candidate_dirs, "tokens.json")
+        for fpath in existing_tok_files:
+            token_tracker.load_and_merge(fpath, current_stage="Indexing")
     except Exception as e:
         log.debug(f"Failed to enable token tracking in run_graphrag: {e}")
 
@@ -94,12 +97,21 @@ def run_graphrag(root_dir: str) -> None:
         from utils.token_tracker import extract_graphrag_indexing_tokens, TokenCostTracker
         tracker = TokenCostTracker.get_instance()
         extract_graphrag_indexing_tokens(str(root_path), tracker)
+        try:
+            existing_tok_files = find_all_telemetry_files(candidate_dirs, "tokens.json")
+            for fpath in existing_tok_files:
+                tracker.load_and_merge(fpath, current_stage="Indexing")
+        except Exception:
+            pass
         for d in [str(root_path), str(root_path / "output")]:
             try:
                 os.makedirs(d, exist_ok=True)
                 tracker.save_to_file(os.path.join(d, "tokens.json"))
             except Exception:
                 pass
+    except Exception as e:
+        log.debug(f"Failed to save tokens in run_graphrag: {e}")
+
     try:
         if dur_tracker:
             extract_graphrag_indexing_durations(str(root_path), dur_tracker)

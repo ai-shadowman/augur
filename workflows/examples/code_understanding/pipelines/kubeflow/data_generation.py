@@ -123,9 +123,10 @@ def generate_code_and_meta_op(
 
             from pipelines.base.data_generation import load_external_data
 
-            external_metadata = load_external_data(tmp_source)
-
             if dur_tracker:
+                with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
+                    external_metadata = load_external_data(tmp_source)
+
                 with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
                     languages = detect_languages(tmp_source)
 
@@ -138,6 +139,7 @@ def generate_code_and_meta_op(
                             external_metadata=external_metadata,
                         )
             else:
+                external_metadata = load_external_data(tmp_source)
                 languages = detect_languages(tmp_source)
 
                 for language in languages:

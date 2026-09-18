@@ -194,10 +194,14 @@ def get_parsed_code_metadata(df, language, config=False):
         try:
             from utils.token_tracker import TokenCostTracker
             token_tracker = TokenCostTracker.get_instance()
+            token_tracker.set_category(f"Data Generation ({language})")
             token_tracker.enable_litellm_callbacks(category=f"Data Generation ({language})")
             token_tracker.enable_openai_tracking(category=f"Data Generation ({language})")
+            calls_before = token_tracker.get_totals()["total_calls"]
         except Exception as e:
             logging.debug(f"Failed to enable token tracking in get_parsed_code_metadata: {e}")
+            token_tracker = None
+            calls_before = 0
 
         dataset = Dataset.from_pandas(df)
 
@@ -223,6 +227,38 @@ def get_parsed_code_metadata(df, language, config=False):
         converted_dataset = flow.generate(dataset, max_concurrency=10)
 
         converted_df = converted_dataset.to_pandas()
+
+        # Fallback token accounting if callbacks did not intercept async Flow executions
+        if token_tracker and len(df) > 0:
+            try:
+                calls_after = token_tracker.get_totals()["total_calls"]
+                if calls_after == calls_before:
+                    model_name = f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}"
+                    if not os.getenv('GRAPHRAG_LLM_ID'):
+                        model_name = token_tracker.chat_model
+
+                    total_p_tokens = 0
+                    total_o_tokens = 0
+                    for _, row in df.iterrows():
+                        code_str = str(row.get("code") or row.get("content") or "")
+                        total_p_tokens += max(50, len(code_str) // 4 + 200)
+
+                    if converted_df is not None and not converted_df.empty:
+                        for _, row in converted_df.iterrows():
+                            out_str = str(row.get("metadata") or row.get("yaml_output") or row.to_dict())
+                            total_o_tokens += max(20, len(out_str) // 4)
+                    else:
+                        total_o_tokens = len(df) * 150
+
+                    token_tracker.track(
+                        source=f"Data Generation ({language}) ({model_name})",
+                        calls=len(df),
+                        prompt_tokens=total_p_tokens,
+                        output_tokens=total_o_tokens,
+                        model=model_name,
+                    )
+            except Exception as e:
+                logging.debug(f"Failed fallback token estimation in get_parsed_code_metadata: {e}")
 
         converted_df.to_csv(
             f"data_{language}_{'config_' if config else '_'}{str(int(datetime.now().timestamp()))}.csv"
@@ -499,23 +535,27 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result["status"] = "complete"
 
-        DefaultAssetLoader().log_results(
-
-            target_path,
-
-            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
-
-                DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
-
-                git_slug=git_slug,
-
-                multi_repo=multi_repo,
-
-            ),
-
-            tags={"git_slug": str(git_slug or "multi-repo"), "category": "data-generation", "code-metadata": "true", "multi_repo": str(multi_repo)},
-
-        )
+        if dur_tracker:
+            with dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})"):
+                DefaultAssetLoader().log_results(
+                    target_path,
+                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    ),
+                    tags={"git_slug": str(git_slug or "multi-repo"), "category": "data-generation", "code-metadata": "true", "multi_repo": str(multi_repo)},
+                )
+        else:
+            DefaultAssetLoader().log_results(
+                target_path,
+                artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
+                    git_slug=git_slug,
+                    multi_repo=multi_repo,
+                ),
+                tags={"git_slug": str(git_slug or "multi-repo"), "category": "data-generation", "code-metadata": "true", "multi_repo": str(multi_repo)},
+            )
 
     except Exception as e:
 
@@ -531,25 +571,29 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result_file = f"data_generation_result_{git_slug}{suffix}.json"
 
-        DefaultAssetLoader().log_results(
-
-            result_file,
-
-            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
-
-                DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
-
-                git_slug=git_slug,
-
-                multi_repo=multi_repo,
-
-            ),
-
-            content=json.dumps(result),
-
-            tags={"git_slug": git_slug, "category": "data-generation", "multi_repo": multi_repo},
-
-        )
+        if dur_tracker:
+            with dur_tracker.measure(stage="Data Generation", step=f"Log Pipeline Result ({step_label})"):
+                DefaultAssetLoader().log_results(
+                    result_file,
+                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                    ),
+                    content=json.dumps(result),
+                    tags={"git_slug": git_slug, "category": "data-generation", "multi_repo": multi_repo},
+                )
+        else:
+            DefaultAssetLoader().log_results(
+                result_file,
+                artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                    DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
+                    git_slug=git_slug,
+                    multi_repo=multi_repo,
+                ),
+                content=json.dumps(result),
+                tags={"git_slug": git_slug, "category": "data-generation", "multi_repo": multi_repo},
+            )
 
 
 def generate_git_slug(git_repo: str, git_branch: str) -> str:
@@ -590,8 +634,12 @@ class DataGenerationPipeline:
         try:
             from utils.token_tracker import TokenCostTracker
             TokenCostTracker.reset_instance()
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.set_category("Data Generation")
+            token_tracker.enable_litellm_callbacks(category="Data Generation")
+            token_tracker.enable_openai_tracking(category="Data Generation")
         except Exception:
-            pass
+            token_tracker = None
 
         try:
             from utils.duration_tracker import DurationTracker
@@ -601,21 +649,23 @@ class DataGenerationPipeline:
 
         try:
             if dur_tracker:
-                prepare_environment(source_path=source_path, target_path=target_path,
-                                    git_repo=git_repo, git_branch=git_branch)
+                with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
+                    prepare_environment(source_path=source_path, target_path=target_path,
+                                        git_repo=git_repo, git_branch=git_branch)
 
-                with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                    languages = detect_languages(source_path)
+                    with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
+                        languages = detect_languages(source_path)
 
-                external_metadata = load_external_data(source_path)
+                    with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
+                        external_metadata = load_external_data(source_path)
 
-                for language in languages:
-                    for config in [False, True]:
-                        generate_code_and_meta(
-                            git_repo=git_repo, git_branch=git_branch,
-                            language=language, source_path=source_path, target_path=target_path,
-                            config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                        )
+                    for language in languages:
+                        for config in [False, True]:
+                            generate_code_and_meta(
+                                git_repo=git_repo, git_branch=git_branch,
+                                language=language, source_path=source_path, target_path=target_path,
+                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                            )
             else:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
@@ -635,6 +685,11 @@ class DataGenerationPipeline:
                 if target_path:
                     try:
                         dur_tracker.save_to_file(os.path.join(target_path, "durations.json"))
+                        parent_t = os.path.dirname(target_path)
+                        if parent_t and parent_t != target_path:
+                            dur_tracker.save_to_file(os.path.join(parent_t, "durations.json"))
+                        if os.path.isdir("target"):
+                            dur_tracker.save_to_file(os.path.join("target", "durations.json"))
                     except Exception as e:
                         logging.debug(f"Failed to save duration metrics to {target_path}: {e}")
                 try:
@@ -648,6 +703,11 @@ class DataGenerationPipeline:
                 if target_path:
                     try:
                         token_tracker.save_to_file(os.path.join(target_path, "tokens.json"))
+                        parent_t = os.path.dirname(target_path)
+                        if parent_t and parent_t != target_path:
+                            token_tracker.save_to_file(os.path.join(parent_t, "tokens.json"))
+                        if os.path.isdir("target"):
+                            token_tracker.save_to_file(os.path.join("target", "tokens.json"))
                     except Exception as e:
                         logging.debug(f"Failed to save token metrics to {target_path}: {e}")
                 token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
