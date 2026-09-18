@@ -382,9 +382,11 @@ class TokenCostTracker:
         if not other or not isinstance(other, TokenCostTracker):
             return
 
-        # Enforce run isolation if run_id is known on both
+        # Enforce run isolation if run_id is known on both and current_stage is not provided
         if (
-            getattr(self, "only_current_run", True)
+            current_stage is None
+            and getattr(self, "only_current_run", True)
+            and getattr(other, "only_current_run", True)
             and getattr(self, "run_id", None)
             and getattr(other, "run_id", None)
             and self.run_id != other.run_id
@@ -403,11 +405,15 @@ class TokenCostTracker:
         for source, r in other.records.items():
             s_lower = source.lower()
             if is_analysis:
-                # Strictly filter out any Analysis-specific records from upstream files/runs
-                if "local search" in s_lower or "chat" in s_lower:
-                    continue
-                if r.get("stage", "").lower() == "analysis" or r.get("category", "").lower() == "analysis":
-                    continue
+                # If explicitly an indexing or data generation record, always keep it
+                if "indexing" in s_lower or "data generation" in s_lower:
+                    pass
+                else:
+                    # Filter out any Analysis-specific records from upstream files/runs
+                    if "local search" in s_lower or "graphrag chat" in s_lower or (s_lower.startswith("chat") and "indexing" not in s_lower):
+                        continue
+                    if r.get("stage", "").lower() == "analysis" or r.get("category", "").lower() == "analysis":
+                        continue
                 # If an upstream source was already merged, do not add it again
                 if source in self._merged_upstream_sources:
                     continue
@@ -803,13 +809,12 @@ class TokenCostTracker:
             except Exception as e:
                 logging.debug(f"Failed to download tokens.json for run {target_run}: {e}")
 
-        # If tracking only the current run and no specific run_id was provided,
-        # skip searching across historical runs in MLflow to ensure telemetry reflects
-        # only the current run and does not take into account other runs.
-        should_isolate_current_run = only_current_run and getattr(self, "only_current_run", True)
+        # If tracking only the current run, no specific run_id was provided, and no stage
+        # transition is active, skip searching across historical runs in MLflow.
+        should_isolate_current_run = only_current_run and getattr(self, "only_current_run", True) and (current_stage is None)
         if should_isolate_current_run and not target_run:
             logging.info(
-                "TokenCostTracker: only_current_run is True and no specific run_id provided. "
+                "TokenCostTracker: only_current_run is True, no current_stage specified, and no specific run_id provided. "
                 "Skipping cross-run search in MLflow to ensure tokens are strictly for the current run."
             )
             return merged_any
@@ -983,4 +988,219 @@ class TokenCostTracker:
                     logging.debug(f"Failed to download tokens.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
+
+
+def extract_graphrag_indexing_tokens(
+    graphrag_dir: str,
+    token_tracker: Optional["TokenCostTracker"] = None,
+) -> bool:
+    """Extracts GraphRAG indexing token usage from output files (stats.json, text_units.parquet, etc.)
+    and records them into the TokenCostTracker instance.
+
+    Args:
+        graphrag_dir: Root directory of the GraphRAG project or its output folder.
+        token_tracker: TokenCostTracker instance to update. If None, uses TokenCostTracker.get_instance().
+
+    Returns:
+        bool: True if any indexing tokens or calls were discovered and tracked, False otherwise.
+    """
+    if not graphrag_dir:
+        return False
+
+    graphrag_dir = str(graphrag_dir)
+    if token_tracker is None:
+        token_tracker = TokenCostTracker.get_instance()
+
+    extracted_any = False
+    chat_model = token_tracker.chat_model
+    embed_model = token_tracker.embed_model
+
+    # 1. Search for stats.json across common output locations
+    candidate_stats_files = [
+        os.path.join(graphrag_dir, "output", "stats.json"),
+        os.path.join(graphrag_dir, "output", "artifacts", "stats.json"),
+        os.path.join(graphrag_dir, "logs", "stats.json"),
+        os.path.join(graphrag_dir, "stats.json"),
+    ]
+    for search_subdir in ["output", "logs"]:
+        base_sub = os.path.join(graphrag_dir, search_subdir)
+        if os.path.isdir(base_sub):
+            try:
+                for root, _, files in os.walk(base_sub):
+                    if "stats.json" in files:
+                        p = os.path.join(root, "stats.json")
+                        if p not in candidate_stats_files:
+                            candidate_stats_files.append(p)
+            except Exception:
+                pass
+
+    stats_file = next((f for f in candidate_stats_files if os.path.isfile(f)), None)
+
+    total_chat_calls = 0
+    total_chat_prompt = 0
+    total_chat_output = 0
+    total_embed_calls = 0
+    total_embed_prompt = 0
+
+    if stats_file:
+        try:
+            with open(stats_file, "r", encoding="utf-8") as f:
+                stats_data = json.load(f)
+
+            if isinstance(stats_data, dict):
+                # Format A: GraphRAG workflow dictionary
+                workflows = stats_data.get("workflows")
+                if isinstance(workflows, dict):
+                    for wf_name, wf_info in workflows.items():
+                        if not isinstance(wf_info, dict):
+                            continue
+                        calls = wf_info.get("llm_calls", 0)
+                        prompt = wf_info.get("prompt_tokens", 0)
+                        output = wf_info.get("completion_tokens", wf_info.get("output_tokens", 0))
+
+                        is_embed_wf = "embed" in wf_name.lower()
+                        if is_embed_wf:
+                            total_embed_calls += calls
+                            total_embed_prompt += prompt
+                        else:
+                            total_chat_calls += calls
+                            total_chat_prompt += prompt
+                            total_chat_output += output
+
+                # Format B: Flat / top-level keys
+                if "llm_calls" in stats_data or "prompt_tokens" in stats_data:
+                    calls = stats_data.get("llm_calls", 0)
+                    prompt = stats_data.get("prompt_tokens", 0)
+                    output = stats_data.get("completion_tokens", stats_data.get("output_tokens", 0))
+                    total_chat_calls = max(total_chat_calls, calls)
+                    total_chat_prompt = max(total_chat_prompt, prompt)
+                    total_chat_output = max(total_chat_output, output)
+
+        except Exception as e:
+            logging.debug(f"Failed to parse stats.json at {stats_file}: {e}")
+
+    # Track chat tokens if found in stats.json and not yet tracked
+    if total_chat_calls > 0 or total_chat_prompt > 0 or total_chat_output > 0:
+        existing_chat_prompt = sum(
+            r.get("prompt_tokens", 0)
+            for k, r in token_tracker.records.items()
+            if "Indexing" in k and "Embeddings" not in k
+        )
+        if existing_chat_prompt == 0:
+            token_tracker.track(
+                source=f"GraphRAG Indexing ({chat_model})",
+                calls=max(1, total_chat_calls),
+                prompt_tokens=total_chat_prompt,
+                output_tokens=total_chat_output,
+                model=chat_model,
+            )
+            extracted_any = True
+
+    # 2. Search for text_units.parquet for embedding tokens
+    candidate_tu_files = [
+        os.path.join(graphrag_dir, "output", "text_units.parquet"),
+        os.path.join(graphrag_dir, "output", "artifacts", "text_units.parquet"),
+        os.path.join(graphrag_dir, "text_units.parquet"),
+    ]
+    base_output = os.path.join(graphrag_dir, "output")
+    if os.path.isdir(base_output):
+        try:
+            for root, _, files in os.walk(base_output):
+                if "text_units.parquet" in files:
+                    p = os.path.join(root, "text_units.parquet")
+                    if p not in candidate_tu_files:
+                        candidate_tu_files.append(p)
+        except Exception:
+            pass
+
+    tu_file = next((f for f in candidate_tu_files if os.path.isfile(f)), None)
+
+    existing_embed_prompt = sum(
+        r.get("prompt_tokens", 0)
+        for k, r in token_tracker.records.items()
+        if "Indexing Embeddings" in k
+    )
+
+    if tu_file and existing_embed_prompt == 0:
+        try:
+            import pandas as pd
+            tu_df = pd.read_parquet(tu_file)
+            calls = len(tu_df)
+            if "n_tokens" in tu_df.columns:
+                p_tokens = int(tu_df["n_tokens"].sum())
+            elif "text" in tu_df.columns:
+                p_tokens = sum(max(1, len(str(t).split()) * 4 // 3) for t in tu_df["text"])
+            else:
+                p_tokens = calls * 300
+
+            if calls > 0:
+                token_tracker.track(
+                    source=f"GraphRAG Indexing Embeddings ({embed_model})",
+                    calls=calls,
+                    prompt_tokens=p_tokens,
+                    output_tokens=0,
+                    model=embed_model,
+                )
+                extracted_any = True
+        except Exception as e:
+            logging.debug(f"Failed to read text_units.parquet via pandas: {e}")
+            try:
+                import pyarrow.parquet as pq
+                table = pq.read_table(tu_file)
+                calls = table.num_rows
+                p_tokens = calls * 300
+                if "n_tokens" in table.column_names:
+                    p_tokens = sum(table["n_tokens"].to_pylist())
+                if calls > 0:
+                    token_tracker.track(
+                        source=f"GraphRAG Indexing Embeddings ({embed_model})",
+                        calls=calls,
+                        prompt_tokens=p_tokens,
+                        output_tokens=0,
+                        model=embed_model,
+                    )
+                    extracted_any = True
+            except Exception as e2:
+                logging.debug(f"Failed to read text_units.parquet via pyarrow: {e2}")
+
+    # If stats.json had embed tokens and parquet wasn't read:
+    if total_embed_prompt > 0:
+        existing_embed = any("Indexing Embeddings" in k for k in token_tracker.records)
+        if not existing_embed:
+            token_tracker.track(
+                source=f"GraphRAG Indexing Embeddings ({embed_model})",
+                calls=max(1, total_embed_calls),
+                prompt_tokens=total_embed_prompt,
+                output_tokens=0,
+                model=embed_model,
+            )
+            extracted_any = True
+
+    # 3. Fallback: community_reports.parquet / entities.parquet if chat tokens still absent
+    existing_chat = any("Indexing" in k and "Embeddings" not in k for k in token_tracker.records)
+    if not existing_chat:
+        candidate_cr_files = [
+            os.path.join(graphrag_dir, "output", "community_reports.parquet"),
+            os.path.join(graphrag_dir, "output", "artifacts", "community_reports.parquet"),
+        ]
+        cr_file = next((f for f in candidate_cr_files if os.path.isfile(f)), None)
+        if cr_file:
+            try:
+                import pandas as pd
+                cr_df = pd.read_parquet(cr_file)
+                n_reports = len(cr_df)
+                if n_reports > 0:
+                    token_tracker.track(
+                        source=f"GraphRAG Indexing ({chat_model})",
+                        calls=n_reports,
+                        prompt_tokens=n_reports * 2000,
+                        output_tokens=n_reports * 400,
+                        model=chat_model,
+                    )
+                    extracted_any = True
+            except Exception:
+                pass
+
+    return extracted_any
+
 

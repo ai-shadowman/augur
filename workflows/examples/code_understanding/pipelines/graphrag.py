@@ -73,6 +73,30 @@ def run_graphrag(root_dir: str) -> None:
 
     log.info("GraphRAG indexing complete.")
 
+    try:
+        from utils.token_tracker import extract_graphrag_indexing_tokens, TokenCostTracker
+        tracker = TokenCostTracker.get_instance()
+        extract_graphrag_indexing_tokens(str(root_path), tracker)
+        for d in [str(root_path), str(root_path / "output")]:
+            try:
+                os.makedirs(d, exist_ok=True)
+                tracker.save_to_file(os.path.join(d, "tokens.json"))
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug(f"Failed to extract/save indexing tokens in run_graphrag: {e}")
+
+    try:
+        if dur_tracker:
+            for d in [str(root_path), str(root_path / "output")]:
+                try:
+                    os.makedirs(d, exist_ok=True)
+                    dur_tracker.save_to_file(os.path.join(d, "durations.json"))
+                except Exception:
+                    pass
+    except Exception as e:
+        log.debug(f"Failed to save durations in run_graphrag: {e}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

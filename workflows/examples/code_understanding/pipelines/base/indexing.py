@@ -71,6 +71,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     git_slug = loaded_tokens.git_slug
                 if not git_repo and loaded_tokens.git_repo:
                     git_repo = loaded_tokens.git_repo
+            try:
+                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing", only_current_run=False)
+            except Exception as e:
+                logging.debug(f"Failed to download tokens from MLflow in indexing: {e}")
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in indexing: {e}")
 
@@ -117,26 +121,13 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
             run_graphrag(graphrag_source_path)
 
-        # Fallback token inspection if direct callbacks didn't record any indexing tokens
+        # Extract indexing tokens from GraphRAG output files (stats.json, text_units.parquet)
         if token_tracker:
             try:
-                indexing_keys = [k for k in token_tracker.records if "Indexing" in k]
-                if not indexing_keys:
-                    parquet_path = os.path.join(graphrag_source_path, "output", "text_units.parquet")
-                    if os.path.exists(parquet_path):
-                        import pandas as pd
-                        tu_df = pd.read_parquet(parquet_path)
-                        if "n_tokens" in tu_df.columns:
-                            total_n_tokens = int(tu_df["n_tokens"].sum())
-                            token_tracker.track(
-                                source=f"GraphRAG Indexing Embeddings ({token_tracker.embed_model})",
-                                calls=len(tu_df),
-                                prompt_tokens=total_n_tokens,
-                                output_tokens=0,
-                                model=token_tracker.embed_model,
-                            )
+                from utils.token_tracker import extract_graphrag_indexing_tokens
+                extract_graphrag_indexing_tokens(graphrag_source_path, token_tracker)
             except Exception as e:
-                logging.debug(f"Fallback indexing token extraction: {e}")
+                logging.debug(f"Indexing token extraction: {e}")
 
         if token_tracker:
             for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:

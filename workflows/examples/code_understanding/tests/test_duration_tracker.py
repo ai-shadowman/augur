@@ -134,6 +134,18 @@ class TestDurationTracker(unittest.TestCase):
         self.assertIn("Total Runtime", md)
         self.assertTrue(md.rstrip().endswith("```"))
 
+    def test_format_summary_truncation(self):
+        """Verify long stage, step, and status strings are truncated with ellipsis."""
+        self.tracker.record_step(
+            "AnalysisWithVeryLongStageNameExceeding18Chars",
+            "Prompt 5: Known Dependencies Requirements Exceeding Limit",
+            13.69,
+            status="success",
+        )
+        summary = self.tracker.format_summary()
+        self.assertIn("AnalysisWithVer...", summary)
+        self.assertIn("Prompt 5: Known Dependencies Requirem...", summary)
+
     def test_serialization_and_merge(self):
         """Verify serialization to dict/file and merging with another tracker."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -216,6 +228,12 @@ class TestDurationTracker(unittest.TestCase):
                 # Both should be above the JSON plan, and duration table immediately follows token table
                 self.assertLess(token_pos, duration_pos)
                 self.assertLess(duration_pos, plan_pos)
+
+                # Duration table uses clean boxed ASCII table within code block
+                self.assertIn("| Pipeline Execution Duration Summary", report)
+                self.assertIn("| Pipeline Stage     | Step / Sub-step                          | Duration   | Status   |", report)
+                self.assertIn("+--------------------+------------------------------------------+------------+----------+", report)
+                self.assertIn("| Total Runtime      |", report)
 
     def test_multi_repo_migration_report_contains_duration_table(self):
         """Verify that multi-repo report places token and duration tables at the end."""

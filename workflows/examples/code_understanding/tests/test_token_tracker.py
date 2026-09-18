@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 from contextlib import redirect_stdout
 import io
+import json
 import logging
 import os
 import sys
@@ -931,6 +932,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
 
     def test_reset_instance_clears_records_and_sources(self):
         """Verify reset_instance completely clears in-memory records and merge caches."""
+        TokenCostTracker.reset_instance()
         tracker = TokenCostTracker.get_instance()
         tracker.track("Test Source", calls=5, prompt_tokens=500, output_tokens=500)
         self.assertEqual(tracker.get_totals()["total_calls"], 5)
@@ -1000,6 +1002,171 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertIsNotNone(evaluator)
             mock_litellm.assert_called_once_with(category="Evaluation (Ground Truth)")
             mock_openai.assert_called_once_with(category="Evaluation (Judge)")
+
+    def test_extract_graphrag_indexing_tokens_from_stats_workflows(self):
+        """Verify extract_graphrag_indexing_tokens extracts tokens from stats.json workflows dict."""
+        from utils.token_tracker import extract_graphrag_indexing_tokens
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats_path = os.path.join(output_dir, "stats.json")
+            stats_content = {
+                "workflows": {
+                    "create_base_extracted_entities": {
+                        "llm_calls": 25,
+                        "prompt_tokens": 12500,
+                        "completion_tokens": 3000,
+                    },
+                    "create_final_community_reports": {
+                        "llm_calls": 10,
+                        "prompt_tokens": 8000,
+                        "completion_tokens": 2000,
+                    },
+                    "create_final_text_units_embeddings": {
+                        "llm_calls": 5,
+                        "prompt_tokens": 4000,
+                        "completion_tokens": 0,
+                    },
+                }
+            }
+            with open(stats_path, "w", encoding="utf-8") as f:
+                json.dump(stats_content, f)
+
+            tracker = TokenCostTracker(chat_model="gpt-4o", embed_model="text-embedding-3-small")
+            result = extract_graphrag_indexing_tokens(tmp_dir, tracker)
+            self.assertTrue(result)
+            self.assertIn("GraphRAG Indexing (gpt-4o)", tracker.records)
+            self.assertIn("GraphRAG Indexing Embeddings (text-embedding-3-small)", tracker.records)
+
+            indexing_rec = tracker.records["GraphRAG Indexing (gpt-4o)"]
+            self.assertEqual(indexing_rec["calls"], 35)
+            self.assertEqual(indexing_rec["prompt_tokens"], 20500)
+            self.assertEqual(indexing_rec["output_tokens"], 5000)
+
+            embed_rec = tracker.records["GraphRAG Indexing Embeddings (text-embedding-3-small)"]
+            self.assertEqual(embed_rec["calls"], 5)
+            self.assertEqual(embed_rec["prompt_tokens"], 4000)
+
+    def test_extract_graphrag_indexing_tokens_from_stats_flat(self):
+        """Verify extract_graphrag_indexing_tokens extracts tokens from flat stats.json."""
+        from utils.token_tracker import extract_graphrag_indexing_tokens
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats_path = os.path.join(output_dir, "stats.json")
+            stats_content = {
+                "llm_calls": 42,
+                "prompt_tokens": 15000,
+                "completion_tokens": 4200,
+            }
+            with open(stats_path, "w", encoding="utf-8") as f:
+                json.dump(stats_content, f)
+
+            tracker = TokenCostTracker(chat_model="mistral-7b-chat")
+            result = extract_graphrag_indexing_tokens(tmp_dir, tracker)
+            self.assertTrue(result)
+            self.assertIn("GraphRAG Indexing (mistral-7b-chat)", tracker.records)
+            self.assertEqual(tracker.records["GraphRAG Indexing (mistral-7b-chat)"]["calls"], 42)
+            self.assertEqual(tracker.records["GraphRAG Indexing (mistral-7b-chat)"]["prompt_tokens"], 15000)
+            self.assertEqual(tracker.records["GraphRAG Indexing (mistral-7b-chat)"]["output_tokens"], 4200)
+
+    def test_extract_graphrag_indexing_tokens_from_text_units_parquet(self):
+        """Verify extract_graphrag_indexing_tokens sums n_tokens from text_units.parquet."""
+        from utils.token_tracker import extract_graphrag_indexing_tokens
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            tu_path = os.path.join(output_dir, "text_units.parquet")
+            with open(tu_path, "wb") as f:
+                f.write(b"PARQUET_STUB")
+
+            mock_df = MagicMock()
+            mock_df.__len__.return_value = 3
+            mock_df.columns = ["id", "text", "n_tokens"]
+            mock_df.__getitem__.side_effect = lambda col: MagicMock(sum=lambda: 750) if col == "n_tokens" else MagicMock()
+
+            tracker = TokenCostTracker(embed_model="e5-mistral-7b-instruct")
+            with patch("pandas.read_parquet", return_value=mock_df):
+                result = extract_graphrag_indexing_tokens(tmp_dir, tracker)
+                self.assertTrue(result)
+                self.assertIn("GraphRAG Indexing Embeddings (e5-mistral-7b-instruct)", tracker.records)
+                self.assertEqual(tracker.records["GraphRAG Indexing Embeddings (e5-mistral-7b-instruct)"]["calls"], 3)
+                self.assertEqual(tracker.records["GraphRAG Indexing Embeddings (e5-mistral-7b-instruct)"]["prompt_tokens"], 750)
+
+    def test_extract_graphrag_indexing_tokens_artifacts_subfolder(self):
+        """Verify extract_graphrag_indexing_tokens finds files in output/artifacts/ subfolder."""
+        from utils.token_tracker import extract_graphrag_indexing_tokens
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifacts_dir = os.path.join(tmp_dir, "output", "artifacts")
+            os.makedirs(artifacts_dir, exist_ok=True)
+            stats_path = os.path.join(artifacts_dir, "stats.json")
+            with open(stats_path, "w", encoding="utf-8") as f:
+                json.dump({"llm_calls": 12, "prompt_tokens": 3000, "output_tokens": 600}, f)
+
+            tracker = TokenCostTracker()
+            result = extract_graphrag_indexing_tokens(tmp_dir, tracker)
+            self.assertTrue(result)
+            self.assertIn(f"GraphRAG Indexing ({tracker.chat_model})", tracker.records)
+            self.assertEqual(tracker.records[f"GraphRAG Indexing ({tracker.chat_model})"]["calls"], 12)
+
+    def test_merge_accepts_different_run_id_when_current_stage_provided(self):
+        """Verify merge accepts upstream records across different run_ids when current_stage is set."""
+        analysis_tracker = TokenCostTracker(run_id="run-analysis-123")
+        analysis_tracker.track("GraphRAG Local Search (gpt-4o)", calls=1, prompt_tokens=500, output_tokens=100)
+
+        indexing_tracker = TokenCostTracker(run_id="run-indexing-456")
+        indexing_tracker.track("GraphRAG Indexing (mistral-7b-chat)", calls=20, prompt_tokens=10000, output_tokens=2500)
+        indexing_tracker.track("GraphRAG Indexing Embeddings (text-embedding-3-small)", calls=15, prompt_tokens=4500, output_tokens=0)
+
+        # Merge with current_stage="Analysis" should accept indexing records despite run_id difference
+        # and should NOT filter out "mistral-7b-chat"
+        analysis_tracker.merge(indexing_tracker, current_stage="Analysis")
+        self.assertIn("GraphRAG Indexing (mistral-7b-chat)", analysis_tracker.records)
+        self.assertIn("GraphRAG Indexing Embeddings (text-embedding-3-small)", analysis_tracker.records)
+        self.assertIn("GraphRAG Local Search (gpt-4o)", analysis_tracker.records)
+        totals = analysis_tracker.get_totals()
+        self.assertEqual(totals["total_calls"], 36)
+        self.assertEqual(totals["total_prompt_tokens"], 15000)
+
+    def test_generate_migration_report_includes_indexing_tokens(self):
+        """Verify generate_migration_report includes GraphRAG Indexing tokens in report."""
+        from utils.graphrag_utils import DependencyAnalyzer
+        from utils.duration_tracker import DurationTracker
+        import asyncio
+
+        DurationTracker.reset_instance()
+        token_singleton = TokenCostTracker.reset_instance()
+
+        mock_loader = MagicMock()
+        mock_loader.num_prompts.side_effect = lambda prefix: 1 if "enhanced" in prefix else 1
+        mock_loader.download_prompt.side_effect = [
+            ("Prompt overview", {"search_mode": "global"}),
+            ("Prompt plan", {"search_mode": "global"}),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create indexing stats in tmp_dir/output/stats.json
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            with open(os.path.join(output_dir, "stats.json"), "w", encoding="utf-8") as f:
+                json.dump({"llm_calls": 30, "prompt_tokens": 12000, "completion_tokens": 3000}, f)
+
+            with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+                 patch.object(DependencyAnalyzer, '_setup_search'), \
+                 patch.object(DependencyAnalyzer, '_setup_prompts'), \
+                 patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
+                 patch('utils.visualization_utils.log_interactive_dependency_graph'), \
+                 patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+                 patch('sys.modules'):
+
+                analyzer = DependencyAnalyzer(root_dir=tmp_dir, git_slug="test-slug")
+
+                with patch.object(analyzer, 'query_with_llm', side_effect=["Overview text", "### Code Migration Plan (JSON)\n[]"]):
+                    report = asyncio.run(analyzer.generate_migration_report())
+
+                    self.assertIn("### LLM Token Usage & Cost Summary", report)
+                    self.assertIn("GraphRAG Indexing", report)
+                    self.assertIn("12,000", report)
 
 
 if __name__ == "__main__":

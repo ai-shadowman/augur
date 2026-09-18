@@ -634,6 +634,7 @@ class DependencyAnalyzer:
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
                 from utils.duration_tracker import find_telemetry_file
+                from utils.token_tracker import extract_graphrag_indexing_tokens
                 tokens_file = find_telemetry_file([
                     self.graphrag_dir,
                     os.path.join(self.graphrag_dir, "output"),
@@ -644,6 +645,18 @@ class DependencyAnalyzer:
                     self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
                     if not self.git_slug and self.token_tracker.git_slug:
                         self.git_slug = self.token_tracker.git_slug
+                try:
+                    self.token_tracker.download_from_mlflow(
+                        git_slug=self.git_slug,
+                        multi_repo=self.multi_repo,
+                        current_stage="Analysis",
+                        only_current_run=False,
+                    )
+                except Exception as e:
+                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
+                has_indexing = any("Indexing" in k for k in self.token_tracker.records)
+                if not has_indexing:
+                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 
@@ -748,7 +761,7 @@ class DependencyAnalyzer:
 
         try:
             from utils.duration_tracker import DurationTracker
-            duration_section = DurationTracker.get_instance().format_markdown_table()
+            duration_section = DurationTracker.get_instance().format_markdown_section()
         except Exception:
             duration_section = ""
 

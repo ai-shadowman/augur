@@ -59,6 +59,15 @@ class AnalysisPipeline:
                         analyzer.git_slug = git_slug
                     if not git_repo and analyzer.token_tracker.git_repo:
                         git_repo = analyzer.token_tracker.git_repo
+                try:
+                    analyzer.token_tracker.download_from_mlflow(
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
+                        current_stage="Analysis",
+                        only_current_run=False,
+                    )
+                except Exception as e:
+                    logging.debug(f"Failed to download tokens from MLflow in analysis: {e}")
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 
@@ -66,7 +75,7 @@ class AnalysisPipeline:
 
         # Safeguard: ensure duration summary is present in the markdown report
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
-            dur_md = dur_tracker.format_markdown_table()
+            dur_md = dur_tracker.format_markdown_section()
             if dur_md.strip():
                 import re
                 match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)

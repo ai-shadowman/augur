@@ -252,9 +252,12 @@ class DurationTracker:
             if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec):
                 continue
             dur_str = self.format_duration(rec["duration"])
-            status_str = rec.get("status", "success").capitalize()
-            stage_str = rec["stage"][:stage_w]
-            step_str = rec["step"][:step_w]
+            stage_name = rec["stage"]
+            stage_str = stage_name[: stage_w - 3] + "..." if len(stage_name) > stage_w else stage_name
+            step_name = rec["step"]
+            step_str = step_name[: step_w - 3] + "..." if len(step_name) > step_w else step_name
+            status_raw = rec.get("status", "success").capitalize()
+            status_str = status_raw[: status_w - 3] + "..." if len(status_raw) > status_w else status_raw
             lines.append(
                 f"| {stage_str:<{stage_w}} | {step_str:<{step_w}} | {dur_str:>{dur_w}} | {status_str:<{status_w}} |"
             )
