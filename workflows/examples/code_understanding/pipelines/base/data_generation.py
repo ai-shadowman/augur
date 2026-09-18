@@ -176,6 +176,51 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
         raise e
 
 
+def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_df=None):
+    """Ensures token usage is recorded for data generation even if flow parsing threw an error
+    or callbacks intercepted 0 tokens."""
+    if not token_tracker or df is None or len(df) == 0:
+        return
+    try:
+        records_for_lang = [
+            (k, r) for k, r in token_tracker.records.items()
+            if f"Data Generation ({language})" in k
+        ]
+        has_real_tokens = any(
+            r.get("prompt_tokens", 0) > 0 or r.get("output_tokens", 0) > 0
+            for _, r in records_for_lang
+        )
+        if not has_real_tokens:
+            model_name = f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}"
+            if not os.getenv("GRAPHRAG_LLM_ID"):
+                model_name = getattr(token_tracker, "chat_model", "gpt-oss-120b")
+
+            total_p_tokens = 0
+            total_o_tokens = 0
+            for _, row in df.iterrows():
+                code_str = str(row.get("code") or row.get("content") or "")
+                total_p_tokens += max(50, len(code_str) // 4 + 200)
+
+            if converted_df is not None and not converted_df.empty:
+                for _, row in converted_df.iterrows():
+                    out_str = str(row.get("metadata") or row.get("yaml_output") or row.to_dict())
+                    total_o_tokens += max(20, len(out_str) // 4)
+            else:
+                total_o_tokens = len(df) * 150
+
+            token_tracker.track(
+                source=f"Data Generation ({language}) ({model_name})",
+                calls=len(df),
+                prompt_tokens=total_p_tokens,
+                output_tokens=total_o_tokens,
+                model=model_name,
+                stage="Data Generation",
+                category="Data Generation",
+            )
+    except Exception as e:
+        logging.debug(f"Failed fallback token estimation in _ensure_data_generation_tokens: {e}")
+
+
 def get_parsed_code_metadata(df, language, config=False):
     """Runs an SDG Hub flow over df and returns a DataFrame with extracted metadata."""
     from datasets import Dataset
@@ -224,45 +269,19 @@ def get_parsed_code_metadata(df, language, config=False):
             top_k=1,
         )
 
-        converted_dataset = flow.generate(dataset, max_concurrency=10)
+        converted_df = None
+        try:
+            converted_dataset = flow.generate(dataset, max_concurrency=10)
+            converted_df = converted_dataset.to_pandas()
+        finally:
+            # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
+            if token_tracker and len(df) > 0:
+                _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df)
 
-        converted_df = converted_dataset.to_pandas()
-
-        # Fallback token accounting if callbacks did not intercept async Flow executions
-        if token_tracker and len(df) > 0:
-            try:
-                calls_after = token_tracker.get_totals()["total_calls"]
-                if calls_after == calls_before:
-                    model_name = f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}"
-                    if not os.getenv('GRAPHRAG_LLM_ID'):
-                        model_name = token_tracker.chat_model
-
-                    total_p_tokens = 0
-                    total_o_tokens = 0
-                    for _, row in df.iterrows():
-                        code_str = str(row.get("code") or row.get("content") or "")
-                        total_p_tokens += max(50, len(code_str) // 4 + 200)
-
-                    if converted_df is not None and not converted_df.empty:
-                        for _, row in converted_df.iterrows():
-                            out_str = str(row.get("metadata") or row.get("yaml_output") or row.to_dict())
-                            total_o_tokens += max(20, len(out_str) // 4)
-                    else:
-                        total_o_tokens = len(df) * 150
-
-                    token_tracker.track(
-                        source=f"Data Generation ({language}) ({model_name})",
-                        calls=len(df),
-                        prompt_tokens=total_p_tokens,
-                        output_tokens=total_o_tokens,
-                        model=model_name,
-                    )
-            except Exception as e:
-                logging.debug(f"Failed fallback token estimation in get_parsed_code_metadata: {e}")
-
-        converted_df.to_csv(
-            f"data_{language}_{'config_' if config else '_'}{str(int(datetime.now().timestamp()))}.csv"
-        )
+        if converted_df is not None:
+            converted_df.to_csv(
+                f"data_{language}_{'config_' if config else '_'}{str(int(datetime.now().timestamp()))}.csv"
+            )
 
         return converted_df
 
@@ -565,8 +584,9 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             pass
         try:
-            from utils.token_tracker import TokenCostTracker
+            from utils.token_tracker import TokenCostTracker, extract_data_generation_tokens
             t_tr = TokenCostTracker.get_instance()
+            extract_data_generation_tokens(target_path, t_tr)
             t_tr.save_to_file(os.path.join(target_path, "tokens.json"))
         except Exception:
             pass

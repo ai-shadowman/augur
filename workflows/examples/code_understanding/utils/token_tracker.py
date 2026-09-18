@@ -189,11 +189,20 @@ class TokenCostTracker:
         for k, v in kwargs.items():
             if k not in rec:
                 rec[k] = v
-        rec["calls"] += calls
-        rec["prompt_tokens"] += prompt_tokens
-        rec["output_tokens"] += output_tokens
-        rec["total_tokens"] += prompt_tokens + output_tokens
-        rec["cost"] += cost
+
+        overwrite = kwargs.get("overwrite", False)
+        if overwrite or (rec["calls"] > 0 and rec["prompt_tokens"] == 0 and rec["output_tokens"] == 0 and (prompt_tokens > 0 or output_tokens > 0)):
+            rec["calls"] = calls
+            rec["prompt_tokens"] = prompt_tokens
+            rec["output_tokens"] = output_tokens
+            rec["total_tokens"] = prompt_tokens + output_tokens
+            rec["cost"] = cost
+        else:
+            rec["calls"] += calls
+            rec["prompt_tokens"] += prompt_tokens
+            rec["output_tokens"] += output_tokens
+            rec["total_tokens"] += prompt_tokens + output_tokens
+            rec["cost"] += cost
 
         # Real-time console output on every LLM call
         total_tokens = prompt_tokens + output_tokens
@@ -423,6 +432,7 @@ class TokenCostTracker:
             self._merged_upstream_sources = set()
 
         is_analysis = current_stage and current_stage.lower() == "analysis"
+        is_indexing = current_stage and current_stage.lower() == "indexing"
 
         for source, r in other.records.items():
             s_lower = source.lower()
@@ -440,6 +450,14 @@ class TokenCostTracker:
                 if source in self._merged_upstream_sources:
                     continue
                 self._merged_upstream_sources.add(source)
+            elif is_indexing:
+                # In indexing stage, only data generation records are upstream
+                if "data generation" in s_lower:
+                    if source in self._merged_upstream_sources:
+                        continue
+                    self._merged_upstream_sources.add(source)
+                elif "indexing" in s_lower or "local search" in s_lower or (s_lower.startswith("chat") and "data generation" not in s_lower):
+                    continue
 
             if source not in self.records:
                 self.records[source] = {
@@ -455,6 +473,14 @@ class TokenCostTracker:
             other_output = r.get("output_tokens", 0)
             # If the exact same record is encountered again (e.g. from copies across candidate dirs), do not double-count
             if rec["calls"] == other_calls and rec["prompt_tokens"] == other_prompt and rec["output_tokens"] == other_output and other_calls > 0:
+                continue
+            # If local record had 0 tokens but incoming record has real tokens, overwrite with the real data
+            if rec["calls"] > 0 and rec["prompt_tokens"] == 0 and rec["output_tokens"] == 0 and (other_prompt > 0 or other_output > 0):
+                rec["calls"] = other_calls
+                rec["prompt_tokens"] = other_prompt
+                rec["output_tokens"] = other_output
+                rec["total_tokens"] = r.get("total_tokens", other_prompt + other_output)
+                rec["cost"] = r.get("cost", 0.0)
                 continue
             rec["calls"] += other_calls
             rec["prompt_tokens"] += other_prompt
@@ -482,6 +508,81 @@ class TokenCostTracker:
         """Sets the active category used by callback interceptors for upcoming calls."""
         self._active_category = category
 
+    def _extract_tokens(self, resp, kwargs=None, is_embed: bool = False) -> Tuple[int, int]:
+        """Extracts prompt and output tokens from a response object or dictionary,
+        inspecting usage metadata with fallback estimation from text content."""
+        p_tokens = 0
+        o_tokens = 0
+        usage = None
+
+        if isinstance(resp, dict):
+            usage = resp.get("usage")
+        elif resp is not None:
+            usage = getattr(resp, "usage", None)
+            if usage is None and hasattr(resp, "get"):
+                try:
+                    usage = resp.get("usage")
+                except Exception:
+                    pass
+
+        if usage is None and kwargs and isinstance(kwargs, dict):
+            usage = kwargs.get("usage") or (
+                kwargs.get("standard_logging_object", {}).get("usage")
+                if isinstance(kwargs.get("standard_logging_object"), dict)
+                else None
+            )
+
+        if usage is not None:
+            if isinstance(usage, dict):
+                p_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                o_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                if p_tokens == 0 and is_embed:
+                    p_tokens = usage.get("total_tokens") or 0
+            else:
+                p_tokens = getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0)) or 0
+                o_tokens = getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0)) or 0
+                if p_tokens == 0 and is_embed:
+                    p_tokens = getattr(usage, "total_tokens", 0) or 0
+
+        # Fallback estimation if usage is missing or 0
+        if p_tokens == 0:
+            if kwargs and isinstance(kwargs, dict):
+                msgs = kwargs.get("messages")
+                prompt_text = kwargs.get("prompt") or kwargs.get("input")
+                if msgs and isinstance(msgs, list):
+                    combined_msg = " ".join(
+                        str(m.get("content", "")) if isinstance(m, dict) else str(getattr(m, "content", ""))
+                        for m in msgs
+                    )
+                    p_tokens = self.count_tokens(combined_msg)
+                elif prompt_text:
+                    if isinstance(prompt_text, list):
+                        p_tokens = sum(self.count_tokens(str(t)) for t in prompt_text)
+                    else:
+                        p_tokens = self.count_tokens(str(prompt_text))
+
+        if o_tokens == 0 and not is_embed and resp is not None:
+            content_text = ""
+            if isinstance(resp, dict):
+                choices = resp.get("choices") or []
+                if choices and isinstance(choices, list) and len(choices) > 0:
+                    first = choices[0]
+                    if isinstance(first, dict):
+                        content_text = first.get("message", {}).get("content") or first.get("text") or ""
+                    else:
+                        msg = getattr(first, "message", None)
+                        content_text = getattr(msg, "content", "") if msg else getattr(first, "text", "")
+            else:
+                choices = getattr(resp, "choices", None) or []
+                if choices and isinstance(choices, list) and len(choices) > 0:
+                    first = choices[0]
+                    msg = getattr(first, "message", None)
+                    content_text = getattr(msg, "content", "") if msg else getattr(first, "text", "")
+            if content_text:
+                o_tokens = self.count_tokens(str(content_text))
+
+        return int(p_tokens or 0), int(o_tokens or 0)
+
     def enable_litellm_callbacks(self, category: str = "LiteLLM"):
         """Registers a callback with litellm.success_callback to intercept and track
         all direct LiteLLM invocations (e.g. from sdg_hub, custom evaluators).
@@ -497,16 +598,17 @@ class TokenCostTracker:
             try:
                 cat = getattr(tracker_self, "_active_category", None) or category
                 model = kwargs.get("model") or getattr(completion_response, "model", tracker_self.chat_model)
-                usage = getattr(completion_response, "usage", None)
-                p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-                o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                call_type = kwargs.get("call_type", "")
+                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (model == tracker_self.embed_model or "embed" in tracker_self.embed_model)
+
+                p_tokens, o_tokens = tracker_self._extract_tokens(completion_response, kwargs=kwargs, is_embed=is_embed)
 
                 response_cost = kwargs.get("response_cost")
-                if response_cost is None:
+                if response_cost is None and completion_response is not None:
                     response_cost = getattr(completion_response, "_response_cost", None)
+                    if response_cost is None and isinstance(completion_response, dict):
+                        response_cost = completion_response.get("_response_cost") or completion_response.get("response_cost")
 
-                call_type = kwargs.get("call_type", "")
-                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (o_tokens == 0 and p_tokens > 0 and (model == tracker_self.embed_model or "embed" in tracker_self.embed_model))
                 if is_embed:
                     prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
                     source = f"{prefix} ({model})"
@@ -581,9 +683,7 @@ class TokenCostTracker:
                 try:
                     cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    usage = getattr(resp, "usage", None)
-                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-                    o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
                     source = f"{cat} ({model})"
                     tracker_self.track(
                         source=source,
@@ -607,9 +707,7 @@ class TokenCostTracker:
                 try:
                     cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    usage = getattr(resp, "usage", None)
-                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-                    o_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
                     source = f"{cat} ({model})"
                     tracker_self.track(
                         source=source,
@@ -633,8 +731,7 @@ class TokenCostTracker:
                 try:
                     cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    usage = getattr(resp, "usage", None)
-                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
+                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
                     prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
                     source = f"{prefix} ({model})"
                     tracker_self.track(
@@ -659,8 +756,7 @@ class TokenCostTracker:
                 try:
                     cat = getattr(tracker_self, "_active_category", None) or category
                     model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    usage = getattr(resp, "usage", None)
-                    p_tokens = getattr(usage, "prompt_tokens", 0) if usage else (getattr(usage, "total_tokens", 0) if usage else 0)
+                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
                     prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
                     source = f"{prefix} ({model})"
                     tracker_self.track(
@@ -1312,9 +1408,12 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
     if not search_paths or not token_tracker:
         return False
 
-    # If tracker already contains Data Generation records, do nothing
-    has_data_gen = any("Data Generation" in k for k in token_tracker.records)
-    if has_data_gen:
+    # If tracker already contains Data Generation records with valid tokens, do nothing
+    has_valid_data_gen = any(
+        "Data Generation" in k and (r.get("prompt_tokens", 0) > 0 or r.get("output_tokens", 0) > 0)
+        for k, r in token_tracker.records.items()
+    )
+    if has_valid_data_gen:
         return False
 
     if isinstance(search_paths, str):
