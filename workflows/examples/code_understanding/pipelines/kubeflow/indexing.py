@@ -69,7 +69,6 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
         dur_tr = DurationTracker.get_instance()
         summary = dur_tr.format_summary()
         logging.info("\n" + summary)
-        print("\n" + summary, flush=True)
     except Exception as e:
         logging.debug(f"Failed to print duration summary in indexing pod: {e}")
 
@@ -78,7 +77,6 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
         tok_tr = TokenCostTracker.get_instance()
         summary = tok_tr.format_summary()
         logging.info("\n" + summary)
-        print("\n" + summary, flush=True)
     except Exception as e:
         logging.debug(f"Failed to print token summary in indexing pod: {e}")
 

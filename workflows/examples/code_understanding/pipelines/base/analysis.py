@@ -1,9 +1,24 @@
+import logging
 import os
+import re
 import sys
+from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 from utils.otel_utils import enable_telemetry
+
+
+def _inject_section(report: str, section_md: str) -> str:
+    """Injects a markdown section before the Code Migration Plan or at the end."""
+    if not section_md or not section_md.strip():
+        return report
+    match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+    if match:
+        idx = match.start()
+        return report[:idx] + section_md.strip() + "\n\n" + report[idx:]
+    return f"{report.rstrip()}\n\n{section_md.strip()}\n"
 
 
 ##############################################################################
@@ -16,12 +31,10 @@ class AnalysisPipeline:
     def run(self, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
             multi_repo: bool = False):
         """Generates a migration report from the GraphRAG index and returns the result."""
-        import asyncio, logging
+        import asyncio
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         git_repo = git_repo or os.getenv("GIT_REPO", "")
         git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
@@ -88,26 +101,10 @@ class AnalysisPipeline:
 
         # Safeguard: ensure token and duration summaries are present in the markdown report
         if analyzer.token_tracker and "### LLM Token Usage & Cost Summary" not in report:
-            tok_md = analyzer.token_tracker.format_markdown_section()
-            if tok_md.strip():
-                import re
-                match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
-                if match:
-                    idx = match.start()
-                    report = report[:idx] + tok_md.strip() + "\n\n" + report[idx:]
-                else:
-                    report = f"{report.rstrip()}\n\n{tok_md.strip()}\n"
+            report = _inject_section(report, analyzer.token_tracker.format_markdown_section())
 
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
-            dur_md = dur_tracker.format_markdown_section()
-            if dur_md.strip():
-                import re
-                match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
-                if match:
-                    idx = match.start()
-                    report = report[:idx] + dur_md.strip() + "\n\n" + report[idx:]
-                else:
-                    report = f"{report.rstrip()}\n\n{dur_md.strip()}\n"
+            report = _inject_section(report, dur_tracker.format_markdown_section())
 
         try:
             analyzer.token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
@@ -137,11 +134,9 @@ class AnalysisPipeline:
 
     def run_multi_repo(self):
         """Runs migration report generation across the combined multi-repo GraphRAG index."""
-        import os, logging
+        import os
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_result_directory
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
@@ -167,13 +162,11 @@ class AnalysisPipeline:
         multi_repo: bool = False,
     ):
         """Queries the GraphRAG index with an LLM and returns the result."""
-        import asyncio, logging
+        import asyncio
         from datetime import datetime
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         use_multi_repo = multi_repo or not git_repo
 
@@ -215,15 +208,8 @@ class AnalysisPipeline:
         except Exception:
             dur_tracker = None
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Analysis", step="Adhoc Query"):
-                result = asyncio.run(analyzer.query_with_llm(
-                    question + postamble,
-                    retry_count=retry_count,
-                    use_global=use_global,
-                    response_type="Multiple Paragraphs, plain text, no markdown formatting",
-                ))
-        else:
+        cm = dur_tracker.measure(stage="Analysis", step="Adhoc Query") if dur_tracker else nullcontext()
+        with cm:
             result = asyncio.run(analyzer.query_with_llm(
                 question + postamble,
                 retry_count=retry_count,
@@ -243,34 +229,19 @@ class AnalysisPipeline:
                 logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-
         result_file = f"adhoc_query_{timestamp}.txt"
-
         DefaultAssetLoader().log_results(
-
             result_file,
-
-            artifact_path=(
-
-                DefaultAssetLoader.get_log_results_artifact_path(
-
-                    DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES,
-
-                    git_slug=git_slug,
-
-                    multi_repo=use_multi_repo,
-
-                )
-
+            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES,
+                git_slug=git_slug,
+                multi_repo=use_multi_repo,
             ),
-
             content=f"Question: {question}\n\nAnswer:\n{result}",
-
             tags={"category": "analysis",
                   "adhoc_query": "true",
                   "git_slug": git_slug,
                   "multi_repo": use_multi_repo},
-
         )
 
         print(adhoc_results_header, flush=True)

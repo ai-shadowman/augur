@@ -54,7 +54,8 @@ class DependencyAnalyzer:
         self._setup_prompts()
 
     def _setup_configuration(self):
-        """Initialize instance configuration."""
+        """Hook for instance configuration and test isolation."""
+        pass
 
     def _setup_search(self):
         """Initialize GraphRAG search"""
@@ -640,21 +641,12 @@ class DependencyAnalyzer:
                 dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
-
-            has_indexing_dur = any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records)
-            if not has_indexing_dur:
-                extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
-            has_data_gen_dur = any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records)
-            if not has_data_gen_dur:
-                from utils.duration_tracker import extract_data_generation_durations
-                extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
 
         try:
             if hasattr(self, "token_tracker") and self.token_tracker:
                 from utils.duration_tracker import find_all_telemetry_files
-                from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
                 for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
                     self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
                     if not self.git_slug and self.token_tracker.git_slug:
@@ -668,14 +660,10 @@ class DependencyAnalyzer:
                     )
                 except Exception as e:
                     logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
-                has_indexing = any("Indexing" in k for k in self.token_tracker.records)
-                if not has_indexing:
-                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
-                has_data_gen = any("Data Generation" in k for k in self.token_tracker.records)
-                if not has_data_gen:
-                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
+
+        self._ensure_metrics_extracted(candidate_dirs, dur_tracker)
 
 
         report_start_perf = time.perf_counter()
@@ -774,26 +762,7 @@ class DependencyAnalyzer:
         except Exception as e:
             logging.debug(f"Failed to upload tokens to MLflow in generate_migration_report: {e}")
 
-        # Ensure Indexing and Data Generation are extracted before rendering markdown tables
-        try:
-            from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
-            if hasattr(self, "token_tracker") and self.token_tracker:
-                if not any("Indexing" in k for k in self.token_tracker.records):
-                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
-                if not any("Data Generation" in k for k in self.token_tracker.records):
-                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
-        except Exception as e:
-            logging.debug(f"Fallback token extraction before report render: {e}")
-
-        try:
-            from utils.duration_tracker import DurationTracker, extract_graphrag_indexing_durations, extract_data_generation_durations
-            d_tr = DurationTracker.get_instance()
-            if not any(r.get("stage", "").lower() == "indexing" for r in d_tr.records):
-                extract_graphrag_indexing_durations(self.graphrag_dir, d_tr)
-            if not any(r.get("stage", "").lower() == "data generation" for r in d_tr.records):
-                extract_data_generation_durations(candidate_dirs, d_tr)
-        except Exception as e:
-            logging.debug(f"Fallback duration extraction before report render: {e}")
+        self._ensure_metrics_extracted(candidate_dirs)
 
         token_summary_section = self.token_tracker.format_markdown_section()
 
@@ -807,59 +776,54 @@ class DependencyAnalyzer:
         if duration_section.strip():
             metrics_section = f"{metrics_section}\n\n{duration_section.strip()}"
 
-        # For multi-repo runs, place the metrics tables at the end of the summary / report
-        if self.multi_repo:
-            return f"{title}{report.rstrip()}\n\n{metrics_section}\n"
-
-        # Place the metrics tables above the Code Migration Plan (JSON) section
-        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
-        if match:
-            idx = match.start()
-            final_report = report[:idx] + metrics_section + "\n\n" + report[idx:]
-            return f"{title}{final_report}"
+        if not self.multi_repo:
+            match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+            if match:
+                idx = match.start()
+                return f"{title}{report[:idx]}{metrics_section}\n\n{report[idx:]}"
 
         return f"{title}{report.rstrip()}\n\n{metrics_section}\n"
+
+    def _ensure_metrics_extracted(self, candidate_dirs, dur_tracker=None):
+        """Ensures Indexing and Data Generation metrics are extracted for tokens and durations."""
+        try:
+            if hasattr(self, "token_tracker") and self.token_tracker:
+                from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
+                if not any("Indexing" in k for k in self.token_tracker.records):
+                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
+                if not any("Data Generation" in k for k in self.token_tracker.records):
+                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (tokens): {e}")
+
+        try:
+            if dur_tracker is None:
+                from utils.duration_tracker import DurationTracker
+                dur_tracker = DurationTracker.get_instance()
+            from utils.duration_tracker import extract_graphrag_indexing_durations, extract_data_generation_durations
+            if not any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records):
+                extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
+            if not any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records):
+                extract_data_generation_durations(candidate_dirs, dur_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (durations): {e}")
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""
         return self.token_tracker.format_summary()
     
     async def generate_report(self, service_name: str):
-
         deps = self._find_dependencies(service_name)
-
         logging.info(f"Dependencies for {service_name}:")
-
         for dep in deps:
-
             logging.info(f"  {dep['from']} -> {dep['to']} ({dep['type']})")
 
         dependents = self._find_dependents("database")
-
         logging.info("\nModules depending on database:")
-
         for dep in dependents:
-
             logging.info(f"  {dep['from']} -> {dep['to']}")
 
-        # cycles = self._find_circular_dependencies()
-
-        # if cycles:
-
-        #     logging.info("\n⚠️  Circular dependencies found:")
-
-        #     print(cycles)
-
-        #     for cycle in cycles:
-
-        #         logging.info(f"  {' -> '.join(cycle)}")
-
         layers = self._get_dependency_layers()
-
         logging.info("\nArchitectural Layers:")
-
         logging.info(f"  Leaf modules (no dependencies): {layers['leaf_modules']}")
-
         logging.info(f"  Top modules (many dependencies): {layers['top_modules']}")
-    
-    

@@ -1,7 +1,10 @@
+import logging
 import os
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 from utils.otel_utils import enable_telemetry
@@ -15,9 +18,6 @@ def clone_from_repo(repo_url,
     """Clones the given git repo to the specified destination."""
     from git import Repo
     from urllib.parse import urlparse, urlunparse
-    import logging
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     updated_repo_url = repo_url
     if git_username and git_token:
@@ -46,10 +46,6 @@ def clone_from_repo(repo_url,
 def reset_environment(source_path: str, target_path: str):
     """Removes the source and target directories."""
     import shutil
-    import logging
-    import os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     logging.info("Resetting environment...")
 
@@ -65,11 +61,6 @@ def prepare_environment(source_path: str,
                         git_username: str = "",
                         git_token: str = ""):
     """Prepares the environment at the start of the pipeline."""
-    import logging
-    import os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
-
     logging.info("Preparing the environment for pipeline run...")
 
     try:
@@ -79,18 +70,12 @@ def prepare_environment(source_path: str,
         dur_tracker = None
 
     try:
-        if dur_tracker:
-            with dur_tracker.measure(stage="Data Generation", step="Reset Environment"):
-                reset_environment(source_path, target_path)
-
-            with dur_tracker.measure(stage="Data Generation", step="GitHub Checkout"):
-                clone_from_repo(git_repo, 
-                                source_path, 
-                                branch=git_branch,
-                                git_username=git_username,
-                                git_token=git_token)
-        else:
+        cm_reset = dur_tracker.measure(stage="Data Generation", step="Reset Environment") if dur_tracker else nullcontext()
+        with cm_reset:
             reset_environment(source_path, target_path)
+
+        cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
+        with cm_clone:
             clone_from_repo(git_repo, 
                             source_path, 
                             branch=git_branch,
@@ -115,37 +100,27 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
 
     import pandas as pd
     from utils import code_utils
-    import logging
     import os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch) if git_repo else None
 
     try:
-
         logging.info(f"Generating raw dataset for git repo={git_repo}, language={language}...")
-
         records = []
-
         excluded_dirs = code_utils.get_exclude_dirs_for_language(language)
 
         for root, dirs, files in os.walk(source_path):
-
             dirs[:] = [d for d in dirs if d not in excluded_dirs]
-
             include_extensions = (
                 code_utils.get_config_file_extensions_for_language(language) if config
                 else code_utils.get_file_extensions_for_language(language)
             )
 
             for filename in files:
-
                 if os.path.splitext(filename)[1] not in include_extensions:
                     continue
 
                 logging.debug(f"Processing {filename}...")
-
                 abs_path = os.path.join(root, filename)
 
                 if code_utils.is_large_code_file(abs_path, max_size=200_000):
@@ -153,27 +128,23 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
                     continue
 
                 rel_path = os.path.relpath(abs_path, source_path)
-
                 try:
-
                     with open(abs_path, "r", encoding="utf-8") as f:
                         code = f.read()
-                        records.append({"code": code,
-                                        "file_path": rel_path,
-                                        "git_repo": git_repo,
-                                        "git_slug": git_slug,
-                                        "language": language,
-                                        "multi_repo": multi_repo,})
-
+                        records.append({
+                            "code": code,
+                            "file_path": rel_path,
+                            "git_repo": git_repo,
+                            "git_slug": git_slug,
+                            "language": language,
+                            "multi_repo": multi_repo,
+                        })
                 except (UnicodeDecodeError, PermissionError):
                     continue
 
         return pd.DataFrame(records) if records else None
-
     except Exception as e:
-
         logging.error(f"Error generating dataframe with raw code: {e}")
-
         raise e
 
 
@@ -229,9 +200,7 @@ def get_parsed_code_metadata(df, language, config=False):
     from flows.flow_extensions import CustomDeleteColumnsBlock
     from datetime import datetime
     from loaders.default_asset_loader import DefaultAssetLoader
-    import logging, os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+    import os
 
     try:
 
@@ -324,9 +293,6 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
     """Builds a structured text comment from a code file's metadata dictionary."""
     import os
     from utils import code_utils
-    import logging
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -434,11 +400,8 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
     """Writes annotated code and flattened metadata files to target_path."""
     import os
     from pathlib import Path
-    import logging
     from utils import json_utils
     from loaders.default_asset_loader import DefaultAssetLoader
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     try:
 
@@ -506,12 +469,10 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                             source_path: str, target_path: str, config: bool = False,
                             multi_repo: bool = False, external_metadata: dict = None):
     """Generates and saves code metadata for one language/config combination."""
-    import json, logging, traceback
+    import json, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils import code_utils
     import shutil
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     git_slug = code_utils.generate_slug_from_repo(git_repo, git_branch) if git_repo else None
 
@@ -642,9 +603,7 @@ class DataGenerationPipeline:
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
             multi_repo: bool = False):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
-        import traceback, logging
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+        import traceback
 
         git_slug = generate_git_slug(git_repo, git_branch)
 
@@ -752,7 +711,6 @@ class DataGenerationPipeline:
                 try:
                     summary = dur_tracker.format_summary()
                     logging.info("\n" + summary)
-                    print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to print duration summary in data generation pipeline: {e}")
 
@@ -761,7 +719,6 @@ class DataGenerationPipeline:
                 tok_tr = TokenCostTracker.get_instance()
                 summary = tok_tr.format_summary()
                 logging.info("\n" + summary)
-                print("\n" + summary, flush=True)
             except Exception as e:
                 logging.debug(f"Failed to print token summary in data generation pipeline: {e}")
 
@@ -769,11 +726,8 @@ class DataGenerationPipeline:
 
     def run_multi_repo(self, git_repos: list):
         """Runs run for each repository in git_repos and returns a list of status dicts."""
-        import logging
         from utils import code_utils
         import os
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
         parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
@@ -781,23 +735,16 @@ class DataGenerationPipeline:
         pipeline_results = []
 
         for git_data in git_repos:
-
             git_repo = git_data["git_repo"]
-
             git_branch = git_data["git_branch"]
-
             repo_slug = code_utils.generate_slug_from_repo(git_repo, git_branch)
-
             source_path = f"{parent_source_path}/{repo_slug}"
-
             target_path = f"{parent_target_path}/{repo_slug}"
 
             logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
-
             result = self.run(git_repo=git_repo, git_branch=git_branch,
                               source_path=source_path, target_path=target_path,
                               multi_repo=True)
-
             pipeline_results.append(result)
 
         try:

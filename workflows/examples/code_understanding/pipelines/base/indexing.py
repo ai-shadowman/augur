@@ -1,8 +1,11 @@
+import logging
 import os
 import json
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
 from utils.otel_utils import enable_telemetry
@@ -12,17 +15,13 @@ from utils.otel_utils import enable_telemetry
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
     """Generates a GraphRAG index from the provided codebase."""
-    import lancedb, shutil, traceback, tracemalloc, nest_asyncio, logging
+    import shutil, traceback, nest_asyncio
     from loaders.default_asset_loader import DefaultAssetLoader
     from pipelines.base.data_generation import generate_git_slug
     from utils.graphrag_utils import DependencyAnalyzer
     from pipelines.graphrag import run_graphrag
 
-    tracemalloc.start()
-
     nest_asyncio.apply()
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     git_repo = git_repo or os.getenv("GIT_REPO", "")
     git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
@@ -180,7 +179,6 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 try:
                     summary = dur_tracker.format_summary()
                     logging.info("\n" + summary)
-                    print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to log duration summary: {e}")
 
@@ -188,7 +186,6 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 try:
                     summary = token_tracker.format_summary()
                     logging.info("\n" + summary)
-                    print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to log token summary: {e}")
 
@@ -246,10 +243,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch: str,
                             multi_repo: bool = False):
     """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""
-    import logging
     import os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     from eval.default_custom_evaluator import DefaultCustomEvaluator
 
@@ -292,10 +286,8 @@ class IndexingPipeline:
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
             multi_repo: bool = False):
         """Generates a GraphRAG index and returns a status dict."""
-        import traceback, logging
+        import traceback
         import os
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         try:
 
@@ -338,17 +330,15 @@ class IndexingPipeline:
 
     def run_multi_repo(self, parent_target_path: str, graphrag_source_path: str = None):
         """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
-        import os, logging
+        import os
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_code_metadata_directories
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         if graphrag_source_path is None:
             graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
-        #git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
-        git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS")) or []
+        repo_list_env = os.getenv("GIT_REPO_LIST_CONTENTS")
+        git_repos = json.loads(repo_list_env) if repo_list_env else (DefaultAssetLoader().download("repos/repo_list.json") or [])
 
         download_code_metadata_directories(git_repos, parent_target_path)
 

@@ -14,6 +14,25 @@ from utils.eval_utils import load_evaluation_results
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+_SESSION_PATCHED = False
+
+
+def _patch_session_forwarded_token():
+    """Patches requests.Session.send once to attach X-Forwarded-Access-Token."""
+    global _SESSION_PATCHED
+    if _SESSION_PATCHED:
+        return
+    _orig_send = requests.Session.send
+
+    def _send_with_forwarded_token(self, request, **kwargs):
+        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
+        if token:
+            request.headers["X-Forwarded-Access-Token"] = token
+        return _orig_send(self, request, **kwargs)
+
+    requests.Session.send = _send_with_forwarded_token
+    _SESSION_PATCHED = True
+
 
 class MlFlowCustomEvaluator(CustomEvaluator):
     """LLM-as-judge evaluator backed by MLflow's genai evaluation API.
@@ -28,26 +47,16 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     _SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
     def __init__(self):
-
         if not os.environ.get("MLFLOW_TRACKING_TOKEN") and os.path.exists(self._SA_TOKEN_PATH):
+            try:
+                with open(self._SA_TOKEN_PATH) as f:
+                    logging.info("Setting MLFLOW_TRACKING_TOKEN from Kubernetes service account token...")
+                    os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
+            except Exception as e:
+                logging.debug(f"Failed to read SA token: {e}")
 
-            with open(self._SA_TOKEN_PATH) as f:
-
-                logging.info("Setting MLFLOW_TRACKING_TOKEN from Kubernetes service account token...")
-
-                os.environ["MLFLOW_TRACKING_TOKEN"] = f.read().strip()
-
-        _token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-
-        if _token:
-
-            _orig_send = requests.Session.send
-
-            def _send_with_forwarded_token(self, request, **kwargs):
-                request.headers["X-Forwarded-Access-Token"] = _token
-                return _orig_send(self, request, **kwargs)
-
-            requests.Session.send = _send_with_forwarded_token
+        if os.environ.get("MLFLOW_TRACKING_TOKEN"):
+            _patch_session_forwarded_token()
 
         try:
             from utils.token_tracker import TokenCostTracker

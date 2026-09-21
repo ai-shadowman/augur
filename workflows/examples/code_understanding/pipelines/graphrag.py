@@ -32,7 +32,7 @@ def run_graphrag(root_dir: str) -> None:
     from graphrag.config.load_config import load_config
     import graphrag.api as graphrag_api
 
-    logging.info("Starting Graphic Rag Indexing")
+    logging.info("Starting GraphRAG Indexing")
     root_path = Path(root_dir)
 
     try:
@@ -121,12 +121,11 @@ def run_graphrag(root_dir: str) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())
+
     if len(sys.argv) < 2:
-        logging.basicConfig(level=logging.INFO)
         log.error("Usage: graphrag.py <root_dir>")
         sys.exit(1)
-
-    logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())
 
     try:
         run_graphrag(sys.argv[1])

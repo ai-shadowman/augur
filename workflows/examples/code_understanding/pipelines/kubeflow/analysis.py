@@ -44,7 +44,6 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
         dur_tr = DurationTracker.get_instance()
         summary = dur_tr.format_summary()
         logging.info("\n" + summary)
-        print("\n" + summary, flush=True)
     except Exception as e:
         logging.debug(f"Failed to print duration summary in analysis pod: {e}")
 
@@ -53,7 +52,6 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
         tok_tr = TokenCostTracker.get_instance()
         summary = tok_tr.format_summary()
         logging.info("\n" + summary)
-        print("\n" + summary, flush=True)
     except Exception as e:
         logging.debug(f"Failed to print token summary in analysis pod: {e}")
 

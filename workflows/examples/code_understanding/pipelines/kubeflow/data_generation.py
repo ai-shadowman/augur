@@ -88,6 +88,7 @@ def generate_code_and_meta_op(
     setup_logging()
 
     import logging, os
+    from contextlib import nullcontext
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
@@ -134,33 +135,22 @@ def generate_code_and_meta_op(
                 except Exception:
                     pass
 
-            if dur_tracker:
-                with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                    external_metadata = load_external_data(tmp_source)
-
-                with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                    languages = detect_languages(tmp_source)
-
-                for language in languages:
-                    for config in [False, True]:
-                        generate_code_and_meta(
-                            git_repo=git_repo, git_branch=git_branch,
-                            language=language, source_path=tmp_source, target_path=tmp_target,
-                            config=config, multi_repo=multi_repo,
-                            external_metadata=external_metadata,
-                        )
-            else:
+            cm_load = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
+            with cm_load:
                 external_metadata = load_external_data(tmp_source)
+
+            cm_detect = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
+            with cm_detect:
                 languages = detect_languages(tmp_source)
 
-                for language in languages:
-                    for config in [False, True]:
-                        generate_code_and_meta(
-                            git_repo=git_repo, git_branch=git_branch,
-                            language=language, source_path=tmp_source, target_path=tmp_target,
-                            config=config, multi_repo=multi_repo,
-                            external_metadata=external_metadata,
-                        )
+            for language in languages:
+                for config in [False, True]:
+                    generate_code_and_meta(
+                        git_repo=git_repo, git_branch=git_branch,
+                        language=language, source_path=tmp_source, target_path=tmp_target,
+                        config=config, multi_repo=multi_repo,
+                        external_metadata=external_metadata,
+                    )
         except Exception as e:
             if type(e).__name__ == "RateLimitError" or "429" in str(e):
                 logging.error(
@@ -193,7 +183,6 @@ def generate_code_and_meta_op(
                 try:
                     summary = dur_tracker.format_summary()
                     logging.info("\n" + summary)
-                    print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to print duration summary in data generation pod: {e}")
 
@@ -209,7 +198,6 @@ def generate_code_and_meta_op(
                 try:
                     summary = token_tracker.format_summary()
                     logging.info("\n" + summary)
-                    print("\n" + summary, flush=True)
                 except Exception as e:
                     logging.debug(f"Failed to print token summary in data generation pod: {e}")
 
@@ -237,9 +225,7 @@ def get_repo_list_op() -> list:
         repo.setdefault("git_username", "")
         repo.setdefault("git_token", "")
 
-    return repos    
-
-    #return DefaultAssetLoader().download("repos/repo_list.json")
+    return repos
 
 
 ##############################################################################
