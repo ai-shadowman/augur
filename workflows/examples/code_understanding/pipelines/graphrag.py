@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -69,22 +70,16 @@ def run_graphrag(root_dir: str) -> None:
         log.debug(f"Failed to enable token tracking in run_graphrag: {e}")
 
     log.info("Initializing GraphRAG index...")
-    if dur_tracker:
-        with dur_tracker.measure(stage="Indexing", step="Initialize GraphRAG Project"):
-            initialize_project_at(root_path, force=True)
-            log.info("Copying settings.yaml...")
-            shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
-    else:
+    cm_init = dur_tracker.measure(stage="Indexing", step="Initialize GraphRAG Project") if dur_tracker else nullcontext()
+    with cm_init:
         initialize_project_at(root_path, force=True)
         log.info("Copying settings.yaml...")
         shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
 
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
-    if dur_tracker:
-        with dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing"):
-            results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
-    else:
+    cm_build = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing") if dur_tracker else nullcontext()
+    with cm_build:
         results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
 
     errors = [r for r in results if r.errors]

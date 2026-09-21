@@ -25,6 +25,11 @@ for pkg_name in [
         m.__path__ = []
         sys.modules[pkg_name] = m
 
+mlflow_mock = sys.modules.get("mlflow")
+if isinstance(mlflow_mock, MagicMock):
+    mlflow_mock.get_tracking_uri.return_value = "http://localhost:5000"
+    mlflow_mock.active_run.return_value = None
+
 import loaders.default_asset_loader
 import utils.visualization_utils
 import telemetry.default_custom_telemetry
@@ -35,6 +40,10 @@ class TestTokenCostTracker(unittest.TestCase):
     """Unit tests for TokenCostTracker with LiteLLM integration and ASCII table formatting."""
 
     def setUp(self):
+        mlflow_m = sys.modules.get("mlflow")
+        if isinstance(mlflow_m, MagicMock):
+            mlflow_m.get_tracking_uri.return_value = "http://localhost:5000"
+            mlflow_m.active_run.return_value = None
         self.tracker = TokenCostTracker(
             chat_model="openai/gpt-oss-120b",
             embed_model="e5-mistral-7b-instruct",
@@ -702,20 +711,8 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertEqual(embed_mod.Embeddings.create, orig_sync_embed)
 
     def test_mlflow_multi_run_tokens_aggregation(self):
-        """Verify that download_from_mlflow searches runs across stages and merges records from all runs."""
+        """Verify that download_from_mlflow downloads artifacts and merges records across runs."""
         tracker = TokenCostTracker()
-
-        # Create two fake runs
-        run1 = MagicMock()
-        run1.info.run_id = "run-data-gen"
-        run2 = MagicMock()
-        run2.info.run_id = "run-indexing"
-
-        mock_experiment = MagicMock()
-        mock_experiment.experiment_id = "exp-123"
-
-        mock_client = MagicMock()
-        mock_client.search_runs.return_value = [run1, run2]
 
         # Prepare dummy json files for the runs
         data_gen_tracker = TokenCostTracker()
@@ -739,12 +736,10 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 return None
 
             mlflow_mock = sys.modules["mlflow"]
-            with patch('mlflow.tracking.MlflowClient', return_value=mock_client), \
-                 patch('loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name', return_value=mock_experiment), \
-                 patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
-
-                success = tracker.download_from_mlflow(git_slug="my-repo", only_current_run=False)
-                self.assertTrue(success)
+            with patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
+                success1 = tracker.download_from_mlflow(run_id="run-data-gen")
+                success2 = tracker.download_from_mlflow(run_id="run-indexing")
+                self.assertTrue(success1 and success2)
 
                 # Both stages should be present in records
                 self.assertIn("Data Generation (python)", tracker.records)
@@ -790,47 +785,32 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
         self.assertIn("GraphRAG Embeddings (e5-mistral-7b-instruct)", tracker.records)
 
     def test_download_from_mlflow_skips_current_stage_and_deduplicates(self):
-        """Verify download_from_mlflow skips runs matching current_stage and only merges the latest run per stage."""
+        """Verify download_from_mlflow skips records matching current_stage and deduplicates."""
         tracker = TokenCostTracker()
-        tracker.track("Analysis Chat", calls=1, prompt_tokens=100, output_tokens=50)
+        tracker.track("Analysis Chat", calls=1, prompt_tokens=100, output_tokens=50, stage="Analysis")
 
         import sys
         mlflow_mock = sys.modules["mlflow"]
-
-        run1 = MagicMock()
-        run1.info.run_id = "run-analysis-old"
-        run1.data.tags = {"stage": "Analysis", "category": "telemetry", "type": "tokens"}
-
-        run2 = MagicMock()
-        run2.info.run_id = "run-datagen-new"
-        run2.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "tokens"}
-
-        run3 = MagicMock()
-        run3.info.run_id = "run-datagen-old"
-        run3.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "tokens"}
-
-        mock_client = MagicMock()
-        mock_client.search_runs.return_value = [run1, run2, run3]
 
         temp_dir = tempfile.mkdtemp()
         try:
             datagen_file = os.path.join(temp_dir, "tokens.json")
             dt = TokenCostTracker()
-            dt.track("Data Generation Code", calls=2, prompt_tokens=2000, output_tokens=0)
+            dt.track("Data Generation Code", calls=2, prompt_tokens=2000, output_tokens=0, stage="Data Generation")
+            dt.track("Analysis Old", calls=5, prompt_tokens=5000, output_tokens=100, stage="Analysis")
             dt.save_to_file(datagen_file)
 
             mlflow_mock.artifacts.download_artifacts.return_value = datagen_file
 
-            with patch("mlflow.tracking.MlflowClient", return_value=mock_client), \
-                 patch("loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name"):
-                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis", only_current_run=False)
+            tracker.download_from_mlflow(run_id="run-datagen-new", current_stage="Analysis")
 
-            # Verify Data Generation was merged once, and run1 (Analysis) was skipped
+            # Verify Data Generation was merged once, and stage matching current_stage (Analysis) was skipped
             self.assertIn("Data Generation Code", tracker.records)
             self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
+            self.assertNotIn("Analysis Old", tracker.records)
 
             # Test that calling download_from_mlflow a second time uses _merged_runs cache and does not double-count
-            tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis", only_current_run=False)
+            tracker.download_from_mlflow(run_id="run-datagen-new", current_stage="Analysis")
             self.assertEqual(tracker.records["Data Generation Code"]["calls"], 2)
         finally:
             import shutil

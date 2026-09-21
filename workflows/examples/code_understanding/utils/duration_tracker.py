@@ -12,10 +12,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 
 
-def _is_mock(obj: Any) -> bool:
-    """Helper to detect mock objects in unit tests to prevent serialization issues."""
-    return obj is not None and (hasattr(obj, "_mock_name") or hasattr(obj, "_mock_return_value"))
-
 
 class DurationTracker:
     """Tracks step and stage durations across pipeline executions using a singleton pattern."""
@@ -58,18 +54,18 @@ class DurationTracker:
             import mlflow
             if not self.mlflow_tracking_uri:
                 uri = mlflow.get_tracking_uri()
-                if uri and not _is_mock(uri):
-                    self.mlflow_tracking_uri = str(uri)
+                if isinstance(uri, str) and uri:
+                    self.mlflow_tracking_uri = uri
             active_run = mlflow.active_run()
             if active_run and hasattr(active_run, "info"):
                 if not self.mlflow_run_id:
                     rid = getattr(active_run.info, "run_id", None)
-                    if rid and not _is_mock(rid):
-                        self.mlflow_run_id = str(rid)
+                    if isinstance(rid, str) and rid:
+                        self.mlflow_run_id = rid
                 if not self.mlflow_experiment_id:
                     eid = getattr(active_run.info, "experiment_id", None)
-                    if eid and not _is_mock(eid):
-                        self.mlflow_experiment_id = str(eid)
+                    if isinstance(eid, str) and eid:
+                        self.mlflow_experiment_id = eid
         except Exception:
             pass
         if not self.mlflow_run_id:
@@ -420,47 +416,47 @@ class DurationTracker:
 
             try:
                 uri = mlflow.get_tracking_uri()
-                if uri and not _is_mock(uri):
-                    self.mlflow_tracking_uri = str(uri)
+                if isinstance(uri, str) and uri:
+                    self.mlflow_tracking_uri = uri
             except Exception:
                 self.mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
             active_run = mlflow.active_run()
+            active_rid = getattr(active_run.info, "run_id", None) if active_run and hasattr(active_run, "info") else None
             if run_id:
-                if not _is_mock(run_id):
-                    self.mlflow_run_id = str(run_id)
-                if active_run and hasattr(active_run, "info") and active_run.info.run_id == run_id:
+                if isinstance(run_id, str):
+                    self.mlflow_run_id = run_id
+                if active_run and active_rid == run_id:
                     eid = getattr(active_run.info, "experiment_id", None)
-                    if eid and not _is_mock(eid):
-                        self.mlflow_experiment_id = str(eid)
+                    if isinstance(eid, str):
+                        self.mlflow_experiment_id = eid
                     mlflow.log_metrics(metrics)
                 else:
                     with mlflow.start_run(run_id=run_id, nested=bool(active_run)) as r:
                         if hasattr(r, "info"):
                             eid = getattr(r.info, "experiment_id", None)
-                            if eid and not _is_mock(eid):
-                                self.mlflow_experiment_id = str(eid)
+                            if isinstance(eid, str):
+                                self.mlflow_experiment_id = eid
                         mlflow.log_metrics(metrics)
             else:
                 if active_run:
                     if hasattr(active_run, "info"):
-                        rid = getattr(active_run.info, "run_id", None)
-                        if rid and not _is_mock(rid):
-                            self.mlflow_run_id = str(rid)
+                        if isinstance(active_rid, str):
+                            self.mlflow_run_id = active_rid
                         eid = getattr(active_run.info, "experiment_id", None)
-                        if eid and not _is_mock(eid):
-                            self.mlflow_experiment_id = str(eid)
+                        if isinstance(eid, str):
+                            self.mlflow_experiment_id = eid
                     mlflow.log_metrics(metrics)
                     mlflow.end_run()
                 else:
                     with mlflow.start_run() as r:
                         if hasattr(r, "info"):
                             rid = getattr(r.info, "run_id", None)
-                            if rid and not _is_mock(rid):
-                                self.mlflow_run_id = str(rid)
+                            if isinstance(rid, str):
+                                self.mlflow_run_id = rid
                             eid = getattr(r.info, "experiment_id", None)
-                            if eid and not _is_mock(eid):
-                                self.mlflow_experiment_id = str(eid)
+                            if isinstance(eid, str):
+                                self.mlflow_experiment_id = eid
                         mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow duration metric logging skipped or failed: {e}")
@@ -492,13 +488,14 @@ class DurationTracker:
             try:
                 import mlflow
                 active_run = mlflow.active_run()
-                target_run = run_id or (active_run.info.run_id if active_run and hasattr(active_run, "info") else None) or os.environ.get("MLFLOW_RUN_ID")
-                if target_run and not _is_mock(target_run):
-                    self.mlflow_run_id = str(target_run)
+                active_rid = getattr(active_run.info, "run_id", None) if active_run and hasattr(active_run, "info") else None
+                target_run = run_id or (active_rid if isinstance(active_rid, str) else None) or os.environ.get("MLFLOW_RUN_ID")
+                if target_run and isinstance(target_run, str):
+                    self.mlflow_run_id = target_run
                     if active_run and hasattr(active_run, "info"):
                         eid = getattr(active_run.info, "experiment_id", None)
-                        if eid and not _is_mock(eid):
-                            self.mlflow_experiment_id = self.mlflow_experiment_id or str(eid)
+                        if isinstance(eid, str):
+                            self.mlflow_experiment_id = self.mlflow_experiment_id or eid
                     run_tags = {
                         "category": "telemetry",
                         "type": "durations",
@@ -506,7 +503,7 @@ class DurationTracker:
                     }
                     if stage:
                         run_tags["stage"] = str(stage)
-                    if active_run and active_run.info.run_id == target_run:
+                    if active_run and active_rid == target_run:
                         mlflow.set_tags(run_tags)
                         mlflow.log_artifact(temp_file, artifact_path="telemetry")
                     else:
@@ -560,16 +557,25 @@ class DurationTracker:
         multi_repo: bool = False,
         current_stage: Optional[str] = None,
     ) -> bool:
-        """Downloads and merges duration records from MLflow.
-        If current_stage is specified, runs and records belonging to current_stage are skipped,
-        and only upstream stages (e.g. Data Generation, Indexing for Analysis) are accepted.
-        Returns True if records were retrieved and merged, False otherwise."""
+        """Downloads and merges duration records from MLflow using standard MLflow APIs.
+        Falls back to DefaultAssetLoader when git_slug is specified."""
         merged_any = False
         if not hasattr(self, "_merged_runs"):
             self._merged_runs = set()
 
-        # 1. Try downloading via run_id or MLFLOW_RUN_ID
+        # 1. Download via standard mlflow.artifacts.download_artifacts
         target_run = run_id or os.environ.get("MLFLOW_RUN_ID")
+        if not target_run:
+            try:
+                import mlflow
+                active = mlflow.active_run()
+                if active and hasattr(active, "info"):
+                    rid = getattr(active.info, "run_id", None)
+                    if isinstance(rid, str) and rid:
+                        target_run = rid
+            except Exception:
+                pass
+
         if target_run and target_run not in self._merged_runs:
             if not self.mlflow_run_id:
                 self.mlflow_run_id = target_run
@@ -593,232 +599,65 @@ class DurationTracker:
             except Exception as e:
                 logging.debug(f"Failed to download durations.json for run {target_run}: {e}")
 
-        # 2. Try searching and aggregating across ALL telemetry runs in MLflow
-        seen_stages = set()
-        try:
-            import mlflow
-            from mlflow.tracking import MlflowClient
-            from loaders.mlflow_asset_loader import MlFlowAssetLoader
-
-            client = MlflowClient()
-            experiment_ids = []
-
-            # 1. Search in active MLflow experiment
-            try:
-                active_run = mlflow.active_run()
-                if active_run and hasattr(active_run, "info") and getattr(active_run.info, "experiment_id", None):
-                    experiment_ids.append(str(active_run.info.experiment_id))
-            except Exception:
-                pass
-
-            # 2. Search in MLFLOW_EXPERIMENT_NAME if set
-            exp_name = os.environ.get("MLFLOW_EXPERIMENT_NAME")
-            if exp_name:
-                try:
-                    exp = client.get_experiment_by_name(exp_name)
-                    if exp and exp.experiment_id:
-                        experiment_ids.append(str(exp.experiment_id))
-                except Exception:
-                    pass
-
-            # 3. Search in self.mlflow_experiment_id
-            if getattr(self, "mlflow_experiment_id", None):
-                experiment_ids.append(str(self.mlflow_experiment_id))
-
-            # 4. Search in MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
-            try:
-                result_exp = MlFlowAssetLoader().get_or_create_experiment_by_name(
-                    client, MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT
-                )
-                if result_exp and result_exp.experiment_id:
-                    experiment_ids.append(str(result_exp.experiment_id))
-            except Exception:
-                pass
-
-            # 5. Default experiment "0"
-            experiment_ids.append("0")
-
-            # Deduplicate while preserving order
-            unique_exp_ids = [eid for i, eid in enumerate(experiment_ids) if eid and eid not in experiment_ids[:i]]
-
-            filter_parts = ["tags.category = 'telemetry'", "tags.type = 'durations'"]
-            if git_slug:
-                filter_parts.append(f"tags.git_slug = '{git_slug}'")
-            elif multi_repo:
-                filter_parts.append("tags.git_slug = 'multi-repo'")
-            filter_string = " AND ".join(filter_parts)
-
-            runs = []
-            try:
-                runs = client.search_runs(
-                    experiment_ids=unique_exp_ids,
-                    filter_string=filter_string,
-                    order_by=["attributes.start_time DESC"],
-                )
-            except Exception:
-                for eid in unique_exp_ids:
-                    try:
-                        found_runs = client.search_runs(
-                            experiment_ids=[eid],
-                            filter_string=filter_string,
-                            order_by=["attributes.start_time DESC"],
-                        )
-                        if found_runs:
-                            runs.extend(found_runs)
-                    except Exception:
-                        pass
-                if not runs:
-                    try:
-                        quoted_parts = [
-                            f'tags."{p.split(" = ")[0].split(".", 1)[1]}" = {p.split(" = ")[1]}'
-                            for p in filter_parts
-                        ]
-                        quoted_filter = " AND ".join(quoted_parts)
-                        for eid in unique_exp_ids:
-                            try:
-                                found_runs = client.search_runs(
-                                    experiment_ids=[eid],
-                                    filter_string=quoted_filter,
-                                    order_by=["attributes.start_time DESC"],
-                                )
-                                if found_runs:
-                                    runs.extend(found_runs)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-            allowed_stages = None
+        # 2. Fallback to DefaultAssetLoader for git_slug / multi_repo
+        if (git_slug or multi_repo) and not merged_any:
+            upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
-                allowed_stages = {"data generation", "indexing"}
+                upstream_targets = ["Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
-                allowed_stages = {"data generation"}
+                upstream_targets = ["Data Generation"]
+            else:
+                upstream_targets = [None]
 
-            for run in runs:
-                if run.info.run_id in self._merged_runs:
-                    continue
-                stage = run.data.tags.get("stage")
-                if current_stage and stage and stage.lower() == current_stage.lower():
-                    continue
-                if allowed_stages is not None and stage:
-                    if stage.lower() not in allowed_stages:
-                        continue
-
-                if stage:
-                    if stage.lower() in seen_stages:
-                        continue
-                else:
-                    if "untagged" in seen_stages:
-                        continue
-
-                candidate_subpaths = []
-                if git_slug:
-                    candidate_subpaths.append(f"results/telemetry/{git_slug}/durations.json")
-                    candidate_subpaths.append(f"results/telemetry/{git_slug}")
-                if multi_repo:
-                    candidate_subpaths.append(f"results/telemetry/multi-repo/{git_slug or ''}/durations.json".replace("//", "/"))
-                    candidate_subpaths.append("results/telemetry/multi-repo/durations.json")
-                candidate_subpaths.extend([
-                    "results/telemetry/durations.json",
-                    "telemetry/durations.json",
-                    "durations.json",
-                ])
-
-                run_merged = False
-                for subpath in candidate_subpaths:
-                    try:
-                        downloaded_path = mlflow.artifacts.download_artifacts(
-                            run_id=run.info.run_id,
-                            artifact_path=subpath,
-                        )
-                        if downloaded_path:
-                            target_file = None
-                            if os.path.isfile(downloaded_path):
-                                target_file = downloaded_path
-                            elif os.path.isdir(downloaded_path):
-                                cand = os.path.join(downloaded_path, "durations.json")
-                                if os.path.isfile(cand):
-                                    target_file = cand
-                            if target_file and os.path.exists(target_file):
-                                self.load_and_merge(target_file, current_stage=current_stage)
-                                self._merged_runs.add(run.info.run_id)
-                                if not self.mlflow_run_id:
-                                    self.mlflow_run_id = run.info.run_id
-                                    self.mlflow_experiment_id = run.info.experiment_id
-                                merged_any = True
-                                run_merged = True
-                                if stage:
-                                    seen_stages.add(stage.lower())
-                                else:
-                                    seen_stages.add("untagged")
-                                break
-                    except Exception:
-                        continue
-                if run_merged and allowed_stages and seen_stages.issuperset(allowed_stages):
-                    break
-
-        except Exception as e:
-            logging.debug(f"MLflow client multi-run search for durations.json failed: {e}")
-
-        # Fallback to DefaultAssetLoader for missing upstream stages
-        upstream_targets = []
-        if current_stage and current_stage.lower() == "analysis":
-            upstream_targets = ["Data Generation", "Indexing"]
-        elif current_stage and current_stage.lower() == "indexing":
-            upstream_targets = ["Data Generation"]
-        else:
-            upstream_targets = [None]
-
-        for target_stage in upstream_targets:
-            if target_stage and target_stage.lower() in seen_stages:
-                continue
-            try:
-                from loaders.default_asset_loader import DefaultAssetLoader
-                from loaders.mlflow_asset_loader import MlFlowAssetLoader
-
-                artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-                    DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
-                    git_slug=git_slug,
-                    multi_repo=multi_repo,
-                )
-                asset_file = f"{artifact_path}/durations.json"
-                temp_dir = tempfile.mkdtemp()
+            for target_stage in upstream_targets:
                 try:
-                    asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "durations"}
-                    if target_stage:
-                        asset_tags["stage"] = target_stage
-                    content = DefaultAssetLoader().download(
-                        asset_file,
-                        download_dir=temp_dir,
-                        experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                        asset_tags=asset_tags,
+                    from loaders.default_asset_loader import DefaultAssetLoader
+                    from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+                    artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                        git_slug=git_slug,
+                        multi_repo=multi_repo,
                     )
-                    loaded_from_content = False
-                    if isinstance(content, dict) and "records" in content:
-                        other = DurationTracker.from_dict(content)
-                        self.merge(other, current_stage=current_stage)
-                        merged_any = True
-                        loaded_from_content = True
-                    elif isinstance(content, str):
-                        data = json.loads(content)
-                        if isinstance(data, dict) and "records" in data:
-                            other = DurationTracker.from_dict(data)
+                    asset_file = f"{artifact_path}/durations.json"
+                    temp_dir = tempfile.mkdtemp()
+                    try:
+                        asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "durations"}
+                        if target_stage:
+                            asset_tags["stage"] = target_stage
+                        content = DefaultAssetLoader().download(
+                            asset_file,
+                            download_dir=temp_dir,
+                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                            asset_tags=asset_tags,
+                        )
+                        loaded_from_content = False
+                        if isinstance(content, dict) and "records" in content:
+                            other = DurationTracker.from_dict(content)
                             self.merge(other, current_stage=current_stage)
                             merged_any = True
                             loaded_from_content = True
+                        elif isinstance(content, str):
+                            try:
+                                data = json.loads(content)
+                                if isinstance(data, dict) and "records" in data:
+                                    other = DurationTracker.from_dict(data)
+                                    self.merge(other, current_stage=current_stage)
+                                    merged_any = True
+                                    loaded_from_content = True
+                            except Exception:
+                                pass
 
-                    if not loaded_from_content:
-                        downloaded_file = os.path.join(temp_dir, "durations.json")
-                        if os.path.exists(downloaded_file):
-                            self.load_and_merge(downloaded_file, current_stage=current_stage)
-                            merged_any = True
-                    if target_stage:
-                        seen_stages.add(target_stage.lower())
-                finally:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                logging.debug(f"Failed to download durations.json for {target_stage} via DefaultAssetLoader: {e}")
+                        if not loaded_from_content:
+                            downloaded_file = os.path.join(temp_dir, "durations.json")
+                            if os.path.exists(downloaded_file):
+                                self.load_and_merge(downloaded_file, current_stage=current_stage)
+                                merged_any = True
+                    finally:
+                        import shutil
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception as e:
+                    logging.debug(f"Failed to download durations.json for {target_stage} via DefaultAssetLoader: {e}")
 
         return merged_any
 
@@ -832,12 +671,12 @@ class DurationTracker:
             d["git_slug"] = self.git_slug
         if self.git_repo:
             d["git_repo"] = self.git_repo
-        if self.mlflow_run_id and not _is_mock(self.mlflow_run_id):
-            d["mlflow_run_id"] = str(self.mlflow_run_id)
-        if self.mlflow_experiment_id and not _is_mock(self.mlflow_experiment_id):
-            d["mlflow_experiment_id"] = str(self.mlflow_experiment_id)
-        if self.mlflow_tracking_uri and not _is_mock(self.mlflow_tracking_uri):
-            d["mlflow_tracking_uri"] = str(self.mlflow_tracking_uri)
+        if self.mlflow_run_id and isinstance(self.mlflow_run_id, str):
+            d["mlflow_run_id"] = self.mlflow_run_id
+        if self.mlflow_experiment_id and isinstance(self.mlflow_experiment_id, str):
+            d["mlflow_experiment_id"] = self.mlflow_experiment_id
+        if self.mlflow_tracking_uri and isinstance(self.mlflow_tracking_uri, str):
+            d["mlflow_tracking_uri"] = self.mlflow_tracking_uri
         return d
 
     @classmethod
@@ -845,12 +684,12 @@ class DurationTracker:
         """Reconstructs a DurationTracker from a dictionary."""
         tracker = cls(git_slug=data.get("git_slug"), git_repo=data.get("git_repo"))
         tracker.records = list(data.get("records", []))
-        if data.get("mlflow_run_id") and not _is_mock(data["mlflow_run_id"]):
-            tracker.mlflow_run_id = str(data["mlflow_run_id"])
-        if data.get("mlflow_experiment_id") and not _is_mock(data["mlflow_experiment_id"]):
-            tracker.mlflow_experiment_id = str(data["mlflow_experiment_id"])
-        if data.get("mlflow_tracking_uri") and not _is_mock(data["mlflow_tracking_uri"]):
-            tracker.mlflow_tracking_uri = str(data["mlflow_tracking_uri"])
+        if data.get("mlflow_run_id") and isinstance(data["mlflow_run_id"], str):
+            tracker.mlflow_run_id = data["mlflow_run_id"]
+        if data.get("mlflow_experiment_id") and isinstance(data["mlflow_experiment_id"], str):
+            tracker.mlflow_experiment_id = data["mlflow_experiment_id"]
+        if data.get("mlflow_tracking_uri") and isinstance(data["mlflow_tracking_uri"], str):
+            tracker.mlflow_tracking_uri = data["mlflow_tracking_uri"]
         return tracker
 
     def load_from_dict(self, data: Dict[str, Any], current_stage: Optional[str] = None):
@@ -866,12 +705,12 @@ class DurationTracker:
             self.git_slug = data["git_slug"]
         if "git_repo" in data and not self.git_repo:
             self.git_repo = data["git_repo"]
-        if "mlflow_run_id" in data and not self.mlflow_run_id and not _is_mock(data["mlflow_run_id"]):
-            self.mlflow_run_id = str(data["mlflow_run_id"])
-        if "mlflow_experiment_id" in data and not self.mlflow_experiment_id and not _is_mock(data["mlflow_experiment_id"]):
-            self.mlflow_experiment_id = str(data["mlflow_experiment_id"])
-        if "mlflow_tracking_uri" in data and not self.mlflow_tracking_uri and not _is_mock(data["mlflow_tracking_uri"]):
-            self.mlflow_tracking_uri = str(data["mlflow_tracking_uri"])
+        if "mlflow_run_id" in data and not self.mlflow_run_id and isinstance(data["mlflow_run_id"], str):
+            self.mlflow_run_id = data["mlflow_run_id"]
+        if "mlflow_experiment_id" in data and not self.mlflow_experiment_id and isinstance(data["mlflow_experiment_id"], str):
+            self.mlflow_experiment_id = data["mlflow_experiment_id"]
+        if "mlflow_tracking_uri" in data and not self.mlflow_tracking_uri and isinstance(data["mlflow_tracking_uri"], str):
+            self.mlflow_tracking_uri = data["mlflow_tracking_uri"]
 
     def save_to_file(self, filepath: str):
         """Saves duration records to a JSON file."""
@@ -910,12 +749,12 @@ class DurationTracker:
         If current_stage is provided, records belonging to that stage are ignored so current measurements are not overwritten."""
         if not other:
             return
-        if not self.mlflow_run_id and other.mlflow_run_id and not _is_mock(other.mlflow_run_id):
-            self.mlflow_run_id = str(other.mlflow_run_id)
-        if not self.mlflow_experiment_id and other.mlflow_experiment_id and not _is_mock(other.mlflow_experiment_id):
-            self.mlflow_experiment_id = str(other.mlflow_experiment_id)
-        if not self.mlflow_tracking_uri and other.mlflow_tracking_uri and not _is_mock(other.mlflow_tracking_uri):
-            self.mlflow_tracking_uri = str(other.mlflow_tracking_uri)
+        if not self.mlflow_run_id and other.mlflow_run_id and isinstance(other.mlflow_run_id, str):
+            self.mlflow_run_id = other.mlflow_run_id
+        if not self.mlflow_experiment_id and other.mlflow_experiment_id and isinstance(other.mlflow_experiment_id, str):
+            self.mlflow_experiment_id = other.mlflow_experiment_id
+        if not self.mlflow_tracking_uri and other.mlflow_tracking_uri and isinstance(other.mlflow_tracking_uri, str):
+            self.mlflow_tracking_uri = other.mlflow_tracking_uri
         existing_indices = {(r.get("stage"), r.get("step")): i for i, r in enumerate(self.records)}
         stage_low = current_stage.lower() if current_stage else None
         for rec in other.records:

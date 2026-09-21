@@ -24,6 +24,11 @@ for pkg_name in [
         m.__path__ = []
         sys.modules[pkg_name] = m
 
+mlflow_mock = sys.modules.get("mlflow")
+if isinstance(mlflow_mock, MagicMock):
+    mlflow_mock.get_tracking_uri.return_value = "http://localhost:5000"
+    mlflow_mock.active_run.return_value = None
+
 from utils.duration_tracker import (
     DurationTracker,
     track_duration,
@@ -38,6 +43,10 @@ class TestDurationTracker(unittest.TestCase):
 
     def setUp(self):
         self.tracker = DurationTracker.reset_instance()
+        mlflow_m = sys.modules.get("mlflow")
+        if isinstance(mlflow_m, MagicMock):
+            mlflow_m.get_tracking_uri.return_value = "http://localhost:5000"
+            mlflow_m.active_run.return_value = None
 
     def tearDown(self):
         DurationTracker.reset_instance()
@@ -475,19 +484,8 @@ class TestDurationTracker(unittest.TestCase):
         mlflow_mock.start_run.assert_called_with(run_id="run-child", nested=True)
 
     def test_mlflow_multi_run_durations_aggregation(self):
-        """Verify that download_from_mlflow searches runs across stages and merges records from all runs."""
+        """Verify that download_from_mlflow downloads artifacts and merges records across runs."""
         tracker = DurationTracker()
-
-        run1 = MagicMock()
-        run1.info.run_id = "run-data-gen"
-        run2 = MagicMock()
-        run2.info.run_id = "run-indexing"
-
-        mock_experiment = MagicMock()
-        mock_experiment.experiment_id = "exp-123"
-
-        mock_client = MagicMock()
-        mock_client.search_runs.return_value = [run1, run2]
 
         data_gen_tracker = DurationTracker()
         data_gen_tracker.record_step("Data Generation", "Clone Repository", 4.5)
@@ -511,12 +509,10 @@ class TestDurationTracker(unittest.TestCase):
                 return None
 
             mlflow_mock = sys.modules["mlflow"]
-            with patch('mlflow.tracking.MlflowClient', return_value=mock_client), \
-                 patch('loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name', return_value=mock_experiment), \
-                 patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
-
-                success = tracker.download_from_mlflow(git_slug="my-repo")
-                self.assertTrue(success)
+            with patch.object(mlflow_mock.artifacts, 'download_artifacts', side_effect=mock_download):
+                success1 = tracker.download_from_mlflow(run_id="run-data-gen")
+                success2 = tracker.download_from_mlflow(run_id="run-indexing")
+                self.assertTrue(success1 and success2)
 
                 steps = [r["step"] for r in tracker.records]
                 self.assertIn("Clone Repository", steps)
@@ -612,7 +608,7 @@ class TestDurationTracker(unittest.TestCase):
         self.assertIn("25.00s", summary)
 
     def test_download_from_mlflow_excludes_current_stage_and_deduplicates(self):
-        """Verify that download_from_mlflow skips runs matching current_stage and only merges the latest run per stage."""
+        """Verify that download_from_mlflow skips records matching current_stage and deduplicates."""
         tracker = DurationTracker()
         tracker.record_step("Analysis", "Current Step", 5.0)
 
@@ -620,41 +616,24 @@ class TestDurationTracker(unittest.TestCase):
         import shutil
         mlflow_mock = sys.modules["mlflow"]
 
-        run1 = MagicMock()
-        run1.info.run_id = "run-analysis-old"
-        run1.data.tags = {"stage": "Analysis", "category": "telemetry", "type": "durations"}
-
-        run2 = MagicMock()
-        run2.info.run_id = "run-datagen-new"
-        run2.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "durations"}
-
-        run3 = MagicMock()
-        run3.info.run_id = "run-datagen-old"
-        run3.data.tags = {"stage": "Data Generation", "category": "telemetry", "type": "durations"}
-
-        mock_client = MagicMock()
-        mock_client.search_runs.return_value = [run1, run2, run3]
-
         temp_dir = tempfile.mkdtemp()
         try:
             datagen_file = os.path.join(temp_dir, "durations.json")
             dt = DurationTracker()
             dt.record_step("Data Generation", "Clone", 10.0)
+            dt.record_step("Analysis", "Old Analysis", 8.0)
             dt.save_to_file(datagen_file)
 
             mlflow_mock.artifacts.download_artifacts.return_value = datagen_file
 
-            with patch("mlflow.tracking.MlflowClient", return_value=mock_client), \
-                 patch("loaders.mlflow_asset_loader.MlFlowAssetLoader.get_or_create_experiment_by_name"):
-                tracker.download_from_mlflow(git_slug="repo", current_stage="Analysis")
+            tracker.download_from_mlflow(run_id="run-datagen-new", current_stage="Analysis")
 
-            # Verify run1 (Analysis) was skipped because of current_stage="Analysis"
-            # Verify run3 was skipped because run2 was already processed for Data Generation
+            # Verify records matching current_stage="Analysis" were excluded
             stages = {r["stage"] for r in tracker.records}
             self.assertIn("Data Generation", stages)
-            # Only 1 Data Generation step should be present
-            dg_steps = [r for r in tracker.records if r["stage"] == "Data Generation"]
-            self.assertEqual(len(dg_steps), 1)
+            self.assertIn("Analysis", stages)
+            analysis_steps = [r["step"] for r in tracker.records if r["stage"] == "Analysis"]
+            self.assertEqual(analysis_steps, ["Current Step"])
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -938,35 +917,32 @@ class TestDurationTracker(unittest.TestCase):
         an_pos_md = md_table.find("Analysis")
         self.assertTrue(dg_pos_md < idx_pos_md < an_pos_md)
 
-    def test_download_from_mlflow_multi_experiment_search(self):
-        """Verify download_from_mlflow queries active, env, instance, and default experiments."""
+    def test_download_from_mlflow_active_run_resolution(self):
+        """Verify download_from_mlflow uses active run_id when run_id is omitted."""
         import sys
         mlflow_mock = sys.modules["mlflow"]
         active_mock = MagicMock()
-        active_mock.info.experiment_id = "exp-active-99"
+        active_mock.info.run_id = "run-active-99"
         mlflow_mock.active_run.return_value = active_mock
 
-        client_mock = MagicMock()
-        env_exp_mock = MagicMock()
-        env_exp_mock.experiment_id = "exp-env-88"
-        client_mock.get_experiment_by_name.return_value = env_exp_mock
-        client_mock.search_runs.return_value = []
-
         tracker = DurationTracker()
-        tracker.mlflow_experiment_id = "exp-inst-77"
 
-        with patch.dict(os.environ, {"MLFLOW_EXPERIMENT_NAME": "custom-exp"}), \
-             patch('mlflow.tracking.MlflowClient', return_value=client_mock), \
-             patch('loaders.default_asset_loader.DefaultAssetLoader'):
-            tracker.download_from_mlflow(git_slug="slug-test", current_stage="Analysis")
+        temp_dir = tempfile.mkdtemp()
+        try:
+            dur_file = os.path.join(temp_dir, "durations.json")
+            dt = DurationTracker()
+            dt.record_step("Data Generation", "Setup", 3.0)
+            dt.save_to_file(dur_file)
 
-            self.assertTrue(client_mock.search_runs.called)
-            call_kwargs = client_mock.search_runs.call_args[1]
-            exp_ids = call_kwargs.get("experiment_ids", [])
-            self.assertIn("exp-active-99", exp_ids)
-            self.assertIn("exp-env-88", exp_ids)
-            self.assertIn("exp-inst-77", exp_ids)
-            self.assertIn("0", exp_ids)
+            mlflow_mock.artifacts.download_artifacts.return_value = dur_file
+
+            success = tracker.download_from_mlflow()
+            self.assertTrue(success)
+            self.assertEqual(tracker.mlflow_run_id, "run-active-99")
+            self.assertEqual(len(tracker.records), 1)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_generate_migration_report_includes_all_pipeline_stages(self):
         """Verify generate_migration_report produces a summary table containing Data Generation, Indexing, and Analysis."""

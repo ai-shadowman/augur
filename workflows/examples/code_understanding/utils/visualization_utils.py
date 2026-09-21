@@ -58,43 +58,6 @@ def visualize_dependencies(analyzer: DependencyAnalyzer):
 
         logging.info(f"Interactive graph saved to {html_path}")
 
-        plt.figure(figsize=(20, 16))
-
-        pos = nx.spring_layout(G, k=2, iterations=50)
-
-        node_colors = []
-
-        for node in G.nodes():
-            node_type = G.nodes[node].get('type', 'unknown')
-
-            color_map = {
-                'module': '#FF6B6B',
-                'class': '#4ECDC4',
-                'function': '#45B7D1',
-                'package': '#96CEB4',
-                'unknown': '#DFE6E9'
-            }
-
-            node_colors.append(color_map.get(node_type, '#DFE6E9'))
-
-        nx.draw(G, pos,
-                node_color=node_colors,
-                node_size=1000,
-                with_labels=True,
-                font_size=8,
-                font_weight='bold',
-                arrows=True,
-                edge_color='gray',
-                alpha=0.7)
-
-        # plt.title("Code Dependency Graph", fontsize=16)
-        #
-        # plt.tight_layout()
-        #
-        # plt.savefig('dependency_graph_static.png', dpi=300, bbox_inches='tight')
-        #
-        # logging.info("Static graph saved to dependency_graph_static.png")
-
         return html_path
 
     except Exception as e:

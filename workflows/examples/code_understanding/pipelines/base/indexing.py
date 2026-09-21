@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
@@ -109,35 +110,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     pass
 
         try:
-            if dur_tracker:
-                with dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config"):
-                    DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
-                    from utils.prompt_utils import prepare_indexing_config
-                    logging.info("Preparing GraphRAG config files...")
-                    prepare_indexing_config(graphrag_source_path,
-                                            git_slug=git_slug or "",
-                                            git_repo=git_repo or "",
-                                            multi_repo=multi_repo)
-                with dur_tracker.measure(stage="Indexing", step="Copy Source to Input"):
-                    logging.info("Copying source code to GraphRAG directory...")
-                    shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                    for fname in ["durations.json", "tokens.json"]:
-                        fpath = os.path.join(f"{graphrag_source_path}/input", fname)
-                        if os.path.exists(fpath):
-                            try:
-                                os.remove(fpath)
-                            except Exception:
-                                pass
-                    txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
-                    if not txt_files:
-                        raise RuntimeError(
-                            f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
-                            f"for git_slug='{git_slug}'. Ensure data generation produced code files."
-                        )
-                with dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution"):
-                    logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
-                    run_graphrag(graphrag_source_path)
-            else:
+            cm_settings = dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config") if dur_tracker else nullcontext()
+            with cm_settings:
                 DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
                 from utils.prompt_utils import prepare_indexing_config
                 logging.info("Preparing GraphRAG config files...")
@@ -145,6 +119,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                                         git_slug=git_slug or "",
                                         git_repo=git_repo or "",
                                         multi_repo=multi_repo)
+            cm_copy = dur_tracker.measure(stage="Indexing", step="Copy Source to Input") if dur_tracker else nullcontext()
+            with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
                 for fname in ["durations.json", "tokens.json"]:
@@ -160,6 +136,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                         f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
                         f"for git_slug='{git_slug}'. Ensure data generation produced code files."
                     )
+            cm_exec = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution") if dur_tracker else nullcontext()
+            with cm_exec:
                 logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
                 run_graphrag(graphrag_source_path)
         finally:
@@ -284,19 +262,16 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
         except Exception:
             dur_tracker = None
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Indexing", step="Evaluate Index"):
-                results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
-                                                                         git_repo, git_branch,
-                                                                         multi_repo=multi_repo)
+        eval_cm = dur_tracker.measure(stage="Indexing", step="Evaluate Index") if dur_tracker else nullcontext()
+        with eval_cm:
+            results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
+                                                                     git_repo, git_branch,
+                                                                     multi_repo=multi_repo)
+            if dur_tracker:
                 try:
                     dur_tracker.log_to_mlflow()
                 except Exception as e:
                     logging.debug(f"Failed to log duration metrics to MLflow: {e}")
-        else:
-            results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
-                                                                     git_repo, git_branch,
-                                                                     multi_repo=multi_repo)
 
         logging.info("GraphRAG index evaluation complete.")
 

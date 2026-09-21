@@ -6,18 +6,13 @@ from .mlflow_custom_telemetry import MlFlowCustomTelemetry
 
 
 class DefaultCustomTelemetry(CustomTelemetry):
-    """Delegates to MlFlowCustomTelemetry or BasicCustomTelemetry based on the CUSTOM_EVALUATOR env var."""
+    """Delegates to MlFlowCustomTelemetry or BasicCustomTelemetry based on CUSTOM_TELEMETRY."""
 
     def __init__(self):
-
-        if os.getenv("CUSTOM_EVALUATOR") == "mlflow":
-
+        if os.getenv("CUSTOM_TELEMETRY") == "mlflow" or os.getenv("CUSTOM_EVALUATOR") == "mlflow":
             self._telemetry = MlFlowCustomTelemetry()
-
         else:
-
             self._telemetry = BasicCustomTelemetry()
 
     def track(self):
-
         self._telemetry.track()

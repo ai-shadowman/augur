@@ -1,5 +1,6 @@
 import os
 import sys
+from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 
@@ -36,7 +37,7 @@ def clone_from_repo(repo_url,
 
     except Exception as e:
 
-        err_msg = str(e).replace(token, '***') if token else str(e)
+        err_msg = str(e).replace(git_token, '***') if git_token else str(e)
         logging.error(f"Error cloning repository: {err_msg}")
 
         raise e
@@ -527,48 +528,29 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             dur_tracker = None
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})"):
-                code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
-                                               language=language, config=config, multi_repo=multi_repo)
-
-            if code_df is None:
-                logging.info(f"No {language} files found (config={config}).")
-                result["status"] = "skipped"
-                return
-
-            try:
-                with dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})"):
-                    code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
-            except Exception as e:
-                logging.warning(
-                    f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
-                    f"Falling back to saving raw code files without LLM metadata."
-                )
-                code_and_metadata_df = code_df
-
-            with dur_tracker.measure(stage="Data Generation", step=f"Save Metadata Files ({step_label})"):
-                save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
-                                             git_slug=git_slug, language=language, config=config,
-                                             external_metadata=external_metadata)
-        else:
+        parse_cm = dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})") if dur_tracker else nullcontext()
+        with parse_cm:
             code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
                                            language=language, config=config, multi_repo=multi_repo)
 
-            if code_df is None:
-                logging.info(f"No {language} files found (config={config}).")
-                result["status"] = "skipped"
-                return
+        if code_df is None:
+            logging.info(f"No {language} files found (config={config}).")
+            result["status"] = "skipped"
+            return
 
-            try:
+        try:
+            llm_cm = dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})") if dur_tracker else nullcontext()
+            with llm_cm:
                 code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
-            except Exception as e:
-                logging.warning(
-                    f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
-                    f"Falling back to saving raw code files without LLM metadata."
-                )
-                code_and_metadata_df = code_df
+        except Exception as e:
+            logging.warning(
+                f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
+                f"Falling back to saving raw code files without LLM metadata."
+            )
+            code_and_metadata_df = code_df
 
+        save_cm = dur_tracker.measure(stage="Data Generation", step=f"Save Metadata Files ({step_label})") if dur_tracker else nullcontext()
+        with save_cm:
             save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
                                          git_slug=git_slug, language=language, config=config,
                                          external_metadata=external_metadata)
@@ -591,18 +573,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             pass
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})"):
-                DefaultAssetLoader().log_results(
-                    target_path,
-                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
-                        DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
-                        git_slug=git_slug,
-                        multi_repo=multi_repo,
-                    ),
-                    tags={"git_slug": str(git_slug or "multi-repo"), "category": "data-generation", "code-metadata": "true", "multi_repo": str(multi_repo)},
-                )
-        else:
+        log_meta_cm = dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})") if dur_tracker else nullcontext()
+        with log_meta_cm:
             DefaultAssetLoader().log_results(
                 target_path,
                 artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
@@ -627,19 +599,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result_file = f"data_generation_result_{git_slug}{suffix}.json"
 
-        if dur_tracker:
-            with dur_tracker.measure(stage="Data Generation", step=f"Log Pipeline Result ({step_label})"):
-                DefaultAssetLoader().log_results(
-                    result_file,
-                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
-                        DefaultAssetLoader.RESULTS_PATH_PREFIX_PIPELINES,
-                        git_slug=git_slug,
-                        multi_repo=multi_repo,
-                    ),
-                    content=json.dumps(result),
-                    tags={"git_slug": git_slug, "category": "data-generation", "multi_repo": multi_repo},
-                )
-        else:
+        log_res_cm = dur_tracker.measure(stage="Data Generation", step=f"Log Pipeline Result ({step_label})") if dur_tracker else nullcontext()
+        with log_res_cm:
             DefaultAssetLoader().log_results(
                 result_file,
                 artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
