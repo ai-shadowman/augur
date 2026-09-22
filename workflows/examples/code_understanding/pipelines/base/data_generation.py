@@ -172,7 +172,15 @@ def get_parsed_code_metadata(df, language, config=False):
 
     try:
 
-        logging.info("Parsing code metadata...")
+        # Per-request LLM timeout (seconds), LiteLLM retry count, and concurrent request limit
+        llm_timeout = float(os.getenv("SDG_LLM_TIMEOUT", "600"))
+        llm_num_retries = int(os.getenv("SDG_LLM_NUM_RETRIES", "10"))
+        llm_max_concurrency = int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10"))
+
+        logging.info(
+            f"Parsing code metadata... (timeout={llm_timeout}s, num_retries={llm_num_retries}, "
+            f"max_concurrency={llm_max_concurrency})"
+        )
 
         dataset = Dataset.from_pandas(df)
 
@@ -193,9 +201,11 @@ def get_parsed_code_metadata(df, language, config=False):
             max_tokens=32_000,
             response_format={"type": "json_object"},
             top_k=1,
+            timeout=llm_timeout,
+            num_retries=llm_num_retries,
         )
 
-        converted_dataset = flow.generate(dataset, max_concurrency=10)
+        converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
 
         converted_df = converted_dataset.to_pandas()
 
