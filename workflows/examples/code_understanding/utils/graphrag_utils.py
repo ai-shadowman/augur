@@ -2,6 +2,7 @@ import os
 import re
 import ssl
 import math
+import time
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
     _orig_create_default_context = ssl.create_default_context
@@ -31,13 +32,20 @@ class DependencyAnalyzer:
     def __init__(self, root_dir=".", git_slug: str = "", multi_repo: bool = False, token_tracker=None):
 
         self.root_dir = root_dir
+        self.graphrag_dir = root_dir
 
         self.git_slug = git_slug
 
         self.multi_repo = multi_repo
 
         from utils.token_tracker import TokenCostTracker
-        self.token_tracker = token_tracker or TokenCostTracker()
+        self.token_tracker = token_tracker or TokenCostTracker.get_instance()
+
+        self.SYSTEM_PROMPT_DATA_EXTRACTION = ""
+        self.SYSTEM_PROMPT_RHEL_ADMIN = ""
+        self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS = ""
+        self.POST_AMBLE = ""
+        self.RHEL_8to10_CONTEXT = ""
 
         self._setup_configuration()
 
@@ -46,7 +54,8 @@ class DependencyAnalyzer:
         self._setup_prompts()
 
     def _setup_configuration(self):
-        """Initialize instance configuration."""
+        """Hook for instance configuration and test isolation."""
+        pass
 
     def _setup_search(self):
         """Initialize GraphRAG search"""
@@ -77,6 +86,18 @@ class DependencyAnalyzer:
             if not community_reports_df.empty and "level" in community_reports_df.columns
             else 0
         )
+
+        if not self.git_slug and not self.multi_repo:
+            try:
+                urls = self._extract_indexed_git_urls()
+                if len(urls) == 1:
+                    from pipelines.base.data_generation import generate_git_slug
+                    first_url = next(iter(urls))
+                    self.git_slug = generate_git_slug(first_url, os.getenv("GIT_BRANCH", "main"))
+                elif len(urls) > 1:
+                    self.multi_repo = True
+            except Exception as e:
+                logging.debug(f"Could not auto-detect git_slug from entity URLs: {e}")
 
     def _extract_indexed_git_urls(self) -> frozenset:
         """Return the set of unique git repository URLs found in REPOSITORY entity descriptions."""
@@ -402,6 +423,11 @@ class DependencyAnalyzer:
 
                 else:
 
+                    embed_count_before = sum(
+                        r.get("calls", 0) for s, r in self.token_tracker.records.items()
+                        if "embed" in s.lower()
+                    )
+
                     result, context_data = await api.local_search(
                         config=config,
                         entities=self.entity_df,
@@ -415,8 +441,14 @@ class DependencyAnalyzer:
                         query=question,
                     )
 
-                    embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
-                    self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
+                    # Only manually track embedding if active callbacks didn't already intercept it
+                    embed_count_after = sum(
+                        r.get("calls", 0) for s, r in self.token_tracker.records.items()
+                        if "embed" in s.lower()
+                    )
+                    if embed_count_after == embed_count_before:
+                        embed_tokens = self.token_tracker.count_tokens(question, model=self.token_tracker.embed_model)
+                        self.token_tracker.track_embedding(prompt_tokens=embed_tokens, calls=1)
 
                     p_tokens = None
                     o_tokens = None
@@ -579,6 +611,63 @@ class DependencyAnalyzer:
 
         answers = ["N/A"] * len(prompts)
 
+        dur_tracker = None
+        try:
+            from utils.duration_tracker import (
+                DurationTracker,
+                find_all_telemetry_files,
+                extract_graphrag_indexing_durations,
+            )
+            dur_tracker = DurationTracker.get_instance()
+            candidate_dirs = [
+                self.graphrag_dir,
+                os.path.join(self.graphrag_dir, "output"),
+                os.path.join(self.graphrag_dir, "input"),
+                os.path.dirname(self.graphrag_dir),
+                os.getenv("PARENT_TARGET_PATH", "target"),
+                os.getenv("PARENT_SOURCE_PATH", "source"),
+            ]
+            if self.git_slug:
+                candidate_dirs.extend([
+                    os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), self.git_slug),
+                    os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), self.git_slug),
+                    os.path.join(os.path.dirname(self.graphrag_dir), self.git_slug),
+                ])
+            for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
+                dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
+                if not self.git_slug and dur_tracker.git_slug:
+                    self.git_slug = dur_tracker.git_slug
+            try:
+                dur_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+            except Exception as e:
+                logging.debug(f"DurationTracker download_from_mlflow in generate_migration_report: {e}")
+        except Exception as e:
+            logging.debug(f"DurationTracker initialization in generate_migration_report: {e}")
+
+        try:
+            if hasattr(self, "token_tracker") and self.token_tracker:
+                from utils.duration_tracker import find_all_telemetry_files
+                for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
+                    self.token_tracker.load_and_merge(tokens_file, current_stage="Analysis")
+                    if not self.git_slug and self.token_tracker.git_slug:
+                        self.git_slug = self.token_tracker.git_slug
+                try:
+                    self.token_tracker.download_from_mlflow(
+                        git_slug=self.git_slug,
+                        multi_repo=self.multi_repo,
+                        current_stage="Analysis",
+                        only_current_run=False,
+                    )
+                except Exception as e:
+                    logging.debug(f"TokenCostTracker download_from_mlflow in generate_migration_report: {e}")
+        except Exception as e:
+            logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
+
+        self._ensure_metrics_extracted(candidate_dirs, dur_tracker)
+
+
+        report_start_perf = time.perf_counter()
+
         git_urls = self._extract_indexed_git_urls()
 
         git_urls_list = "\n".join("- " + url for url in sorted(git_urls))
@@ -617,9 +706,23 @@ class DependencyAnalyzer:
                 else:
                     use_global = self.multi_repo
 
+                p_start = time.perf_counter()
                 result = await self.query_with_llm(prompt,
                                                    bypass_index=bypass_index,
                                                    use_global=use_global)
+                if dur_tracker:
+                    p_dur = time.perf_counter() - p_start
+                    p_title = meta.get('title') or prompt_path
+                    clean_title = re.sub(r"^#+\s*", "", str(p_title)).strip()
+                    if len(clean_title) > 28:
+                        clean_title = clean_title[:25] + "..."
+                    step_name = f"Prompt {i+1}: {clean_title}" if clean_title else f"Report Prompt {i+1}"
+                    dur_tracker.record_step(
+                        stage="Analysis",
+                        step=step_name,
+                        duration=p_dur,
+                        metadata={"title": p_title, "prompt": prompt_path},
+                    )
 
                 result = f"{meta.get('title')}\n\n{result}"
 
@@ -627,65 +730,100 @@ class DependencyAnalyzer:
 
                 report += f"{result}\n\n"
 
+        viz_start = time.perf_counter()
         from utils.visualization_utils import log_interactive_dependency_graph
 
         log_interactive_dependency_graph(self)
 
+        if dur_tracker:
+            dur_tracker.record_step(
+                stage="Analysis",
+                step="Dependency Graph Visualization",
+                duration=time.perf_counter() - viz_start,
+            )
+            dur_tracker.record_step(
+                stage="Analysis",
+                step="Migration Report Total",
+                duration=time.perf_counter() - report_start_perf,
+                metadata={"is_aggregate": True},
+            )
+            try:
+                dur_tracker.save_to_file(os.path.join(self.graphrag_dir, "durations.json"))
+            except Exception as e:
+                logging.debug(f"Failed to persist durations.json to {self.graphrag_dir}: {e}")
+            try:
+                dur_tracker.upload_to_mlflow(git_slug=self.git_slug, stage="Analysis", multi_repo=self.multi_repo)
+            except Exception as e:
+                logging.debug(f"Failed to upload durations to MLflow in generate_migration_report: {e}")
+
+        try:
+            self.token_tracker.save_to_file(os.path.join(self.graphrag_dir, "tokens.json"))
+            self.token_tracker.upload_to_mlflow(git_slug=self.git_slug, stage="Analysis", multi_repo=self.multi_repo)
+        except Exception as e:
+            logging.debug(f"Failed to upload tokens to MLflow in generate_migration_report: {e}")
+
+        self._ensure_metrics_extracted(candidate_dirs)
+
         token_summary_section = self.token_tracker.format_markdown_section()
 
-        # For multi-repo runs, place the token usage table at the end of the summary / report
-        if self.multi_repo:
-            return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+        try:
+            from utils.duration_tracker import DurationTracker
+            duration_section = DurationTracker.get_instance().format_markdown_section()
+        except Exception:
+            duration_section = ""
 
-        # Place the token usage table above the Code Migration Plan (JSON) section
-        match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
-        if match:
-            idx = match.start()
-            final_report = report[:idx] + token_summary_section.strip() + "\n\n" + report[idx:]
-            return f"{title}{final_report}"
+        metrics_section = token_summary_section.strip()
+        if duration_section.strip():
+            metrics_section = f"{metrics_section}\n\n{duration_section.strip()}"
 
-        return f"{title}{report.rstrip()}\n\n{token_summary_section.strip()}\n"
+        if not self.multi_repo:
+            match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
+            if match:
+                idx = match.start()
+                return f"{title}{report[:idx]}{metrics_section}\n\n{report[idx:]}"
+
+        return f"{title}{report.rstrip()}\n\n{metrics_section}\n"
+
+    def _ensure_metrics_extracted(self, candidate_dirs, dur_tracker=None):
+        """Ensures Indexing and Data Generation metrics are extracted for tokens and durations."""
+        try:
+            if hasattr(self, "token_tracker") and self.token_tracker:
+                from utils.token_tracker import extract_graphrag_indexing_tokens, extract_data_generation_tokens
+                if not any("Indexing" in k for k in self.token_tracker.records):
+                    extract_graphrag_indexing_tokens(self.graphrag_dir, self.token_tracker)
+                if not any("Data Generation" in k for k in self.token_tracker.records):
+                    extract_data_generation_tokens(candidate_dirs, self.token_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (tokens): {e}")
+
+        try:
+            if dur_tracker is None:
+                from utils.duration_tracker import DurationTracker
+                dur_tracker = DurationTracker.get_instance()
+            from utils.duration_tracker import extract_graphrag_indexing_durations, extract_data_generation_durations
+            if not any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records):
+                extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
+            if not any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records):
+                extract_data_generation_durations(candidate_dirs, dur_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (durations): {e}")
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""
         return self.token_tracker.format_summary()
     
     async def generate_report(self, service_name: str):
-
         deps = self._find_dependencies(service_name)
-
         logging.info(f"Dependencies for {service_name}:")
-
         for dep in deps:
-
             logging.info(f"  {dep['from']} -> {dep['to']} ({dep['type']})")
 
         dependents = self._find_dependents("database")
-
         logging.info("\nModules depending on database:")
-
         for dep in dependents:
-
             logging.info(f"  {dep['from']} -> {dep['to']}")
 
-        # cycles = self._find_circular_dependencies()
-
-        # if cycles:
-
-        #     logging.info("\n⚠️  Circular dependencies found:")
-
-        #     print(cycles)
-
-        #     for cycle in cycles:
-
-        #         logging.info(f"  {' -> '.join(cycle)}")
-
         layers = self._get_dependency_layers()
-
         logging.info("\nArchitectural Layers:")
-
         logging.info(f"  Leaf modules (no dependencies): {layers['leaf_modules']}")
-
         logging.info(f"  Top modules (many dependencies): {layers['top_modules']}")
-    
-    

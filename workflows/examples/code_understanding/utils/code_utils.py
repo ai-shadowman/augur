@@ -1,9 +1,5 @@
 from collections import defaultdict
 
-from jsonpath_ng import jsonpath, parse
-
-from github import Github
-
 from pygments.lexers import guess_lexer_for_filename
 
 from pygments.util import ClassNotFound
@@ -141,9 +137,6 @@ def get_detected_languages_for_repo(code_dir: str):
     threshold = 3
 
     mappings = _MAPPINGS["pygments_mappings"]
-
-    all_files = [os.path.join(root, f) for root, _, files in
-                 os.walk(code_dir) for f in files]
 
     logging.debug(f"Language mappings: {mappings}")
 

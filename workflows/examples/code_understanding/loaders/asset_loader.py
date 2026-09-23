@@ -14,6 +14,8 @@ class AssetLoader(ABC):
     RESULTS_PATH_PREFIX_METADATA = "results/metadata"
     RESULTS_PATH_PREFIX_VISUALIZATIONS = "results/visualizations"
     RESULTS_PATH_PREFIX_REPO_DATASETS = "results/datasets/repos"
+    RESULTS_PATH_PREFIX_TELEMETRY = "results/telemetry"
+
 
 
     @staticmethod

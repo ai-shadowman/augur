@@ -26,13 +26,34 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
                                   git_repo: str = "", git_branch: str = "",
                                   multi_repo: bool = False):
 
+    import logging
+    import os
     from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
+
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
         write_migration_report(tmp_graphrag, report.path, git_repo=git_repo,
                                git_branch=git_branch, multi_repo=multi_repo)
+
+    try:
+        from utils.duration_tracker import DurationTracker
+        dur_tr = DurationTracker.get_instance()
+        summary = dur_tr.format_summary()
+        logging.info("\n" + summary)
+    except Exception as e:
+        logging.debug(f"Failed to print duration summary in analysis pod: {e}")
+
+    try:
+        from utils.token_tracker import TokenCostTracker
+        tok_tr = TokenCostTracker.get_instance()
+        summary = tok_tr.format_summary()
+        logging.info("\n" + summary)
+    except Exception as e:
+        logging.debug(f"Failed to print token summary in analysis pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -40,6 +61,8 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
 
+    import logging
+    import os
     from pipelines.base.analysis import write_migration_report
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
@@ -55,8 +78,8 @@ def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Mark
 @dsl.pipeline(name="graphrag-analysis-pipeline")
 def _run_pipeline(
     graphrag_dir: Input[Dataset],
-    git_repo: str = "",
-    git_branch: str = "",
+    git_repo: str = os.getenv("GIT_REPO", ""),
+    git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
 ):
 
