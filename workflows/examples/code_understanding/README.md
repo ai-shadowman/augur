@@ -18,8 +18,7 @@ This directory contains the core pipelines and components for AUGUR's Code Under
 
 ---
 
-## Telemetry & Metrics Maintenance Guide
+## Maintainer Guides
 
-For full architectural details on LLM token metrics, pipeline duration tracking, cross-pod artifact propagation, and step-by-step instructions on **how to add an additional metric**, see the project root maintainer guide:
-
-👉 **[README_METRICS.md](../../../README_METRICS.md)**
+- 👉 **[README_LOGGING.md](../../../README_LOGGING.md)**: Unified console logging, `LOGLEVEL` environment configuration, and container stdout architecture.
+- 👉 **[README_METRICS.md](../../../README_METRICS.md)**: Telemetry architecture, LLM token metrics, pipeline duration tracking, and metric expansion guide.

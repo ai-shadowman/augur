@@ -21,4 +21,8 @@
 - Make (`make`)
 
 
+## Documentation
+- [Logging Architecture](README_LOGGING.md) - Unified console logging and environment configuration
+- [Telemetry & Metrics Guide](README_METRICS.md) - Token and duration tracking architecture
+
 ***TODO***

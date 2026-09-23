@@ -1,8 +1,39 @@
 import os
+import sys
 import logging
 from contextlib import contextmanager
 
-logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+##############################################################################
+# Logging setup
+##############################################################################
+
+def setup_logging(level=None):
+    """Configures logging to stdout with clean formatting and removes file handlers."""
+    log_level = level or os.environ.get("LOGLEVEL", "INFO").upper()
+    for h in list(logging.getLogger().handlers):
+        if isinstance(h, logging.FileHandler):
+            h.close()
+    logging.basicConfig(
+        level=log_level,
+        format="[%(levelname)s] %(asctime)s - %(name)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
+    for logger in logging.Logger.manager.loggerDict.values():
+        if isinstance(logger, logging.Logger):
+            for h in list(logger.handlers):
+                if isinstance(h, logging.FileHandler):
+                    h.close()
+            logger.handlers = [h for h in logger.handlers if not isinstance(h, logging.FileHandler)]
+
+
+def get_logger(name: str = None):
+    """Returns a logger instance ensuring unified console logging configuration."""
+    setup_logging()
+    return logging.getLogger(name)
+
+
+setup_logging()
 
 ##############################################################################
 # Base images
@@ -25,39 +56,6 @@ ANALYSIS_BASE_IMAGE = (
     f"/{os.getenv('KFP_ANALYSIS_BASE_IMAGE_NAME')}"
     f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_TAG')}"
 )
-
-
-##############################################################################
-# Logging setup
-##############################################################################
-
-def setup_logging():
-    """Configures logging to print to console (stdout) and never to a file.
-
-    Ensures the root logger has a StreamHandler pointing to sys.stdout with
-    clean formatting, and strips any FileHandler instances so logs are
-    never written to disk.
-    """
-    import logging
-    import sys
-    _level = os.environ.get('LOGLEVEL', 'INFO').upper()
-    root_logger = logging.getLogger()
-    root_logger.setLevel(_level)
-
-    for handler in list(root_logger.handlers):
-        if isinstance(handler, logging.FileHandler):
-            root_logger.removeHandler(handler)
-
-    has_stream_handler = any(
-        isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout, sys.stderr)
-        for h in root_logger.handlers
-    )
-    if not has_stream_handler:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(_level)
-        formatter = logging.Formatter("[%(levelname)s] %(asctime)s - %(name)s - %(message)s")
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
 
 
 ##############################################################################
