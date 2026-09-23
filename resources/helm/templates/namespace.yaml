@@ -8,3 +8,13 @@ metadata:
     openshift.io/requester: {{ .Values.requester }}
   labels:
     opendatahub.io/dashboard: "true"
+{{- if .Values.otel.namespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.otel.namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-100"
+{{- end }}

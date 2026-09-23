@@ -58,6 +58,7 @@ install:
 		--set clusterDomain="$(CLUSTER_DOMAIN)" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}"
 	$(MAKE) apply-secrets
+	$(MAKE) deploy-otel
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$$ASSET_LOADER" = "mlflow" ]; then \
 		echo "==> Preloading MLflow assets..." && \
@@ -250,3 +251,52 @@ run-pipelines:
 	\
 	echo "==> Streaming pipeline run results..." && \
 	oc logs -f job/run-pipelines -n $$KFP_NAMESPACE
+
+deploy-otel:
+	@set -a && . $(ENV_FILE) && set +a && \
+	\
+	echo "==> Checking for OpenTelemetry and Tempo CRDs..." && \
+	if ! oc get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1 || \
+	   ! oc get crd tempostacks.tempo.grafana.com >/dev/null 2>&1; then \
+		echo "Skipping deploy-otel: OpenTelemetry and/or Tempo operators are not installed."; \
+		exit 0; \
+	fi && \
+	\
+	if [ -z "$$OTEL_SERVICE_NAME" ] || [ -z "$$OTEL_NAMESPACE" ]; then \
+		echo "Skipping deploy-otel: OTEL_SERVICE_NAME or OTEL_NAMESPACE is not set in $(ENV_FILE)."; \
+		exit 0; \
+	fi && \
+	\
+	if oc get tempostack $$OTEL_SERVICE_NAME -n $$OTEL_NAMESPACE >/dev/null 2>&1; then \
+		echo "==> OTel infrastructure already deployed, skipping."; \
+		exit 0; \
+	fi && \
+	\
+	echo "==> Creating OTel namespace $$OTEL_NAMESPACE..." && \
+	oc create namespace $$OTEL_NAMESPACE --dry-run=client -o yaml | oc apply -f - && \
+	\
+	echo "==> Waiting for MinIO to be ready..." && \
+	oc wait deployment/minio -n $$KFP_NAMESPACE --for=condition=Available --timeout=120s && \
+	\
+	echo "==> Creating Tempo S3 bucket..." && \
+	oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set otel.namespace=$$OTEL_NAMESPACE \
+		--set otel.createBucket=true \
+		--set minio.endpoint=http://minio-service.$$KFP_NAMESPACE.svc.cluster.local:9000 \
+		--set minio.rootUser=$$AWS_ACCESS_KEY_ID \
+		--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
+		-s templates/create-tempo-bucket-job.yaml | oc apply -f - && \
+	oc wait job/create-tempo-bucket -n $$OTEL_NAMESPACE --for=condition=complete --timeout=120s && \
+	oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
+	\
+	echo "==> Deploying TempoStack and OpenTelemetry Collector..." && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set otel.namespace=$$OTEL_NAMESPACE \
+		--set minio.endpoint=http://minio-service.$$KFP_NAMESPACE.svc.cluster.local:9000 \
+		--set minio.rootUser=$$AWS_ACCESS_KEY_ID \
+		--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
+		--set otel.enabled=true \
+		--set otel.name=$$OTEL_SERVICE_NAME \
+		-s templates/opentelemetry.yaml | oc apply -f -
+
