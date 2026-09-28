@@ -7,3 +7,7 @@ COPY requirements.txt ./requirements.txt
 
 RUN pip install --upgrade pip \
 	&& pip install -r requirements.txt
+
+ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
+RUN mkdir -p /opt/app-root/src/tiktoken_cache && \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"

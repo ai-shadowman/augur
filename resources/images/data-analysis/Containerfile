@@ -10,3 +10,7 @@ COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/c
 RUN pip install --no-cache-dir --upgrade pip \
 	&& pip install --no-cache-dir -r requirements.txt \
 	&& pip install --no-cache-dir ./workflows/examples/code_understanding
+
+ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
+RUN mkdir -p /opt/app-root/src/tiktoken_cache && \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
