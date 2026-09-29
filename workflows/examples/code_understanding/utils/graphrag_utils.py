@@ -471,7 +471,8 @@ class DependencyAnalyzer:
             if num_tries_left > 0:
 
                 logging.info(f"Retrying query ({num_tries_left} tries left): {e}")
-
+                import asyncio
+                await asyncio.sleep(5) # Going to sleep for 5 secs to allow the backend server time to finish and release concurreny slots
                 return await self.query_with_llm(question,
                                                  retry_count=num_tries_left,
                                                  use_global=use_global,

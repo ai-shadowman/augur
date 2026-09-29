@@ -135,6 +135,11 @@ local_search:
   chat_model_id: default_chat_model
   embedding_model_id: default_embedding_model
   prompt: "prompts/local_search_system_prompt.txt"
+  max_tokens: 4000            # Limits context tokens so generation starts and finishes quickly
+  text_unit_prop: 0.2         # Reduces heavy raw text units in context
+  community_prop: 0.2
+  top_k_mapped_entities: 10
+  top_k_relationships: 10
 
 global_search:
   chat_model_id: default_chat_model
