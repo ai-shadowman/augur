@@ -13,12 +13,12 @@ models:
     model: ${GRAPHRAG_LLM_ID}
     model_provider: ${GRAPHRAG_LLM_PROVIDER_SETTINGS_XML}
     model_supports_json: true
-    concurrent_requests: 25
-    async_mode: threaded #asyncio
+    concurrent_requests: 5            # <-- Reduced from 25 to 5 to avoid Vertex AI concurrency throttling
+    async_mode: threaded
     retry_strategy: native
-    max_retries: 10
+    max_retries: 15                   # <-- Increased retry cushion for rate limits
     tokens_per_minute: null           
-    requests_per_minute: null   
+    requests_per_minute: 60           # <-- Pace requests smoothly rather than in 25-request bursts
     # encoding_name: o200k_harmony 
   default_embedding_model:
     type: embedding # or azure_openai_embedding
@@ -33,7 +33,7 @@ models:
     # deployment_name: <azure_model_deployment_name>
     encoding_model: cl100k_base # automatically set by tiktoken if left undefined
     model_supports_json: true # recommended if this is available for your model.
-    concurrent_requests: 25 # max number of simultaneous LLM requests allowed
+    concurrent_requests: 5            # <-- Keep embedding concurrency aligned
     async_mode: threaded # or asyncio
     retry_strategy: native
     max_retries: 10
