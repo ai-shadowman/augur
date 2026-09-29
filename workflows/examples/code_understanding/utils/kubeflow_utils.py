@@ -178,6 +178,7 @@ def read_from_input_artifact(artifact):
     """Extract a KFP Input[Dataset] tar.gz archive to a temp dir."""
     import tarfile, tempfile
 
+    logging.info(f"Extract a KFP Input[Dataset] tar.gz archive to a temp dir.")
     with tempfile.TemporaryDirectory() as tmp:
         with tarfile.open(artifact.path, "r:gz") as tar:
             if hasattr(tarfile, "data_filter"):
