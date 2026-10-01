@@ -18,6 +18,41 @@ This directory contains the core pipelines and components for AUGUR's Code Under
 
 ---
 
+## Repository exclusions with `.augurignore`
+
+To exclude repository content from Augur analysis, commit an optional
+`.augurignore` file at the root of the repository before running Augur. Augur
+reads only `<repository-root>/.augurignore` from the selected remote branch;
+nested files and runtime patterns are unsupported.
+
+The file uses Git-compatible ignore rules through `pathspec`, including ordered
+rules, wildcards, directory rules, and negation. Its exclusions are additive to
+Augur's built-in exclusions: a negated rule cannot re-include a file or
+directory that Augur already excludes. If the file is absent, empty, or
+comment-only, existing behavior is unchanged.
+
+Augur must clone the repository before it can discover this file, so its rules
+do not reduce clone or download contents. Once loaded, ignored paths are
+skipped during language detection, metadata loading, and dataset generation.
+A present file that cannot be read as UTF-8 or compiled fails that repository
+before analysis rather than proceeding without the requested exclusions.
+
+Normal logs report whether the root file was found, its active-pattern count,
+and aggregate excluded file and directory counts. Individual excluded paths are
+logged only at debug level.
+
+```gitignore
+# Generated fixtures
+tests/fixtures/generated/
+
+# Large captured payloads
+**/*.har
+
+# Ignore reports except the maintained example
+reports/*
+!reports/example.md
+```
+
 ## Telemetry & Metrics Maintenance Guide
 
 For full architectural details on LLM token metrics, pipeline duration tracking, cross-pod artifact propagation, and step-by-step instructions on **how to add an additional metric**, see the project root maintainer guide:
