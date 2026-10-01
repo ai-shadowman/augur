@@ -619,6 +619,11 @@ def detect_languages(source_path: str, ignore_policy=None) -> list:
     return languages
 
 
+def should_reraise_processing_error(error: Exception, *, multi_repo: bool) -> bool:
+    """Return whether a repository-processing error must fail the task."""
+    return not multi_repo or isinstance(error, RepositoryIgnoreError)
+
+
 ##############################################################################
 # Pipeline stage
 ##############################################################################

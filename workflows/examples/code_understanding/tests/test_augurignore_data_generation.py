@@ -63,6 +63,23 @@ from utils import code_utils
 from utils.repository_ignore import RepositoryIgnoreError, RepositoryIgnorePolicy
 
 
+class TestAugurIgnoreKubeflowFailure(unittest.TestCase):
+    def test_repository_ignore_error_is_fatal_in_multi_repo_mode(self):
+        self.assertTrue(
+            data_generation.should_reraise_processing_error(
+                RepositoryIgnoreError("invalid .augurignore"), multi_repo=True
+            )
+        )
+        self.assertTrue(
+            data_generation.should_reraise_processing_error(RuntimeError("failure"), multi_repo=False)
+        )
+
+    def test_unrelated_error_remains_skippable_in_multi_repo_mode(self):
+        self.assertFalse(
+            data_generation.should_reraise_processing_error(RuntimeError("failure"), multi_repo=True)
+        )
+
+
 class TestAugurIgnoreDataGeneration(unittest.TestCase):
     def repository(self, rules=""):
         directory = tempfile.TemporaryDirectory()
