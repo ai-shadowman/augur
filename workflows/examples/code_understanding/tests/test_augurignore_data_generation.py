@@ -44,12 +44,24 @@ if "loaders.default_asset_loader" not in sys.modules:
     loader_module = types.ModuleType("loaders.default_asset_loader")
 
     class _DefaultAssetLoader:
+        RESULTS_PATH_PREFIX_PIPELINES = "results/pipelines"
+        RESULTS_PATH_PREFIX_VISUALIZATIONS = "results/visualizations"
+
         def download(self, asset_file_path):
             asset = Path(__file__).parents[1] / "assets" / asset_file_path
             return json.loads(asset.read_text(encoding="utf-8"))
 
+        def download_dir(self, *args, **kwargs):
+            return None
+
         def log_results(self, *args, **kwargs):
             return None
+
+        def num_prompts(self, *args, **kwargs):
+            return 0
+
+        def download_prompt(self, *args, **kwargs):
+            return "", {}
 
         @staticmethod
         def get_log_results_artifact_path(*args, **kwargs):
@@ -57,6 +69,8 @@ if "loaders.default_asset_loader" not in sys.modules:
 
     loader_module.DefaultAssetLoader = _DefaultAssetLoader
     sys.modules["loaders.default_asset_loader"] = loader_module
+    import loaders
+    loaders.default_asset_loader = loader_module
 
 from pipelines.base import data_generation
 from utils import code_utils
