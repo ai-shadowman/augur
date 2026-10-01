@@ -19,6 +19,7 @@ test.yaml
 __pycache
 __pycache__
 .DS_Store
+.worktrees/
 .venv
 temp
 tmp1.txt
