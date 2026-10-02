@@ -378,8 +378,54 @@ class TestFallbackExtraction(unittest.TestCase):
             # Verify Analysis appears in both tables
             self.assertIn("Analysis", report)
             # Verify totals and tables
+            self.assertIn("### Project Codebase & Scope Summary", report)
             self.assertIn("### LLM Token Usage & Cost Summary", report)
             self.assertIn("### Pipeline Execution Duration Summary", report)
+
+    def test_single_repo_report_assembly_includes_code_metrics_with_language_breakdown(self):
+        """Verify report generation includes detailed Codebase & Scope Summary table with language breakdown."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+        from utils.code_metrics_tracker import CodeMetricsTracker
+
+        graphrag_dir = os.path.join(self.temp_dir, "graphrag_metrics")
+        input_dir = os.path.join(graphrag_dir, "input")
+        output_dir = os.path.join(graphrag_dir, "output")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Place project_metrics.json in input_dir
+        metrics_tr = CodeMetricsTracker(run_id="dg-metrics-run", git_slug="test-repo_main")
+        metrics_tr.languages["python"] = {
+            "source_files": 8, "config_files": 2, "total_files": 10,
+            "code_lines": 400, "comment_lines": 50, "blank_lines": 50, "total_lines": 500,
+        }
+        metrics_tr.languages["java"] = {
+            "source_files": 4, "config_files": 1, "total_files": 5,
+            "code_lines": 200, "comment_lines": 25, "blank_lines": 25, "total_lines": 250,
+        }
+        metrics_tr.total_repo_files = 15
+        metrics_tr.total_repo_lines = 750
+        metrics_tr.save_to_file(os.path.join(input_dir, "project_metrics.json"))
+
+        analyzer = DependencyAnalyzer(graphrag_dir, git_slug="test-repo_main")
+        analyzer.token_tracker = TokenCostTracker(run_id="analysis-run-metrics")
+        async def mock_query(*args, **kwargs):
+            return "Mocked analysis answer"
+        analyzer.query_with_llm = mock_query
+        analyzer._extract_indexed_git_urls = MagicMock(return_value=["https://github.com/test/repo"])
+
+        from loaders.default_asset_loader import DefaultAssetLoader
+        with patch.object(DefaultAssetLoader, "num_prompts", side_effect=lambda path: 1 if "enhanced" not in path else 0), \
+             patch.object(DefaultAssetLoader, "download_prompt", return_value=("What is this service?", {"title": "Service Summary"})):
+
+            report = asyncio.run(analyzer.generate_migration_report())
+
+            self.assertIn("### Project Codebase & Scope Summary", report)
+            self.assertIn("**python**", report)
+            self.assertIn("**java**", report)
+            self.assertIn("15", report)
+            self.assertIn("750", report)
 
     def test_save_code_and_metadata_files_fallback_when_metadata_missing(self):
         """Verify save_code_and_metadata_files still writes .txt and _metadata.txt even when extracted_data is missing."""

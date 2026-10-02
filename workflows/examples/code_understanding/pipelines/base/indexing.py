@@ -113,19 +113,19 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
         if dur_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     dur_tracker.save_to_file(os.path.join(d, "durations.json"))
                 except Exception:
                     pass
         if token_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
                 except Exception:
                     pass
         if code_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
                 except Exception:
@@ -213,7 +213,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     logging.debug(f"Failed to log token summary: {e}")
 
             if code_tracker:
-                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                     try:
                         code_tracker.save_to_file(os.path.join(save_dir, "project_metrics.json"))
                     except Exception as e:

@@ -48,7 +48,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
             )
             result.log_metric("success", 1)
         finally:
-            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output")]:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
                 try:
                     os.makedirs(save_dir, exist_ok=True)
                     from utils.duration_tracker import DurationTracker
@@ -151,7 +151,7 @@ def run_indexing_multi_repo_op(parent_target_path: str,
         try:
             IndexingPipeline().run_multi_repo(parent_target_path, graphrag_source_path=tmp_graphrag)
         finally:
-            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output")]:
+            for save_dir in [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]:
                 try:
                     os.makedirs(save_dir, exist_ok=True)
                     from utils.duration_tracker import DurationTracker

@@ -99,24 +99,18 @@ class AnalysisPipeline:
 
         code_tracker = None
         try:
-            from utils.code_metrics_tracker import CodeMetricsTracker
-            code_tracker = CodeMetricsTracker.get_instance()
-            for metrics_file in find_all_telemetry_files(candidate_dirs, "project_metrics.json"):
-                code_tracker.load_and_merge(metrics_file, current_stage="Analysis")
-                if not git_slug and code_tracker.git_slug:
-                    git_slug = code_tracker.git_slug
-                if not git_repo and code_tracker.git_repo:
-                    git_repo = code_tracker.git_repo
-            try:
-                code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
-            except Exception as e:
-                logging.debug(f"Failed to download code metrics from MLflow in analysis: {e}")
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            git_slug = git_slug or code_tracker.git_slug
+            git_repo = git_repo or code_tracker.git_repo
+            code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
         except Exception as e:
             logging.debug(f"CodeMetricsTracker handling in analysis: {e}")
 
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Safeguard: ensure code metrics, token, and duration summaries are present in the markdown report
+        # Safeguard: ensure telemetry summaries are present in the final report
         if code_tracker and "### Project Codebase & Scope Summary" not in report:
             report = _inject_section(report, code_tracker.format_markdown_section())
 

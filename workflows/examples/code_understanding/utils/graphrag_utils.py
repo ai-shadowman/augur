@@ -664,6 +664,16 @@ class DependencyAnalyzer:
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=self.git_slug)
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            if not self.git_slug and code_tracker.git_slug:
+                self.git_slug = code_tracker.git_slug
+            code_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker initialization in generate_migration_report: {e}")
+
         self._ensure_metrics_extracted(candidate_dirs, dur_tracker)
 
 
@@ -766,11 +776,8 @@ class DependencyAnalyzer:
         self._ensure_metrics_extracted(candidate_dirs)
 
         try:
-            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
-            code_tracker = CodeMetricsTracker.get_instance()
-            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
-            code_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
-            code_metrics_section = code_tracker.format_markdown_section()
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            code_metrics_section = CodeMetricsTracker.get_instance(git_slug=self.git_slug).format_markdown_section()
         except Exception as e:
             logging.debug(f"Code metrics formatting in generate_migration_report: {e}")
             code_metrics_section = ""
@@ -820,8 +827,8 @@ class DependencyAnalyzer:
 
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
-            c_tracker = CodeMetricsTracker.get_instance()
-            if not c_tracker.languages:
+            c_tracker = CodeMetricsTracker.get_instance(git_slug=self.git_slug)
+            if not c_tracker.languages or c_tracker.total_repo_files == 0:
                 extract_data_generation_code_metrics(candidate_dirs, c_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (code metrics): {e}")
