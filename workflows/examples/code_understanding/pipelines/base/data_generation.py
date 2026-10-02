@@ -610,7 +610,7 @@ def detect_languages(source_path: str, ignore_policy=None) -> list:
     languages = code_utils.get_detected_languages_for_repo(source_path, ignore_policy)
 
     if not languages:
-        if ignore_policy.has_patterns:
+        if ignore_policy.has_custom_exclusions:
             raise RepositoryIgnoreError(
                 "No supported source or configuration files remain after exclusions."
             )

@@ -64,6 +64,13 @@ class TestRepositoryIgnorePolicyLoading(unittest.TestCase):
         with self.assertRaisesRegex(RepositoryIgnoreError, r"\.augurignore"):
             RepositoryIgnorePolicy.from_repository(root)
 
+    def test_broken_root_augurignore_symlink_raises_repository_ignore_error(self):
+        root = self.make_repository()
+        (root / AUGURIGNORE_FILENAME).symlink_to(root / "missing-rules")
+
+        with self.assertRaisesRegex(RepositoryIgnoreError, r"\.augurignore"):
+            RepositoryIgnorePolicy.from_repository(root)
+
     def test_matcher_compile_error_names_file_without_dumping_contents(self):
         root = self.make_repository("private-pattern\n")
 
@@ -118,6 +125,25 @@ class TestRepositoryIgnorePolicyMatching(unittest.TestCase):
         self.assertFalse(policy.is_ignored(root / "important.log"))
         self.assertTrue(policy.is_ignored(root / "vendor", is_directory=True))
         self.assertTrue(policy.is_ignored(root / "vendor" / "keep.py"))
+
+    def test_contents_only_rule_does_not_prune_parent_directory(self):
+        root, policy = self.make_policy("foo/**\n!foo/keep.py\n")
+
+        self.assertFalse(policy.is_ignored(root / "foo", is_directory=True))
+        self.assertFalse(policy.is_ignored(root / "foo" / "keep.py"))
+
+    def test_lexical_symlink_path_is_matched_and_unsafe_targets_fail_closed(self):
+        root, policy = self.make_policy("alias.py\n")
+        (root / "real.py").write_text("", encoding="utf-8")
+        (root / "alias.py").symlink_to(root / "real.py")
+        (root / "outside.py").symlink_to(root.parent / "outside.py")
+        (root / "loop.py").symlink_to("loop.py")
+
+        self.assertTrue(policy.is_ignored(root / "alias.py"))
+        with self.assertRaises(RepositoryIgnoreError):
+            policy.is_ignored(root / "outside.py")
+        with self.assertRaises(RepositoryIgnoreError):
+            policy.is_ignored(root / "loop.py")
 
     def test_filtering_combines_builtin_exclusions_and_counts_unique_paths(self):
         root, policy = self.make_policy("cache/\n*.log\n!vendor/keep.py\n")

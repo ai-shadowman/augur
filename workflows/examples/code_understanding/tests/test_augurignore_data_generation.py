@@ -204,3 +204,10 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
         (root / "only.py").write_text("", encoding="utf-8")
         with self.assertRaisesRegex(RepositoryIgnoreError, "No supported source or configuration files remain"):
             data_generation.detect_languages(str(root), RepositoryIgnorePolicy.from_repository(root))
+
+    def test_unmatched_rule_does_not_make_an_unsupported_repository_fatal(self):
+        root = self.repository("does-not-exist\n")
+        (root / "README.md").write_text("", encoding="utf-8")
+        with patch("utils.code_utils.guess_lexer_for_filename", side_effect=code_utils.ClassNotFound()):
+            with self.assertRaisesRegex(Exception, "No languages detected"):
+                data_generation.detect_languages(str(root), RepositoryIgnorePolicy.from_repository(root))

@@ -30,25 +30,28 @@ class RepositoryIgnorePolicy:
 
     def __init__(self, repository_root: Path, spec: GitIgnoreSpec, pattern_count: int):
         self._repository_root = repository_root
+        self._resolved_repository_root = repository_root.resolve()
         self._spec = spec
         self._pattern_count = pattern_count
         self._ignored_directories: set[str] = set()
         self._ignored_files: set[str] = set()
+        self._custom_ignored_directories: set[str] = set()
+        self._custom_ignored_files: set[str] = set()
 
     @classmethod
     def from_repository(
         cls, repository_root: str | os.PathLike[str]
     ) -> "RepositoryIgnorePolicy":
-        root = Path(repository_root).resolve()
+        root = Path(os.path.abspath(repository_root))
         ignore_file = root / AUGURIGNORE_FILENAME
-        if not ignore_file.exists():
+        if not ignore_file.exists() and not ignore_file.is_symlink():
             _LOG.info("No root %s found", AUGURIGNORE_FILENAME)
             return cls(root, GitIgnoreSpec.from_lines(()), 0)
 
         try:
             lines = ignore_file.read_text(encoding="utf-8").splitlines()
             spec = GitIgnoreSpec.from_lines(lines)
-        except (OSError, UnicodeError, ValueError) as error:
+        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
             raise RepositoryIgnoreError(
                 f"Could not load {AUGURIGNORE_FILENAME} for repository {root}"
             ) from error
@@ -71,10 +74,17 @@ class RepositoryIgnorePolicy:
     def stats(self) -> IgnoreStats:
         return IgnoreStats(len(self._ignored_directories), len(self._ignored_files))
 
+    @property
+    def has_custom_exclusions(self) -> bool:
+        return bool(self._custom_ignored_directories or self._custom_ignored_files)
+
     def _relative_path(
         self, path: str | os.PathLike[str], *, is_directory: bool
     ) -> str:
-        candidate = Path(str(path).replace("\\", "/")).resolve()
+        candidate = Path(str(path).replace("\\", "/"))
+        if not candidate.is_absolute():
+            candidate = self._repository_root / candidate
+        candidate = Path(os.path.abspath(candidate))
         try:
             relative = candidate.relative_to(self._repository_root)
         except ValueError as error:
@@ -84,15 +94,37 @@ class RepositoryIgnorePolicy:
         normalized = relative.as_posix()
         return f"{normalized}/" if is_directory and normalized else normalized
 
+    def _validate_resolved_containment(self, path: str | os.PathLike[str]) -> None:
+        try:
+            resolved = Path(str(path).replace("\\", "/")).resolve()
+            resolved.relative_to(self._resolved_repository_root)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise RepositoryIgnoreError(
+                f"Path is outside repository root: {path}"
+            ) from error
+
+    def _matches_directory_rule(self, relative_path: str) -> bool:
+        decision = None
+        candidate = f"{relative_path.rstrip('/')}/"
+        for pattern in self._spec.patterns:
+            source = pattern.pattern.lstrip("!")
+            if source.endswith("/") and pattern.regex.match(candidate):
+                decision = pattern.include
+        return bool(decision)
+
+    def _directory_is_ignored(self, relative_path: str) -> bool:
+        candidate = relative_path.rstrip("/")
+        return self._spec.match_file(candidate) or self._matches_directory_rule(candidate)
+
     def _matches_custom_rule(self, relative_path: str, *, is_directory: bool) -> bool:
         candidate = relative_path.rstrip("/")
-        match_path = f"{candidate}/" if is_directory and candidate else candidate
-        if self._spec.match_file(match_path):
+        if (self._directory_is_ignored(candidate) if is_directory
+                else self._spec.match_file(candidate)):
             return True
 
         parts = candidate.split("/") if candidate else []
         for index in range(1, len(parts)):
-            if self._spec.match_file("/".join(parts[:index]) + "/"):
+            if self._directory_is_ignored("/".join(parts[:index])):
                 return True
         return False
 
@@ -100,9 +132,11 @@ class RepositoryIgnorePolicy:
         self, path: str | os.PathLike[str], *, is_directory: bool = False
     ) -> bool:
         relative_path = self._relative_path(path, is_directory=is_directory)
-        return self._matches_custom_rule(
+        ignored = self._matches_custom_rule(
             relative_path, is_directory=is_directory
         )
+        self._validate_resolved_containment(path)
+        return ignored
 
     def _filter_names(
         self,
@@ -116,9 +150,8 @@ class RepositoryIgnorePolicy:
         parent = Path(str(parent_dir).replace("\\", "/"))
         for name in names:
             candidate = parent / name
-            excluded = name in built_in_names or self.is_ignored(
-                candidate, is_directory=is_directory
-            )
+            custom_excluded = self.is_ignored(candidate, is_directory=is_directory)
+            excluded = name in built_in_names or custom_excluded
             if not excluded:
                 kept.append(name)
                 continue
@@ -127,9 +160,13 @@ class RepositoryIgnorePolicy:
             relative_path = relative_path.rstrip("/")
             if is_directory:
                 self._ignored_directories.add(relative_path)
+                if custom_excluded:
+                    self._custom_ignored_directories.add(relative_path)
                 _LOG.debug("Ignoring directory: %s", relative_path)
             else:
                 self._ignored_files.add(relative_path)
+                if custom_excluded:
+                    self._custom_ignored_files.add(relative_path)
                 _LOG.debug("Ignoring file: %s", relative_path)
         return kept
 
