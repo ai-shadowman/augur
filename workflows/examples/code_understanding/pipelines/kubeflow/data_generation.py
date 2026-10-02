@@ -82,8 +82,10 @@ def generate_code_and_meta_op(
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
-        detect_languages, generate_code_and_meta, generate_git_slug
+        detect_languages, generate_code_and_meta, generate_git_slug,
+        should_reraise_processing_error,
     )
+    from utils.repository_ignore import RepositoryIgnorePolicy
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact, write_to_output_artifact
     setup_logging()
 
@@ -92,6 +94,7 @@ def generate_code_and_meta_op(
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+        ignore_policy = RepositoryIgnorePolicy.from_repository(tmp_source)
 
         dur_tracker = None
         try:
@@ -137,11 +140,11 @@ def generate_code_and_meta_op(
 
             cm_load = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
             with cm_load:
-                external_metadata = load_external_data(tmp_source)
+                external_metadata = load_external_data(tmp_source, ignore_policy)
 
             cm_detect = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
             with cm_detect:
-                languages = detect_languages(tmp_source)
+                languages = detect_languages(tmp_source, ignore_policy)
 
             for language in languages:
                 for config in [False, True]:
@@ -150,6 +153,7 @@ def generate_code_and_meta_op(
                         language=language, source_path=tmp_source, target_path=tmp_target,
                         config=config, multi_repo=multi_repo,
                         external_metadata=external_metadata,
+                        ignore_policy=ignore_policy,
                     )
         except Exception as e:
             if type(e).__name__ == "RateLimitError" or "429" in str(e):
@@ -161,9 +165,10 @@ def generate_code_and_meta_op(
             logging.error(
                 f"Error processing repo '{git_repo}' (branch='{git_branch}'): {e}"
             )
-            if not multi_repo:
+            if should_reraise_processing_error(e, multi_repo=multi_repo):
                 raise
         else:
+            ignore_policy.log_summary()
             has_txt = any(f.endswith(".txt") for _, _, files in os.walk(tmp_target) for f in files)
             if not has_txt:
                 err_msg = f"No text or code files were generated in target directory for repo '{git_repo}'."
