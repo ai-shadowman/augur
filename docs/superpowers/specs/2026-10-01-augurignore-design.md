@@ -130,12 +130,13 @@ The error will follow the execution environment's existing fatal-error path. A l
 
 ## Observability
 
-Normal logs will state whether `.augurignore` was found and, when present, the number of active compiled patterns. After traversal, Augur will log aggregate counts of ignored directories and files.
+Normal logs will state whether `.augurignore` was found and, when present, the number and ordered values of its active compiled patterns. After traversal, Augur will log aggregate counts of ignored directories and files.
 
 Example:
 
 ```text
 Loaded .augurignore: 8 active patterns
+Active .augurignore patterns: *.log, cache/, !important.log
 Repository filtering: 4 directories and 27 files ignored
 ```
 

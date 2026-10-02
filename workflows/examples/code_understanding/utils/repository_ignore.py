@@ -56,10 +56,17 @@ class RepositoryIgnorePolicy:
                 f"Could not load {AUGURIGNORE_FILENAME} for repository {root}"
             ) from error
 
-        pattern_count = sum(
-            bool(line.strip()) and not line.startswith("#") for line in lines
+        active_patterns = tuple(
+            line for line in lines if line.strip() and not line.startswith("#")
         )
+        pattern_count = len(active_patterns)
         _LOG.info("Loaded %s: %s active patterns", AUGURIGNORE_FILENAME, pattern_count)
+        if active_patterns:
+            _LOG.info(
+                "Active %s patterns: %s",
+                AUGURIGNORE_FILENAME,
+                ", ".join(active_patterns),
+            )
         return cls(root, spec, pattern_count)
 
     @property

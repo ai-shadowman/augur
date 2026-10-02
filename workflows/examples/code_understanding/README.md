@@ -38,8 +38,8 @@ A present file that cannot be read as UTF-8 or compiled fails that repository
 before analysis rather than proceeding without the requested exclusions.
 
 Normal logs report whether the root file was found, its active-pattern count,
-and aggregate excluded file and directory counts. Individual excluded paths are
-logged only at debug level.
+the active patterns in file order, and aggregate excluded file and directory
+counts. Individual excluded paths are logged only at debug level.
 
 ```gitignore
 # Generated fixtures

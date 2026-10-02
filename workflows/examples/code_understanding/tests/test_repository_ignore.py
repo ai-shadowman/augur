@@ -93,6 +93,21 @@ class TestRepositoryIgnorePolicyLoading(unittest.TestCase):
             RepositoryIgnorePolicy.from_repository(self.make_repository("*.log\n"))
         self.assertIn("1 active patterns", "\n".join(loaded_logs.output))
 
+    def test_loading_logs_active_patterns_in_file_order(self):
+        root = self.make_repository(
+            "# generated files\n*.log\n\ncache/\n!important.log\n"
+        )
+
+        with self.assertLogs(level="INFO") as loaded_logs:
+            RepositoryIgnorePolicy.from_repository(root)
+
+        logs = "\n".join(loaded_logs.output)
+        self.assertIn(
+            "Active .augurignore patterns: *.log, cache/, !important.log",
+            logs,
+        )
+        self.assertNotIn("generated files", logs)
+
 
 class TestRepositoryIgnorePolicyMatching(unittest.TestCase):
     def make_policy(self, patterns):
