@@ -5,8 +5,8 @@ import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
-logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
-
+from utils.kubeflow_utils import setup_logging
+setup_logging()
 
 from utils.otel_utils import enable_telemetry
 

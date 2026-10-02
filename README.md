@@ -32,4 +32,8 @@ To prevent external network access at runtime, the `cl100k_base.tiktoken` file i
 For complete build instructions and hashing details, see:
 👉 **[resources/images/README.md](resources/images/README.md#offline--disconnected-support-tiktoken-cache)**
 
+## Documentation
+- [Logging Architecture](README_LOGGING.md) - Unified console logging and environment configuration
+- [Telemetry & Metrics Guide](README_METRICS.md) - Token and duration tracking architecture
+
 ***TODO***

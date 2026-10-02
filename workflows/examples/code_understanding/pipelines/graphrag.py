@@ -121,7 +121,8 @@ def run_graphrag(root_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())
+    from utils.kubeflow_utils import setup_logging
+    setup_logging()
 
     if len(sys.argv) < 2:
         log.error("Usage: graphrag.py <root_dir>")
