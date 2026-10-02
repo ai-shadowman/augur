@@ -64,6 +64,13 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                 except Exception as e:
                     logging.debug(f"Failed to persist tokens.json to {save_dir}: {e}")
 
+                try:
+                    from utils.code_metrics_tracker import CodeMetricsTracker
+                    code_tr = CodeMetricsTracker.get_instance()
+                    code_tr.save_to_file(os.path.join(save_dir, "project_metrics.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist project_metrics.json to {save_dir}: {e}")
+
     try:
         from utils.duration_tracker import DurationTracker
         dur_tr = DurationTracker.get_instance()
@@ -79,6 +86,14 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
         logging.info("\n" + summary)
     except Exception as e:
         logging.debug(f"Failed to print token summary in indexing pod: {e}")
+
+    try:
+        from utils.code_metrics_tracker import CodeMetricsTracker
+        code_tr = CodeMetricsTracker.get_instance()
+        summary = code_tr.format_summary()
+        logging.info("\n" + summary)
+    except Exception as e:
+        logging.debug(f"Failed to print code metrics summary in indexing pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -151,6 +166,13 @@ def run_indexing_multi_repo_op(parent_target_path: str,
                     tok_tr.save_to_file(os.path.join(save_dir, "tokens.json"))
                 except Exception as e:
                     logging.debug(f"Failed to persist tokens.json in run_indexing_multi_repo_op: {e}")
+
+                try:
+                    from utils.code_metrics_tracker import CodeMetricsTracker
+                    code_tr = CodeMetricsTracker.get_instance()
+                    code_tr.save_to_file(os.path.join(save_dir, "project_metrics.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to persist project_metrics.json in run_indexing_multi_repo_op: {e}")
 
     pd.DataFrame().to_csv(eval_results.path, index=False)
 

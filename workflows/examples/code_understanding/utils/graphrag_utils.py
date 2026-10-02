@@ -765,6 +765,16 @@ class DependencyAnalyzer:
 
         self._ensure_metrics_extracted(candidate_dirs)
 
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance()
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            code_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+            code_metrics_section = code_tracker.format_markdown_section()
+        except Exception as e:
+            logging.debug(f"Code metrics formatting in generate_migration_report: {e}")
+            code_metrics_section = ""
+
         token_summary_section = self.token_tracker.format_markdown_section()
 
         try:
@@ -773,9 +783,8 @@ class DependencyAnalyzer:
         except Exception:
             duration_section = ""
 
-        metrics_section = token_summary_section.strip()
-        if duration_section.strip():
-            metrics_section = f"{metrics_section}\n\n{duration_section.strip()}"
+        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if s.strip()]
+        metrics_section = "\n\n".join(sections)
 
         if not self.multi_repo:
             match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
@@ -808,6 +817,14 @@ class DependencyAnalyzer:
                 extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (durations): {e}")
+
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            c_tracker = CodeMetricsTracker.get_instance()
+            if not c_tracker.languages:
+                extract_data_generation_code_metrics(candidate_dirs, c_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (code metrics): {e}")
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""

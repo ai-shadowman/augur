@@ -94,7 +94,24 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in indexing: {e}")
 
-        # Immediately preserve prior durations.json and tokens.json in graphrag_source_path
+        code_tracker = None
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            code_tracker = CodeMetricsTracker.get_instance()
+            for metrics_file in find_all_telemetry_files(candidate_dirs, "project_metrics.json"):
+                code_tracker.load_and_merge(metrics_file, current_stage="Indexing")
+                if not git_slug and code_tracker.git_slug:
+                    git_slug = code_tracker.git_slug
+                if not git_repo and code_tracker.git_repo:
+                    git_repo = code_tracker.git_repo
+            try:
+                code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
+            except Exception as e:
+                logging.debug(f"Failed to download code metrics from MLflow in indexing: {e}")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in indexing: {e}")
+
+        # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
         if dur_tracker:
             for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
@@ -105,6 +122,12 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
+                except Exception:
+                    pass
+        if code_tracker:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
                 except Exception:
                     pass
 
@@ -188,6 +211,23 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     logging.info("\n" + summary)
                 except Exception as e:
                     logging.debug(f"Failed to log token summary: {e}")
+
+            if code_tracker:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                    try:
+                        code_tracker.save_to_file(os.path.join(save_dir, "project_metrics.json"))
+                    except Exception as e:
+                        logging.debug(f"Failed to save code metrics to {save_dir}: {e}")
+                try:
+                    code_tracker.log_to_mlflow()
+                    code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload code metrics to MLflow in indexing: {e}")
+                try:
+                    summary = code_tracker.format_summary()
+                    logging.info("\n" + summary)
+                except Exception as e:
+                    logging.debug(f"Failed to log code metrics summary: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,

@@ -97,9 +97,29 @@ class AnalysisPipeline:
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 
+        code_tracker = None
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            code_tracker = CodeMetricsTracker.get_instance()
+            for metrics_file in find_all_telemetry_files(candidate_dirs, "project_metrics.json"):
+                code_tracker.load_and_merge(metrics_file, current_stage="Analysis")
+                if not git_slug and code_tracker.git_slug:
+                    git_slug = code_tracker.git_slug
+                if not git_repo and code_tracker.git_repo:
+                    git_repo = code_tracker.git_repo
+            try:
+                code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
+            except Exception as e:
+                logging.debug(f"Failed to download code metrics from MLflow in analysis: {e}")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in analysis: {e}")
+
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Safeguard: ensure token and duration summaries are present in the markdown report
+        # Safeguard: ensure code metrics, token, and duration summaries are present in the markdown report
+        if code_tracker and "### Project Codebase & Scope Summary" not in report:
+            report = _inject_section(report, code_tracker.format_markdown_section())
+
         if analyzer.token_tracker and "### LLM Token Usage & Cost Summary" not in report:
             report = _inject_section(report, analyzer.token_tracker.format_markdown_section())
 
@@ -116,6 +136,15 @@ class AnalysisPipeline:
                 dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
             except Exception as e:
                 logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
+        if code_tracker:
+            try:
+                code_tracker.log_to_mlflow()
+                code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
+                summary = code_tracker.format_summary()
+                logging.info("\n" + summary)
+            except Exception as e:
+                logging.debug(f"Failed to upload/log code metrics in analysis: {e}")
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 
