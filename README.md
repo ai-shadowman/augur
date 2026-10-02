@@ -20,5 +20,16 @@
 - Helm CLI (`helm`)
 - Make (`make`)
 
+## Disconnected / Air-Gapped Environment Considerations
+
+In air-gapped or disconnected OpenShift clusters without public internet access, external runtime dependency downloads will fail. 
+
+### Tiktoken Tokenizer Cache
+OpenAI's `tiktoken` library (used by GraphRAG for chunking, token counting, and prompt context budgeting) dynamically downloads its BPE vocabulary file from `https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken` on first use. In a disconnected environment, this causes container pods to hang or crash with `urllib.error.URLError`.
+
+To prevent external network access at runtime, the `cl100k_base.tiktoken` file is pre-downloaded and baked into each pipeline container image under `/opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` alongside the `TIKTOKEN_CACHE_DIR` environment variable.
+
+For complete build instructions and hashing details, see:
+👉 **[resources/images/README.md](resources/images/README.md#offline--disconnected-support-tiktoken-cache)**
 
 ***TODO***
