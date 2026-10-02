@@ -1,0 +1,74 @@
+{
+  "runs": {
+    "sdk_slow": {
+      "source_ref": "fixture-only",
+      "config_id": "fixture-config",
+      "asset_version": "fixture-assets",
+      "ignore_rules_id": "fixture-ignore",
+      "cache_state": "warm",
+      "concurrency": 2,
+      "accepted_bytes": 4096,
+      "accepted_tokens": 100,
+      "success_criteria_id": "fixture-success",
+      "model_role": "fixture-model-stage",
+      "environment_id": "synthetic",
+      "serving_topology_id": "fixture-topology"
+    },
+    "io_slow": {
+      "source_ref": "fixture-only",
+      "config_id": "fixture-config",
+      "asset_version": "fixture-assets",
+      "ignore_rules_id": "fixture-ignore",
+      "cache_state": "warm",
+      "concurrency": 2,
+      "accepted_bytes": 4096,
+      "accepted_tokens": 100,
+      "success_criteria_id": "fixture-success",
+      "model_role": "fixture-model-stage",
+      "environment_id": "synthetic",
+      "serving_topology_id": "fixture-topology"
+    },
+    "parallel": {
+      "source_ref": "fixture-only",
+      "config_id": "fixture-config",
+      "asset_version": "fixture-assets",
+      "ignore_rules_id": "fixture-ignore",
+      "cache_state": "warm",
+      "concurrency": 2,
+      "accepted_bytes": 4096,
+      "accepted_tokens": 100,
+      "success_criteria_id": "fixture-success",
+      "model_role": "fixture-model-stage",
+      "environment_id": "synthetic",
+      "serving_topology_id": "fixture-topology"
+    },
+    "serialized": {
+      "source_ref": "fixture-only",
+      "config_id": "fixture-config",
+      "asset_version": "fixture-assets",
+      "ignore_rules_id": "fixture-ignore",
+      "cache_state": "warm",
+      "concurrency": 2,
+      "accepted_bytes": 4096,
+      "accepted_tokens": 100,
+      "success_criteria_id": "fixture-success",
+      "model_role": "fixture-model-stage",
+      "environment_id": "synthetic",
+      "serving_topology_id": "fixture-topology"
+    },
+    "retry_visible": {
+      "source_ref": "fixture-only",
+      "config_id": "fixture-config",
+      "asset_version": "fixture-assets",
+      "ignore_rules_id": "fixture-ignore",
+      "cache_state": "warm",
+      "concurrency": 2,
+      "accepted_bytes": 4096,
+      "accepted_tokens": 100,
+      "success_criteria_id": "fixture-success",
+      "model_role": "fixture-model-stage",
+      "environment_id": "synthetic",
+      "serving_topology_id": "fixture-topology"
+    }
+  }
+}
