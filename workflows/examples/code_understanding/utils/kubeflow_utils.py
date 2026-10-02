@@ -32,16 +32,32 @@ ANALYSIS_BASE_IMAGE = (
 ##############################################################################
 
 def setup_logging():
-    """Configures logging for KFP component pods.
+    """Configures logging to print to console (stdout) and never to a file.
 
-    ``logging.basicConfig`` is a no-op when handlers are already present
-    (KFP executor pre-configures them before the component body runs).
-    Calling ``setLevel`` on the root logger overrides the level regardless.
+    Ensures the root logger has a StreamHandler pointing to sys.stdout with
+    clean formatting, and strips any FileHandler instances so logs are
+    never written to disk.
     """
     import logging
+    import sys
     _level = os.environ.get('LOGLEVEL', 'INFO').upper()
-    logging.basicConfig(level=_level)
-    logging.getLogger().setLevel(_level)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(_level)
+
+    for handler in list(root_logger.handlers):
+        if isinstance(handler, logging.FileHandler):
+            root_logger.removeHandler(handler)
+
+    has_stream_handler = any(
+        isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout, sys.stderr)
+        for h in root_logger.handlers
+    )
+    if not has_stream_handler:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(_level)
+        formatter = logging.Formatter("[%(levelname)s] %(asctime)s - %(name)s - %(message)s")
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
 
 
 ##############################################################################
@@ -56,8 +72,6 @@ def get_pip_installable_git_url(
     subdirectory: str,
 ) -> str:
     """Returns a pip-installable VCS URL with embedded credentials."""
-    import sys
-    print(f"utils.kubeflow_utils.get_pip_installable_git_url: Username: {git_username} | URL: {repo_url} | Ref: {repo_ref}")
     return (
         f"git+https://{git_username}:{git_token}"
         f"@{repo_url.removeprefix('https://')}"
@@ -80,10 +94,8 @@ def inject_secret_as_env(secret_name: str):
     import functools
 
     def read_secret_keys() -> list:
-        """Returns the data keys of the secret, or [] on any error.
-        """
+        """Returns the data keys of the secret, or [] on any error."""
         try:
-
             from kubernetes import client as k8s_client, config as k8s_config
 
             try:
@@ -92,19 +104,14 @@ def inject_secret_as_env(secret_name: str):
                 k8s_config.load_kube_config()
 
             namespace = os.getenv("KFP_NAMESPACE", "default")
-
             secret = k8s_client.CoreV1Api().read_namespaced_secret(
                 name=secret_name, namespace=namespace
             )
-
             return list((secret.data or {}).keys())
-
         except Exception:
-
             return []
 
     def decorator(component_fn):
-
         @functools.wraps(component_fn)
         def wrapper(*args, **kwargs):
             import logging
@@ -113,7 +120,6 @@ def inject_secret_as_env(secret_name: str):
                 from kfp import kubernetes
 
                 keys = read_secret_keys()
-
                 if keys:
                     kubernetes.use_secret_as_env(
                         task,
@@ -134,10 +140,8 @@ def inject_secret_as_env(secret_name: str):
                     task.set_env_variable("REQUESTS_CA_BUNDLE", ca_path)
                 except Exception as e:
                     logging.error(f"KFP use_as_configmap failed: {e}")
-                    
             except ImportError:
                 pass
-
             return task
 
         return wrapper
@@ -152,19 +156,14 @@ def inject_secret_as_env(secret_name: str):
 def compile_all_and_exit(pipelines: dict):
     """Compiles all pipeline functions to <KFP_PIPELINE_OUTPUT_DIR>/<name>.yaml and exits."""
     if os.getenv("PIPELINE_COMPILE_ONLY"):
-
         from kfp import compiler
 
         output_dir = os.environ.get("KFP_PIPELINE_OUTPUT_DIR", "compiled_pipelines")
-
         os.makedirs(output_dir, exist_ok=True)
 
         for name, fn in pipelines.items():
-
             out = os.path.join(output_dir, f"{name}.yaml")
-
             compiler.Compiler().compile(fn, out)
-
             logging.info(f"  Compiled {name} -> {out}")
 
         raise SystemExit(0)
@@ -176,22 +175,16 @@ def compile_all_and_exit(pipelines: dict):
 
 @contextmanager
 def read_from_input_artifact(artifact):
-    """Extract a KFP Input[Dataset] tar.gz archive to a temp dir.
-    """
-    import shutil, tarfile, tempfile
+    """Extract a KFP Input[Dataset] tar.gz archive to a temp dir."""
+    import tarfile, tempfile
 
-    tmp = tempfile.mkdtemp()
-
-    try:
-
+    with tempfile.TemporaryDirectory() as tmp:
         with tarfile.open(artifact.path, "r:gz") as tar:
-            tar.extractall(tmp)
-
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(tmp, filter="data")
+            else:
+                tar.extractall(tmp)
         yield tmp
-
-    finally:
-
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @contextmanager
@@ -204,35 +197,19 @@ def write_to_output_artifact(artifact, compresslevel=1):
                        Defaults to 1; switch to 0 / ``"w:"`` mode for binary
                        data (e.g. parquet + embeddings) that compresses poorly.
     """
-    import os, shutil, tarfile, tempfile
+    import os, tarfile, tempfile
 
-    tmp = tempfile.mkdtemp()
-
-    try:
-
+    with tempfile.TemporaryDirectory() as tmp:
         yield tmp
-
         os.makedirs(os.path.dirname(artifact.path), exist_ok=True)
-
         with tarfile.open(artifact.path, "w:gz", compresslevel=compresslevel) as tar:
             tar.add(tmp, arcname=".")
-
-    finally:
-
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @contextmanager
 def use_ephemeral_space():
     """Yield a temporary directory and remove it on exit."""
-    import shutil, tempfile
+    import tempfile
 
-    tmp = tempfile.mkdtemp()
-
-    try:
-
+    with tempfile.TemporaryDirectory() as tmp:
         yield tmp
-
-    finally:
-
-        shutil.rmtree(tmp, ignore_errors=True)

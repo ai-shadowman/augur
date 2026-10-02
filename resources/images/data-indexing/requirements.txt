@@ -15,7 +15,6 @@ pytesseract==0.3.13
 jsonpath_ng==1.7.0
 validators==0.35.0
 pypdfium2==4.30.0
-datasets==4.4.1
 gitingest==0.3.1
 tree-sitter==0.25.2
 tree-sitter-python==0.25.0
@@ -23,3 +22,5 @@ pyvis==0.3.2
 mlflow[kubernetes]==3.14.0
 kfp==2.17.0
 PyYAML==6.0.2
+opentelemetry-exporter-otlp-proto-http==1.40.0
+opentelemetry-exporter-otlp-proto-grpc==1.40.0

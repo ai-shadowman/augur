@@ -1,23 +1,30 @@
+import logging
 import os
 import json
 import sys
+from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
+
+from utils.otel_utils import enable_telemetry
+
+
+@enable_telemetry
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
     """Generates a GraphRAG index from the provided codebase."""
-    import json, os, lancedb, shutil, traceback, subprocess, tracemalloc, nest_asyncio, logging
+    import shutil, traceback, nest_asyncio
     from loaders.default_asset_loader import DefaultAssetLoader
     from pipelines.base.data_generation import generate_git_slug
     from utils.graphrag_utils import DependencyAnalyzer
-
-    tracemalloc.start()
+    from pipelines.graphrag import run_graphrag
 
     nest_asyncio.apply()
 
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
-
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
     status = "fail"
@@ -26,58 +33,173 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         logging.info("Starting process...")
 
-        graph_rag_config_path = f"{graphrag_source_path}/settings.yaml"
-
         os.makedirs(f"{graphrag_source_path}/input", exist_ok=True)
 
         os.makedirs(f"{graphrag_source_path}/output", exist_ok=True)
 
-        DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
+        from utils.duration_tracker import find_all_telemetry_files
 
-        from utils.prompt_utils import prepare_indexing_config
+        candidate_dirs = [
+            codebase_path,
+            os.path.join(codebase_path, "input"),
+            os.path.join(codebase_path, "output"),
+            os.path.dirname(codebase_path),
+            graphrag_source_path,
+            os.path.join(graphrag_source_path, "input"),
+            os.path.join(graphrag_source_path, "output"),
+            os.path.dirname(graphrag_source_path),
+            os.getenv("PARENT_TARGET_PATH", "target"),
+            os.getenv("PARENT_SOURCE_PATH", "source"),
+        ]
+        if git_slug:
+            candidate_dirs.extend([
+                os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), git_slug),
+                os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), git_slug),
+                os.path.join(os.path.dirname(codebase_path), git_slug),
+            ])
 
-        logging.info("Preparing GraphRAG config files...")
+        dur_tracker = None
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+            for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
+                dur_tracker.load_and_merge(dur_file, current_stage="Indexing")
+                if not git_slug and dur_tracker.git_slug:
+                    git_slug = dur_tracker.git_slug
+                if not git_repo and dur_tracker.git_repo:
+                    git_repo = dur_tracker.git_repo
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
+            except Exception as e:
+                logging.debug(f"Failed to download durations from MLflow in indexing: {e}")
+        except Exception as e:
+            logging.debug(f"DurationTracker handling in indexing: {e}")
 
-        prepare_indexing_config(graphrag_source_path,
-                                git_slug=git_slug or "",
-                                git_repo=git_repo or "",
-                                multi_repo=multi_repo)
+        token_tracker = None
+        try:
+            from utils.token_tracker import TokenCostTracker
+            token_tracker = TokenCostTracker.get_instance()
+            token_tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
+            token_tracker.enable_openai_tracking(category="GraphRAG Indexing")
+            for tokens_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
+                token_tracker.load_and_merge(tokens_file, current_stage="Indexing")
+                if not git_slug and token_tracker.git_slug:
+                    git_slug = token_tracker.git_slug
+                if not git_repo and token_tracker.git_repo:
+                    git_repo = token_tracker.git_repo
+            try:
+                token_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing", only_current_run=False)
+            except Exception as e:
+                logging.debug(f"Failed to download tokens from MLflow in indexing: {e}")
+        except Exception as e:
+            logging.debug(f"TokenCostTracker handling in indexing: {e}")
 
-        logging.info("Copying source code to GraphRAG directory...")
+        # Immediately preserve prior durations.json and tokens.json in graphrag_source_path
+        if dur_tracker:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    dur_tracker.save_to_file(os.path.join(d, "durations.json"))
+                except Exception:
+                    pass
+        if token_tracker:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    token_tracker.save_to_file(os.path.join(d, "tokens.json"))
+                except Exception:
+                    pass
 
-        shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
+        try:
+            cm_settings = dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config") if dur_tracker else nullcontext()
+            with cm_settings:
+                DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
+                from utils.prompt_utils import prepare_indexing_config
+                logging.info("Preparing GraphRAG config files...")
+                prepare_indexing_config(graphrag_source_path,
+                                        git_slug=git_slug or "",
+                                        git_repo=git_repo or "",
+                                        multi_repo=multi_repo)
+            cm_copy = dur_tracker.measure(stage="Indexing", step="Copy Source to Input") if dur_tracker else nullcontext()
+            with cm_copy:
+                logging.info("Copying source code to GraphRAG directory...")
+                shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
+                for fname in ["durations.json", "tokens.json"]:
+                    fpath = os.path.join(f"{graphrag_source_path}/input", fname)
+                    if os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+                txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
+                if not txt_files:
+                    raise RuntimeError(
+                        f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
+                        f"for git_slug='{git_slug}'. Ensure data generation produced code files."
+                    )
+            cm_exec = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution") if dur_tracker else nullcontext()
+            with cm_exec:
+                logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
+                run_graphrag(graphrag_source_path)
+        finally:
+            # Extract indexing tokens from GraphRAG output files (stats.json, text_units.parquet)
+            if token_tracker:
+                try:
+                    from utils.token_tracker import extract_graphrag_indexing_tokens
+                    extract_graphrag_indexing_tokens(graphrag_source_path, token_tracker)
+                except Exception as e:
+                    logging.debug(f"Indexing token extraction: {e}")
 
-        logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
+            if token_tracker:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                    try:
+                        token_tracker.save_to_file(os.path.join(save_dir, "tokens.json"))
+                    except Exception:
+                        pass
+                try:
+                    token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload token metrics to MLflow: {e}")
 
-        graphrag_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphrag.sh")
+            if dur_tracker:
+                try:
+                    from utils.duration_tracker import extract_graphrag_indexing_durations
+                    extract_graphrag_indexing_durations(graphrag_source_path, dur_tracker)
+                except Exception as e:
+                    logging.debug(f"Failed to extract indexing durations: {e}")
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                    try:
+                        dur_tracker.save_to_file(os.path.join(save_dir, "durations.json"))
+                    except Exception as e:
+                        logging.debug(f"Failed to save durations to {save_dir}: {e}")
+                try:
+                    dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
 
-        proc = subprocess.run(
-            ["bash", graphrag_sh, graphrag_source_path, graph_rag_config_path],
-            check=False, capture_output=True, text=True
-        )
+            if dur_tracker:
+                try:
+                    summary = dur_tracker.format_summary()
+                    logging.info("\n" + summary)
+                except Exception as e:
+                    logging.debug(f"Failed to log duration summary: {e}")
 
-        if proc.returncode != 0:
-            raise Exception(
-                f"GraphRAG indexing failed (exit {proc.returncode}):\n"
-                f"STDOUT: {proc.stdout}\n"
-                f"STDERR: {proc.stderr}"
-            )
+            if token_tracker:
+                try:
+                    summary = token_tracker.format_summary()
+                    logging.info("\n" + summary)
+                except Exception as e:
+                    logging.debug(f"Failed to log token summary: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
-
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
-
             git_slug=git_slug,
-
             multi_repo=multi_repo,
-
         )
 
         DefaultAssetLoader().log_results(f"{graphrag_source_path}/output",
                                          artifact_path=artifact_path,
-                                         tags={"git_slug": git_slug,
+                                         tags={"git_slug": str(git_slug or "multi-repo"),
                                                "category": "indexing",
-                                               "multi_repo": multi_repo})
+                                               "multi_repo": str(multi_repo)})
 
         status = "success"
 
@@ -117,23 +239,33 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         )
 
 
+@enable_telemetry
 def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch: str,
                             multi_repo: bool = False):
     """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""
-    import logging
     import os
-
-    logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
     from eval.default_custom_evaluator import DefaultCustomEvaluator
 
     logging.info("Starting GraphRAG index evaluation...")
 
     try:
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance()
+        except Exception:
+            dur_tracker = None
 
-        results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
-                                                                 git_repo, git_branch,
-                                                                 multi_repo=multi_repo)
+        eval_cm = dur_tracker.measure(stage="Indexing", step="Evaluate Index") if dur_tracker else nullcontext()
+        with eval_cm:
+            results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
+                                                                     git_repo, git_branch,
+                                                                     multi_repo=multi_repo)
+            if dur_tracker:
+                try:
+                    dur_tracker.log_to_mlflow()
+                except Exception as e:
+                    logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         logging.info("GraphRAG index evaluation complete.")
 
@@ -150,13 +282,12 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
 
 class IndexingPipeline:
 
+    @enable_telemetry
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
             multi_repo: bool = False):
         """Generates a GraphRAG index and returns a status dict."""
-        import traceback, logging
+        import traceback
         import os
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         try:
 
@@ -199,17 +330,15 @@ class IndexingPipeline:
 
     def run_multi_repo(self, parent_target_path: str, graphrag_source_path: str = None):
         """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
-        import os, logging
+        import os
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_code_metadata_directories
-
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
         if graphrag_source_path is None:
             graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
 
-        #git_repos = DefaultAssetLoader().download("repos/repo_list.json") or []
-        git_repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS")) or []
+        repo_list_env = os.getenv("GIT_REPO_LIST_CONTENTS")
+        git_repos = json.loads(repo_list_env) if repo_list_env else (DefaultAssetLoader().download("repos/repo_list.json") or [])
 
         download_code_metadata_directories(git_repos, parent_target_path)
 

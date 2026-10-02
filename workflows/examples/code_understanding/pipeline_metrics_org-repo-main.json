@@ -1,0 +1,27 @@
+{
+  "pipeline_name": "graphrag-analysis-pipeline",
+  "multi_repo": false,
+  "git_repo": null,
+  "git_branch": null,
+  "started_at": "2026-09-16 12:55:15",
+  "stopped_at": null,
+  "total_duration": 0.0001,
+  "total_duration_formatted": "0.00s",
+  "status": "running",
+  "error_message": "",
+  "stages": {
+    "Analysis": {
+      "name": "Analysis",
+      "started_at": "2026-09-16 12:55:15",
+      "stopped_at": "2026-09-16 12:55:15",
+      "duration": 0.0001,
+      "duration_formatted": "0.00s",
+      "status": "COMPLETED",
+      "error_message": "",
+      "steps": [],
+      "apps": {}
+    }
+  },
+  "apps": {},
+  "steps": []
+}

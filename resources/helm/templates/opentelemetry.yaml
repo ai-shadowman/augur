@@ -1,0 +1,53 @@
+{{- if .Values.otel.enabled }}
+---
+# S3 credentials for TempoStack → MinIO
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tempo-s3-secret
+  namespace: {{ .Values.otel.namespace }}
+type: Opaque
+stringData:
+  endpoint: {{ .Values.minio.endpoint }}
+  bucket: {{ .Values.otel.tempo.bucket }}
+  access_key_id: {{ .Values.minio.rootUser | quote }}
+  access_key_secret: {{ .Values.minio.rootPassword | quote }}
+---
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoStack
+metadata:
+  name: {{ .Values.otel.name }}
+  namespace: {{ .Values.otel.namespace }}
+spec:
+  storage:
+    secret:
+      name: tempo-s3-secret
+      type: s3
+  storageSize: {{ .Values.otel.tempo.storageSize }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.otel.name }}
+  namespace: {{ .Values.otel.namespace }}
+spec:
+  mode: deployment
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      otlp:
+        endpoint: tempo-{{ .Values.otel.name }}-distributor:4317
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [otlp]
+{{- end }}

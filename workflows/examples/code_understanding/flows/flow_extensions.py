@@ -1,18 +1,11 @@
 ##############################################################################
 # Register custom blocks
 ##############################################################################
-from sdg_hub.core.blocks.base import BaseBlock
-from sdg_hub.core.blocks.llm.llm_chat_block import LLMChatBlock
-from sdg_hub.core.blocks.registry import BlockRegistry
-from pydantic import ConfigDict, field_validator
-import validators
-from sdg_hub.core.utils.logger_config import setup_logger
-from litellm import acompletion, completion
+from typing import Any
 import pandas as pd
-from typing import Any, Optional
-import asyncio
-logger = setup_logger(__name__)
-import os
+from pydantic import field_validator
+from sdg_hub.core.blocks.base import BaseBlock
+from sdg_hub.core.blocks.registry import BlockRegistry
 
 @BlockRegistry.register(
     "CustomDeleteColumnsBlock",
