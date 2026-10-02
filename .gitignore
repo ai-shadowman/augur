@@ -25,6 +25,7 @@ tmp1.txt
 tmp2.txt
 workflows/examples/code_understanding/graph_rag_app/
 **/compiled_pipelines/
+.vscode
 durations.json
 **/durations.json
 tokens.json

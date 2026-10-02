@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks
+---
+# tasks file for apply_secrets
+
+- name: Create or update git-credentials secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: git-credentials
+        namespace: "{{ kfp_namespace }}"
+      type: Opaque
+      stringData:
+        GIT_USERNAME: "{{ git_username }}"
+        GIT_TOKEN: "{{ git_token }}"
+
+- name: Check for pipeline git repo list file
+  ansible.builtin.stat:
+    path: "{{ pipeline_git_repo_list | default('') }}"
+  register: pipeline_repo_file
+
+- name: Check for fallback git repo list file
+  ansible.builtin.stat:
+    path: "{{ git_repo_list | default('') }}"
+  register: fallback_repo_file
+
+- name: Determine active repo list file path
+  ansible.builtin.set_fact:
+    active_repo_list_path: >-
+      {{
+        pipeline_git_repo_list if (pipeline_repo_file.stat.exists | default(false))
+        else (git_repo_list if (fallback_repo_file.stat.exists | default(false)) else '')
+      }}
+
+- name: Read repository list file contents
+  ansible.builtin.set_fact:
+    repo_list_contents: "{{ lookup('ansible.builtin.file', active_repo_list_path) }}"
+  when: active_repo_list_path | length > 0
+
+- name: Parse .env file key-value pairs
+  ansible.builtin.set_fact:
+    env_secret_data: "{{ lookup('ansible.builtin.file', env_file | default('.env')) | community.general.from_ini }}"
+  ignore_errors: true
+
+- name: Apply consolidated code-understanding-env secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: code-understanding-env
+        namespace: "{{ kfp_namespace }}"
+      type: Opaque
+      stringData: "{{ base_env_data | combine(repo_data) | combine(mlflow_data) }}"
+  vars:
+    base_env_data: "{{ env_secret_data | default({}) }}"
+    repo_data: "{{ {'GIT_REPO_LIST_CONTENTS': repo_list_contents} if (repo_list_contents is defined) else {} }}"
+    mlflow_data:
+      MLFLOW_WORKSPACE: "{{ kfp_namespace }}"
+
+...

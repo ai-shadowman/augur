@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks
+---
+# tasks file for upload_mlflow_assets
+
+- name: Get current OpenShift user if not already set
+  ansible.builtin.command: oc whoami
+  register: oc_whoami
+  changed_when: false
+  when: k8s_requester is not defined
+
+- name: Set requester fact if missing
+  ansible.builtin.set_fact:
+    k8s_requester: "{{ oc_whoami.stdout | trim }}"
+  when: k8s_requester is not defined
+
+- name: Delete existing upload-assets job
+  kubernetes.core.k8s:
+    state: absent
+    api_version: batch/v1
+    kind: Job
+    name: upload-assets
+    namespace: "{{ kfp_namespace }}"
+
+- name: Render upload-assets job template from Helm chart
+  kubernetes.core.helm_template:
+    chart_ref: "{{ helm_chart_path | default('resources/helm') }}"
+    release_name: agent-mesh-for-sw
+    release_namespace: "{{ kfp_namespace }}"
+    show_only:
+      - templates/upload-assets-job.yaml
+    release_values:
+      namespace: "{{ kfp_namespace }}"
+      requester: "{{ k8s_requester }}"
+      repoUrl: "{{ git_repo_url }}"
+      repoRef: "{{ git_repo_branch }}"
+      pipelineTools:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_pipeline_tools_image_name }}"
+          tag: "{{ kfp_pipeline_tools_image_tag }}"
+      tls:
+        enableVerification: "{{ enable_tls_verification | default(false) }}"
+  register: helm_asset_job
+
+- name: Submit upload-assets job
+  kubernetes.core.k8s:
+    state: present
+    namespace: "{{ kfp_namespace }}"
+    definition: "{{ helm_asset_job.stdout | from_yaml }}"
+
+...
