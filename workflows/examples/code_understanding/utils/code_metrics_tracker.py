@@ -96,7 +96,50 @@ BLOCK_COMMENTS: Dict[str, Tuple[str, str]] = {
     "c": ("/*", "*/"), "c++": ("/*", "*/"), "go": ("/*", "*/"), "rust": ("/*", "*/"),
     "scala": ("/*", "*/"), "kotlin": ("/*", "*/"), "c#": ("/*", "*/"), "sql": ("/*", "*/"),
     "html": ("<!--", "-->"), "xml": ("<!--", "-->"),
+    "python": ('"""', '"""'),
 }
+
+LANGUAGE_DISPLAY_NAMES: Dict[str, str] = {
+    "python": "Python",
+    "java": "Java",
+    "javascript": "JavaScript",
+    "typescript": "TypeScript",
+    "c#": "C#",
+    "c++": "C++",
+    "c": "C",
+    "go": "Go",
+    "rust": "Rust",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "scala": "Scala",
+    "kotlin": "Kotlin",
+    "swift": "Swift",
+    "html": "HTML",
+    "css": "CSS",
+    "sql": "SQL",
+    "shell": "Shell",
+    "bash": "Bash",
+    "yaml": "YAML",
+    "json": "JSON",
+    "xml": "XML",
+    "toml": "TOML",
+    "markdown": "Markdown",
+    "terraform": "Terraform",
+    "ansible": "Ansible",
+    "dockerfile": "Dockerfile",
+    "protobuf": "Protobuf",
+    "graphql": "GraphQL",
+    "jsp": "JSP",
+    "text": "Text",
+    "other": "Other",
+}
+
+
+def format_language_name(lang: str) -> str:
+    """Returns properly formatted display name for a language (e.g. 'Python', 'Java', 'TypeScript')."""
+    if not lang:
+        return ""
+    return LANGUAGE_DISPLAY_NAMES.get(lang.lower(), lang.capitalize())
 
 
 def _empty_lang_stats() -> Dict[str, int]:
@@ -173,11 +216,15 @@ class CodeMetricsTracker:
             elif ext == ".sql":
                 single_prefixes = ["--"]
 
+        alt_block_delim = ("'''", "'''") if lang_lower == "python" or ext in (".py", ".pyi") else None
+
         if not block_delim:
             if ext in (".java", ".kt", ".js", ".ts", ".c", ".cpp", ".cc", ".h", ".hpp", ".cs", ".sql"):
                 block_delim = ("/*", "*/")
             elif ext in (".html", ".xml", ".htm", ".xhtml"):
                 block_delim = ("<!--", "-->")
+            elif ext in (".py", ".pyi"):
+                block_delim = ('"""', '"""')
 
         # Consult code_utils mappings if present
         try:
@@ -194,6 +241,7 @@ class CodeMetricsTracker:
             pass
 
         in_block = False
+        active_close = None
         try:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
@@ -205,14 +253,26 @@ class CodeMetricsTracker:
 
                     if in_block:
                         comment += 1
-                        if block_delim and block_delim[1] in s:
+                        if active_close and active_close in s:
                             in_block = False
+                            active_close = None
+                        elif block_delim and block_delim[1] in s:
+                            in_block = False
+                            active_close = None
                         continue
 
                     if block_delim and s.startswith(block_delim[0]):
                         comment += 1
                         if block_delim[1] not in s[len(block_delim[0]):]:
                             in_block = True
+                            active_close = block_delim[1]
+                        continue
+
+                    if alt_block_delim and s.startswith(alt_block_delim[0]):
+                        comment += 1
+                        if alt_block_delim[1] not in s[len(alt_block_delim[0]):]:
+                            in_block = True
+                            active_close = alt_block_delim[1]
                         continue
 
                     if any(s.startswith(p) for p in single_prefixes):
@@ -228,6 +288,134 @@ class CodeMetricsTracker:
             "comment": comment,
             "code": max(0, total - blank - comment),
         }
+
+    @staticmethod
+    def _detect_code_syntax(content_or_fpath: str, is_content: bool = False) -> Optional[str]:
+        """Detects programming language from code syntax signatures."""
+        try:
+            if is_content:
+                sample = content_or_fpath[:2500]
+            else:
+                with open(content_or_fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    sample = "".join(f.readline() for _ in range(40))
+
+            if re.search(r"\b(def\s+\w+\s*\(|import\s+[\w.]+|from\s+[\w.]+\s+import|class\s+\w+\s*[:\(]|if\s+__name__\s*==)", sample):
+                return "python"
+            if re.search(r"\b(public\s+(class|interface|enum)|package\s+[\w.]+;|import\s+java\.)", sample):
+                return "java"
+            if re.search(r"\b(func\s+(\(\w+\s+\*?\w+\)\s+)?\w+\s*\(|package\s+\w+|import\s*\()", sample):
+                return "go"
+            if re.search(r"\b(fn\s+main\s*\(|use\s+std::|pub\s+(struct|fn|enum))", sample):
+                return "rust"
+            if re.search(r"\b(const\s+\w+\s*=\s*require|export\s+(default|const)|import\s+.*from\s+['\"])", sample):
+                return "javascript"
+            if re.search(r"\b(interface\s+\w+\s*\{|type\s+\w+\s*=\s*|:\s*(string|number|boolean)\b)", sample):
+                return "typescript"
+            if re.search(r"\b(#include\s+[<\"].+[>\"]|std::cout|int\s+main\s*\()", sample):
+                return "c++"
+            if re.search(r"\b(using\s+System|namespace\s+[\w.]+|public\s+class\s+\w+)", sample):
+                return "c#"
+            if re.search(r"\b(SELECT\s+.+\s+FROM\s+|CREATE\s+TABLE\s+|INSERT\s+INTO\s+)", sample, re.IGNORECASE):
+                return "sql"
+            if re.search(r"^#!\s*/bin/(bash|sh)", sample):
+                return "shell"
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def _inspect_txt_file(
+        cls,
+        fpath: str,
+        root: str,
+        fname: str,
+        filter_languages: Optional[Set[str]] = None,
+    ) -> Tuple[str, str, Optional[str]]:
+        """
+        Inspects a .txt file (often created during GraphRAG data generation) to
+        determine its real original filename, extension, and language.
+        Returns: (resolved_base_fname, resolved_ext, resolved_language)
+        """
+        # 1. Double extension: e.g. "Main.java.txt" -> "Main.java", ".java"
+        if fname.endswith(".txt") and "." in fname[:-4]:
+            base_fname = fname[:-4]
+            ext = os.path.splitext(base_fname)[1].lower()
+            return base_fname, ext, None
+
+        stem = fname[:-4] if fname.endswith(".txt") else fname
+
+        # 2. Sibling metadata file: e.g. "Main_metadata.txt" or "app_metadata.txt"
+        meta_candidates = [
+            os.path.join(root, f"{stem}_metadata.txt"),
+            os.path.join(root, f"{fname}_metadata.txt"),
+        ]
+        parent_dir = os.path.dirname(root)
+        if os.path.basename(root) == "input" and parent_dir:
+            meta_candidates.extend([
+                os.path.join(parent_dir, f"{stem}_metadata.txt"),
+                os.path.join(parent_dir, "target", f"{stem}_metadata.txt"),
+            ])
+
+        for meta_path in meta_candidates:
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8", errors="ignore") as mf:
+                        lines = [mf.readline() for _ in range(30)]
+                    orig_path = None
+                    lang = None
+                    for line in lines:
+                        line_s = line.strip()
+                        if line_s.startswith("file_path:"):
+                            orig_path = line_s.split(":", 1)[1].strip().strip("'\"")
+                        elif line_s.startswith("language:"):
+                            lang = line_s.split(":", 1)[1].strip().strip("'\"").lower()
+                    if orig_path:
+                        orig_fname = os.path.basename(orig_path)
+                        orig_ext = os.path.splitext(orig_fname)[1].lower()
+                        if orig_ext and orig_ext != ".txt":
+                            return orig_fname, orig_ext, lang
+                    if lang and lang != "text":
+                        return fname, ".txt", lang
+                except Exception:
+                    pass
+
+        # 3. Header comment in the file itself (written by data_generation.py)
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                head = [f.readline() for _ in range(25)]
+            for line in head:
+                m = re.search(r"This file is located at\s+([^\s,]+)", line)
+                if m:
+                    orig_path = m.group(1).strip()
+                    orig_fname = os.path.basename(orig_path)
+                    orig_ext = os.path.splitext(orig_fname)[1].lower()
+                    if orig_ext and orig_ext != ".txt":
+                        return orig_fname, orig_ext, None
+                m_lang = re.search(r"Language:\s*(\w+)", line, re.IGNORECASE)
+                if m_lang:
+                    lang = m_lang.group(1).lower()
+                    if lang and lang != "text":
+                        return fname, ".txt", lang
+        except Exception:
+            pass
+
+        # 4. Content syntax detection
+        syntax_lang = cls._detect_code_syntax(fpath)
+        if syntax_lang:
+            std_ext = {
+                "python": ".py", "java": ".java", "go": ".go", "rust": ".rs",
+                "javascript": ".js", "typescript": ".ts", "c++": ".cpp", "c#": ".cs",
+                "sql": ".sql", "shell": ".sh"
+            }.get(syntax_lang, ".txt")
+            return f"{stem}{std_ext}", std_ext, syntax_lang
+
+        # 5. Filter languages fallback (if single language is being filtered/targeted)
+        if filter_languages and len(filter_languages) == 1:
+            fl = list(filter_languages)[0]
+            if fl != "text":
+                return fname, ".txt", fl
+
+        return fname, ".txt", None
 
     def _resolve_language(
         self,
@@ -247,7 +435,7 @@ class CodeMetricsTracker:
                 return b_lang, True
 
         # When filtering by specific languages, match against their code and config extensions
-        if filter_langs:
+        if filter_langs and code_utils_mod:
             for fl in filter_langs:
                 try:
                     if ext in set(code_utils_mod.get_file_extensions_for_language(fl)):
@@ -311,24 +499,45 @@ class CodeMetricsTracker:
             for fname in files:
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
-                if fname.endswith("_metadata.txt") or fname in ("metadata.json", "code-metadata.json"):
+                if fname.endswith("_metadata.txt") or fname in ("metadata.json", "code-metadata.json", "durations.json", "tokens.json", "project_metrics.json"):
                     continue
 
-                # Strip .txt wrapper generated for GraphRAG indexing
-                base_fname = fname[:-4] if (fname.endswith(".txt") and "." in fname[:-4]) else fname
-                ext = os.path.splitext(base_fname)[1].lower()
+                fpath = os.path.join(root, fname)
+                resolved_lang = None
+                if fname.endswith(".txt"):
+                    base_fname, ext, resolved_lang = self._inspect_txt_file(
+                        fpath, root, fname, filter_languages
+                    )
+                else:
+                    base_fname = fname
+                    ext = os.path.splitext(base_fname)[1].lower()
 
                 if ext in BINARY_EXTENSIONS or base_fname.lower().endswith((".min.js", ".min.css")):
                     continue
 
-                fpath = os.path.join(root, fname)
                 rel_path = os.path.relpath(fpath, source_path)
 
                 resolved = self._resolve_language(base_fname, ext, rel_path, filter_languages, code_utils)
                 if not resolved:
-                    continue
+                    if resolved_lang:
+                        lang = resolved_lang
+                        is_config = False
+                    else:
+                        continue
+                else:
+                    lang, is_config = resolved
+                    if resolved_lang and (lang in ("text", "other") or not lang):
+                        lang = resolved_lang
 
-                lang, is_config = resolved
+                if lang in ("text", "other"):
+                    syn_lang = self._detect_code_syntax(fpath)
+                    if syn_lang:
+                        lang = syn_lang
+                        ext = {
+                            "python": ".py", "java": ".java", "go": ".go", "rust": ".rs",
+                            "javascript": ".js", "typescript": ".ts", "c++": ".cpp", "c#": ".cs"
+                        }.get(syn_lang, ext)
+
                 scan_key = f"{lang}:{rel_path}"
                 if scan_key in self._scanned_files:
                     continue
@@ -358,29 +567,91 @@ class CodeMetricsTracker:
 
         self._recalculate_totals()
 
-    def measure_dataframe(self, code_df, language: str, config: bool = False):
+    def measure_dataframe(self, code_df, language: Optional[str] = None, config: bool = False):
         """Aggregates metrics directly from a DataFrame row iterable."""
         if code_df is None or len(code_df) == 0:
             return
 
-        rec = self.languages.setdefault(language, _empty_lang_stats())
+        from utils import code_utils
 
         for _, row in code_df.iterrows():
-            code_text = row.get("code", "")
-            fpath = row.get("file_path", "")
+            code_text = row.get("code") or row.get("text") or ""
+            fpath = row.get("file_path") or row.get("title") or ""
+            row_lang = language
+            row_config = config
+            ext = os.path.splitext(fpath)[1].lower() if fpath else ""
 
-            file_key = f"{language}:{config}:{fpath}"
+            # Check if header contains original file path
+            m = re.search(r"This file is located at\s+([^\s,]+)", str(code_text)[:1000])
+            if m:
+                orig_path = m.group(1).strip()
+                orig_fname = os.path.basename(orig_path)
+                orig_ext = os.path.splitext(orig_fname)[1].lower()
+                resolved = self._resolve_language(orig_fname, orig_ext, orig_path, None, code_utils)
+                if resolved and resolved[0] not in ("text", "other"):
+                    row_lang, row_config = resolved
+                    ext = orig_ext
+
+            if not row_lang or row_lang in ("text", "other"):
+                syntax_lang = self._detect_code_syntax(str(code_text), is_content=True)
+                if syntax_lang:
+                    row_lang = syntax_lang
+                    ext = {
+                        "python": ".py", "java": ".java", "go": ".go", "rust": ".rs",
+                        "javascript": ".js", "typescript": ".ts", "c++": ".cpp", "c#": ".cs"
+                    }.get(syntax_lang, "")
+
+            final_lang = row_lang or "other"
+            file_key = f"{final_lang}:{row_config}:{fpath}"
             if file_key in self._scanned_files:
                 continue
             self._scanned_files.add(file_key)
 
-            lines = code_text.splitlines()
-            total = len(lines)
+            rec = self.languages.setdefault(final_lang, _empty_lang_stats())
+
+            lines = str(code_text).splitlines()
             blank = sum(1 for line in lines if not line.strip())
-            comment = sum(1 for line in lines if line.strip().startswith(("#", "//", "/*", "*", "<!--")))
+
+            single_prefixes = list(SINGLE_LINE_COMMENTS.get(final_lang, []))
+            block_delim = BLOCK_COMMENTS.get(final_lang)
+            alt_block_delim = ("'''", "'''") if final_lang == "python" or ext in (".py", ".pyi") else None
+
+            comment = 0
+            in_block = False
+            active_close = None
+            for line in lines:
+                s = line.strip()
+                if not s:
+                    continue
+                if in_block:
+                    comment += 1
+                    if active_close and active_close in s:
+                        in_block = False
+                        active_close = None
+                    elif block_delim and block_delim[1] in s:
+                        in_block = False
+                        active_close = None
+                    continue
+                if block_delim and s.startswith(block_delim[0]):
+                    comment += 1
+                    if block_delim[1] not in s[len(block_delim[0]):]:
+                        in_block = True
+                        active_close = block_delim[1]
+                    continue
+                if alt_block_delim and s.startswith(alt_block_delim[0]):
+                    comment += 1
+                    if alt_block_delim[1] not in s[len(alt_block_delim[0]):]:
+                        in_block = True
+                        active_close = alt_block_delim[1]
+                    continue
+                if any(s.startswith(p) for p in single_prefixes):
+                    comment += 1
+                    continue
+
+            total = len(lines)
             code = max(0, total - blank - comment)
 
-            if config:
+            if row_config:
                 rec["config_files"] += 1
             else:
                 rec["source_files"] += 1
@@ -428,6 +699,18 @@ class CodeMetricsTracker:
 
     def save_to_file(self, filepath: str):
         """Serializes and writes code metrics to a JSON file."""
+        if not filepath:
+            return
+        if self.total_repo_files == 0 and os.path.isfile(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if existing.get("total_repo_files", 0) > 0:
+                    logging.debug("Skipping overwrite of non-empty metrics file %s with empty tracker.", filepath)
+                    return
+            except Exception:
+                pass
+
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
@@ -621,70 +904,100 @@ class CodeMetricsTracker:
         """Returns an ASCII table of code metrics for terminal and pod logging."""
         total_code = sum(l.get("code_lines", 0) for l in self.languages.values())
         total_comments = sum(l.get("comment_lines", 0) for l in self.languages.values())
+        total_blanks = sum(l.get("blank_lines", 0) for l in self.languages.values())
+        total_source = sum(l.get("source_files", 0) for l in self.languages.values())
+        total_config = sum(l.get("config_files", 0) for l in self.languages.values())
 
         lines = [
-            "=" * 82,
+            "=" * 98,
             f" PROJECT CODEBASE & REPOSITORY METRICS : {self.git_slug or 'unknown'}",
-            "=" * 82,
+            "=" * 98,
             f" Total Analyzed Files : {self.total_repo_files:,}",
-            f" Total Lines of Code  : {self.total_repo_lines:,} (Code: {total_code:,} | Comments: {total_comments:,})",
-            "-" * 82,
-            f" {'Language':<14} | {'Source':<8} | {'Config':<8} | {'Total Files':<12} | {'Lines (SLOC)':<12} | {'Comments':<8}",
-            "-" * 82,
+            f" Total Lines of Code  : {self.total_repo_lines:,} (Code: {total_code:,} | Comments: {total_comments:,} | Blanks: {total_blanks:,})",
+            "-" * 98,
+            f" {'Language':<14} | {'Source':>8} | {'Config':>8} | {'Total Files':>12} | {'Code (SLOC)':>12} | {'Comments':>10} | {'Blanks':>8} | {'Total Lines':>12}",
+            "-" * 98,
         ]
 
         for lang, rec in sorted(self.languages.items()):
+            display_lang = format_language_name(lang)
             lines.append(
-                f" {lang:<14} | {rec['source_files']:<8} | {rec['config_files']:<8} | "
-                f"{rec['total_files']:<12,d} | {rec['code_lines']:<12,d} | {rec['comment_lines']:<8,d}"
+                f" {display_lang:<14} | {rec['source_files']:>8,d} | {rec['config_files']:>8,d} | "
+                f"{rec['total_files']:>12,d} | {rec['code_lines']:>12,d} | {rec['comment_lines']:>10,d} | "
+                f"{rec['blank_lines']:>8,d} | {rec['total_lines']:>12,d}"
             )
 
-        lines.append("=" * 82)
+        lines.append("-" * 98)
+        lines.append(
+            f" {'TOTAL':<14} | {total_source:>8,d} | {total_config:>8,d} | "
+            f"{self.total_repo_files:>12,d} | {total_code:>12,d} | {total_comments:>10,d} | "
+            f"{total_blanks:>8,d} | {self.total_repo_lines:>12,d}"
+        )
+        lines.append("=" * 98)
         return "\n".join(lines)
 
     def format_markdown_section(self) -> str:
         """Returns a Markdown section with formatted tables for migration_report.md."""
         if not self.languages:
             if self.total_repo_files > 0:
+                scope_desc = (
+                    f"**{self.total_repo_files:,}** files analyzed with **{self.total_repo_lines:,}** total lines."
+                    if self.total_repo_files != 1
+                    else f"**1** file analyzed with **{self.total_repo_lines:,}** total lines."
+                )
                 return (
                     "\n### Project Codebase & Scope Summary\n\n"
-                    f"> **Repository Scope**: **{self.total_repo_files:,}** file(s) analyzed with "
-                    f"**{self.total_repo_lines:,}** total lines.\n\n"
+                    f"{scope_desc}\n\n"
                     "| Metric | Count |\n"
-                    "| :--- | :---: |\n"
-                    f"| **Total Files** | {self.total_repo_files:,} |\n"
-                    f"| **Total Lines** | {self.total_repo_lines:,} |\n"
+                    "| :--- | ---: |\n"
+                    f"| Total Files | {self.total_repo_files:,} |\n"
+                    f"| Total Lines | {self.total_repo_lines:,} |\n"
                 )
             return (
                 "\n### Project Codebase & Scope Summary\n\n"
-                "> **Repository Scope**: **0** file(s) analyzed across **0** detected language(s) with **0** total lines.\n\n"
-                "| Language | Source Files | Config Files | Total Files | Code Lines (SLOC) | Comment Lines | Blank Lines |\n"
-                "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n"
-                "| *(None detected)* | 0 | 0 | 0 | 0 | 0 | 0 |\n"
+                "*No source files analyzed.*\n"
             )
 
         total_code = sum(l.get("code_lines", 0) for l in self.languages.values())
         total_comments = sum(l.get("comment_lines", 0) for l in self.languages.values())
         total_blanks = sum(l.get("blank_lines", 0) for l in self.languages.values())
+        total_source = sum(l.get("source_files", 0) for l in self.languages.values())
+        total_config = sum(l.get("config_files", 0) for l in self.languages.values())
+
+        num_langs = len(self.languages)
+        if num_langs == 1:
+            lang_key = list(self.languages.keys())[0]
+            display_name = format_language_name(lang_key)
+            if self.total_repo_files == 1:
+                scope_desc = f"**1** file analyzed across **1** language ({display_name}) with **{self.total_repo_lines:,}** total lines."
+            else:
+                scope_desc = f"**{self.total_repo_files:,}** files analyzed across **1** language ({display_name}) with **{self.total_repo_lines:,}** total lines."
+        else:
+            scope_desc = f"**{self.total_repo_files:,}** files analyzed across **{num_langs}** languages with **{self.total_repo_lines:,}** total lines."
 
         lines = [
             "\n### Project Codebase & Scope Summary\n",
-            f"> **Repository Scope**: **{self.total_repo_files:,}** file(s) analyzed across "
-            f"**{len(self.languages)}** detected language(s) with **{self.total_repo_lines:,}** total lines "
-            f"(**{total_code:,}** code, **{total_comments:,}** comments, **{total_blanks:,}** blank).\n",
-            "| Language | Source Files | Config Files | Total Files | Code Lines (SLOC) | Comment Lines | Blank Lines |",
-            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
+            f"{scope_desc}\n",
+            "| Language | Source Files | Config Files | Total Files | Code (SLOC) | Comments | Blanks | Total Lines |",
+            "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
 
         for lang, rec in sorted(self.languages.items()):
+            display_lang = format_language_name(lang)
             lines.append(
-                f"| **{lang}** | {rec['source_files']:,} | {rec['config_files']:,} | "
-                f"{rec['total_files']:,} | {rec['code_lines']:,} | {rec['comment_lines']:,} | {rec['blank_lines']:,} |"
+                f"| {display_lang} | {rec['source_files']:,} | {rec['config_files']:,} | "
+                f"{rec['total_files']:,} | {rec['code_lines']:,} | {rec['comment_lines']:,} | "
+                f"{rec['blank_lines']:,} | {rec['total_lines']:,} |"
             )
+
+        lines.append(
+            f"| **TOTAL** | **{total_source:,}** | **{total_config:,}** | **{self.total_repo_files:,}** | "
+            f"**{total_code:,}** | **{total_comments:,}** | **{total_blanks:,}** | **{self.total_repo_lines:,}** |"
+        )
 
         if self.skipped_large_files:
             lines.append(
-                f"\n> [!NOTE]\n> **{len(self.skipped_large_files)}** oversized file(s) (>200 KB) were skipped from deep parsing."
+                f"\n> [!NOTE]\n> **{len(self.skipped_large_files)}** oversized file(s) (>200 KB) were skipped from line-by-line counting."
             )
 
         return "\n".join(lines) + "\n"
@@ -730,7 +1043,7 @@ def extract_data_generation_code_metrics(
                 import pandas as pd
                 df = pd.read_parquet(parquet_path)
                 if df is not None and not df.empty:
-                    tracker.measure_dataframe(df, language="text")
+                    tracker.measure_dataframe(df)
                     if tracker.total_repo_files > 0:
                         return tracker
             except Exception as e:

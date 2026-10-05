@@ -387,6 +387,7 @@ class TestFallbackExtraction(unittest.TestCase):
         import asyncio
         from utils.graphrag_utils import DependencyAnalyzer
         from utils.code_metrics_tracker import CodeMetricsTracker
+        CodeMetricsTracker.reset_instance()
 
         graphrag_dir = os.path.join(self.temp_dir, "graphrag_metrics")
         input_dir = os.path.join(graphrag_dir, "input")
@@ -422,8 +423,8 @@ class TestFallbackExtraction(unittest.TestCase):
             report = asyncio.run(analyzer.generate_migration_report())
 
             self.assertIn("### Project Codebase & Scope Summary", report)
-            self.assertIn("**python**", report)
-            self.assertIn("**java**", report)
+            self.assertIn("Python", report)
+            self.assertIn("Java", report)
             self.assertIn("15", report)
             self.assertIn("750", report)
 

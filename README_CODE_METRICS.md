@@ -349,12 +349,13 @@ TOTAL                42             6              48             6,540         
 ### Markdown Report Section (`migration_report.md`)
 ```markdown
 ### Project Codebase & Scope Summary
-**48** file(s) analyzed across **2** language(s) (**8,420** total lines).
+
+**48** files analyzed across **2** languages with **8,420** total lines.
 
 | Language | Source Files | Config Files | Total Files | Code (SLOC) | Comments | Blanks | Total Lines |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **java** | 32 | 4 | 36 | 5,820 | 840 | 760 | 7,420 |
-| **python** | 10 | 2 | 12 | 720 | 140 | 140 | 1,000 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Java | 32 | 4 | 36 | 5,820 | 840 | 760 | 7,420 |
+| Python | 10 | 2 | 12 | 720 | 140 | 140 | 1,000 |
 | **TOTAL** | **42** | **6** | **48** | **6,540** | **980** | **900** | **8,420** |
 ```
 

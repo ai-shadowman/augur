@@ -96,7 +96,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         code_tracker = None
         try:
-            from utils.code_metrics_tracker import CodeMetricsTracker
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
             code_tracker = CodeMetricsTracker.get_instance()
             for metrics_file in find_all_telemetry_files(candidate_dirs, "project_metrics.json"):
                 code_tracker.load_and_merge(metrics_file, current_stage="Indexing")
@@ -108,6 +108,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download code metrics from MLflow in indexing: {e}")
+            if not code_tracker.languages or code_tracker.total_repo_files == 0:
+                try:
+                    extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+                except Exception as e:
+                    logging.debug(f"Failed fallback code metrics extraction in indexing: {e}")
         except Exception as e:
             logging.debug(f"CodeMetricsTracker handling in indexing: {e}")
 
@@ -124,8 +129,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
                 except Exception:
                     pass
-        if code_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+        if code_tracker and code_tracker.total_repo_files > 0:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
                 except Exception:
@@ -145,7 +150,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in ["durations.json", "tokens.json"]:
+                for fname in ["durations.json", "tokens.json", "project_metrics.json"]:
                     fpath = os.path.join(f"{graphrag_source_path}/input", fname)
                     if os.path.exists(fpath):
                         try:
@@ -212,8 +217,8 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 except Exception as e:
                     logging.debug(f"Failed to log token summary: {e}")
 
-            if code_tracker:
-                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            if code_tracker and code_tracker.total_repo_files > 0:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                     try:
                         code_tracker.save_to_file(os.path.join(save_dir, "project_metrics.json"))
                     except Exception as e:
