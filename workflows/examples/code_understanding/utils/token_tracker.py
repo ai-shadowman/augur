@@ -587,6 +587,7 @@ class TokenCostTracker:
         """Registers a callback with litellm.success_callback to intercept and track
         all direct LiteLLM invocations (e.g. from sdg_hub, custom evaluators).
         """
+        self.disable_litellm_callbacks()
         self._active_category = category
         if not HAS_LITELLM or litellm is None:
             logging.debug("LiteLLM not available; skipping callback registration.")

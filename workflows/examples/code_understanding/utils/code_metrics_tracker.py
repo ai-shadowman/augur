@@ -5,10 +5,10 @@ import logging
 import os
 import re
 import tempfile
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 
-# Language and file type classification constants
+# Extension and file classification maps
 EXT_TO_LANGUAGE: Dict[str, str] = {
     ".py": "python", ".pyi": "python", ".pyw": "python",
     ".java": "java", ".kt": "java", ".kts": "java", ".scala": "java", ".groovy": "java",
@@ -16,8 +16,7 @@ EXT_TO_LANGUAGE: Dict[str, str] = {
     ".ts": "javascript", ".mts": "javascript", ".cts": "javascript", ".tsx": "javascript",
     ".c": "c", ".h": "c",
     ".cpp": "c++", ".cc": "c++", ".cxx": "c++", ".hpp": "c++", ".hh": "c++", ".hxx": "c++",
-    ".go": "go",
-    ".rs": "rust",
+    ".go": "go", ".rs": "rust",
     ".cs": "c#", ".fs": "f#", ".vb": "vb",
     ".rb": "ruby", ".erb": "ruby", ".gemspec": "ruby",
     ".php": "php", ".phtml": "php",
@@ -25,45 +24,25 @@ EXT_TO_LANGUAGE: Dict[str, str] = {
     ".html": "html", ".htm": "html",
     ".css": "css", ".scss": "css", ".sass": "css", ".less": "css",
     ".yaml": "yaml", ".yml": "yaml",
-    ".json": "json",
-    ".xml": "xml",
-    ".toml": "toml",
+    ".json": "json", ".xml": "xml", ".toml": "toml",
     ".ini": "ini", ".cfg": "config", ".conf": "config",
-    ".sql": "sql",
-    ".md": "markdown",
+    ".sql": "sql", ".md": "markdown",
     ".tf": "terraform", ".tfvars": "terraform",
-    ".proto": "protobuf",
-    ".graphql": "graphql", ".gql": "graphql",
+    ".proto": "protobuf", ".graphql": "graphql", ".gql": "graphql",
 }
 
 BUILD_FILE_LANGUAGE: Dict[str, str] = {
-    "pom.xml": "java",
-    "build.gradle": "java",
-    "build.gradle.kts": "java",
-    "settings.gradle": "java",
-    "requirements.txt": "python",
-    "setup.py": "python",
-    "setup.cfg": "python",
-    "pyproject.toml": "python",
-    "pipfile": "python",
-    "pipfile.lock": "python",
-    "package.json": "javascript",
-    "package-lock.json": "javascript",
-    "tsconfig.json": "javascript",
-    "yarn.lock": "javascript",
-    "pnpm-lock.yaml": "javascript",
-    "cargo.toml": "rust",
-    "cargo.lock": "rust",
-    "go.mod": "go",
-    "go.sum": "go",
-    "gemfile": "ruby",
-    "gemfile.lock": "ruby",
-    "dockerfile": "dockerfile",
-    "containerfile": "dockerfile",
-    "docker-compose.yml": "yaml",
-    "docker-compose.yaml": "yaml",
-    "makefile": "other",
-    "cmakelists.txt": "other",
+    "pom.xml": "java", "build.gradle": "java", "build.gradle.kts": "java", "settings.gradle": "java",
+    "requirements.txt": "python", "setup.py": "python", "setup.cfg": "python",
+    "pyproject.toml": "python", "pipfile": "python", "pipfile.lock": "python",
+    "package.json": "javascript", "package-lock.json": "javascript", "tsconfig.json": "javascript",
+    "yarn.lock": "javascript", "pnpm-lock.yaml": "javascript",
+    "cargo.toml": "rust", "cargo.lock": "rust",
+    "go.mod": "go", "go.sum": "go",
+    "gemfile": "ruby", "gemfile.lock": "ruby",
+    "dockerfile": "dockerfile", "containerfile": "dockerfile",
+    "docker-compose.yml": "yaml", "docker-compose.yaml": "yaml",
+    "makefile": "other", "cmakelists.txt": "other",
 }
 
 CONFIG_EXTENSIONS: Set[str] = {
@@ -100,43 +79,31 @@ BLOCK_COMMENTS: Dict[str, Tuple[str, str]] = {
 }
 
 LANGUAGE_DISPLAY_NAMES: Dict[str, str] = {
-    "python": "Python",
-    "java": "Java",
-    "javascript": "JavaScript",
-    "typescript": "TypeScript",
-    "c#": "C#",
-    "c++": "C++",
-    "c": "C",
-    "go": "Go",
-    "rust": "Rust",
-    "ruby": "Ruby",
-    "php": "PHP",
-    "scala": "Scala",
-    "kotlin": "Kotlin",
-    "swift": "Swift",
-    "html": "HTML",
-    "css": "CSS",
-    "sql": "SQL",
-    "shell": "Shell",
-    "bash": "Bash",
-    "yaml": "YAML",
-    "json": "JSON",
-    "xml": "XML",
-    "toml": "TOML",
-    "markdown": "Markdown",
-    "terraform": "Terraform",
-    "ansible": "Ansible",
-    "dockerfile": "Dockerfile",
-    "protobuf": "Protobuf",
-    "graphql": "GraphQL",
-    "jsp": "JSP",
-    "text": "Text",
-    "other": "Other",
+    "python": "Python", "java": "Java", "javascript": "JavaScript", "typescript": "TypeScript",
+    "c#": "C#", "c++": "C++", "c": "C", "go": "Go", "rust": "Rust", "ruby": "Ruby",
+    "php": "PHP", "scala": "Scala", "kotlin": "Kotlin", "swift": "Swift", "html": "HTML",
+    "css": "CSS", "sql": "SQL", "shell": "Shell", "bash": "Bash", "yaml": "YAML",
+    "json": "JSON", "xml": "XML", "toml": "TOML", "markdown": "Markdown",
+    "terraform": "Terraform", "ansible": "Ansible", "dockerfile": "Dockerfile",
+    "protobuf": "Protobuf", "graphql": "GraphQL", "jsp": "JSP", "text": "Text", "other": "Other",
 }
+
+_SYNTAX_PATTERNS: List[Tuple[str, re.Pattern]] = [
+    ("python", re.compile(r"\b(def\s+\w+\s*\(|import\s+[\w.]+|from\s+[\w.]+\s+import|class\s+\w+\s*[:\(]|if\s+__name__\s*==)")),
+    ("java", re.compile(r"\b(public\s+(class|interface|enum)|package\s+[\w.]+;|import\s+java\.)")),
+    ("go", re.compile(r"\b(func\s+(\(\w+\s+\*?\w+\)\s+)?\w+\s*\(|package\s+\w+|import\s*\()")),
+    ("rust", re.compile(r"\b(fn\s+main\s*\(|use\s+std::|pub\s+(struct|fn|enum))")),
+    ("typescript", re.compile(r"\b(interface\s+\w+\s*\{|type\s+\w+\s*=\s*|:\s*(string|number|boolean)\b)")),
+    ("javascript", re.compile(r"\b(const\s+\w+\s*=\s*require|export\s+(default|const)|import\s+.*from\s+['\"])")),
+    ("c++", re.compile(r"\b(#include\s+[<\"].+[>\"]|std::cout|int\s+main\s*\()")),
+    ("c#", re.compile(r"\b(using\s+System|namespace\s+[\w.]+|public\s+class\s+\w+)")),
+    ("sql", re.compile(r"\b(SELECT\s+.+\s+FROM\s+|CREATE\s+TABLE\s+|INSERT\s+INTO\s+)", re.IGNORECASE)),
+    ("shell", re.compile(r"^#!\s*/bin/(bash|sh)")),
+]
 
 
 def format_language_name(lang: str) -> str:
-    """Returns properly formatted display name for a language (e.g. 'Python', 'Java', 'TypeScript')."""
+    """Returns formatted display name for a language (e.g. 'Python', 'Java')."""
     if not lang:
         return ""
     return LANGUAGE_DISPLAY_NAMES.get(lang.lower(), lang.capitalize())
@@ -146,6 +113,106 @@ def _empty_lang_stats() -> Dict[str, int]:
     return {
         "source_files": 0, "config_files": 0, "total_files": 0,
         "code_lines": 0, "comment_lines": 0, "blank_lines": 0, "total_lines": 0,
+    }
+
+
+def _resolve_delimiters(
+    lang: str,
+    ext: str,
+) -> Tuple[List[str], Optional[Tuple[str, str]], Optional[Tuple[str, str]]]:
+    """Resolves single-line prefixes, primary block delimiters, and alternate block delimiters."""
+    lang_lower = lang.lower().strip() if lang else ""
+    ext = ext.lower().strip() if ext else ""
+
+    single = list(SINGLE_LINE_COMMENTS.get(lang_lower, []))
+    if not single:
+        if ext in (".py", ".pyi", ".rb", ".sh", ".bash", ".yaml", ".yml", ".tf", ".conf", ".ini", ".cfg", ".toml"):
+            single = ["#"]
+        elif ext in (".java", ".kt", ".js", ".ts", ".c", ".cpp", ".cc", ".h", ".hpp", ".go", ".rs", ".cs"):
+            single = ["//"]
+        elif ext == ".sql":
+            single = ["--"]
+
+    block = BLOCK_COMMENTS.get(lang_lower)
+    if not block:
+        if ext in (".java", ".kt", ".js", ".ts", ".c", ".cpp", ".cc", ".h", ".hpp", ".cs", ".sql"):
+            block = ("/*", "*/")
+        elif ext in (".html", ".xml", ".htm", ".xhtml"):
+            block = ("<!--", "-->")
+        elif ext in (".py", ".pyi"):
+            block = ('"""', '"""')
+
+    alt_block = ("'''", "'''") if lang_lower == "python" or ext in (".py", ".pyi") else None
+
+    # Consult code_utils if available
+    try:
+        from utils import code_utils
+        delims = code_utils.get_comment_delimiters_for_language(lang_lower) if lang_lower else None
+        if not delims and ext:
+            delims = code_utils.get_comment_delimiters_for_file_extension(ext)
+        if delims and len(delims) >= 2 and delims[0]:
+            if delims[1]:
+                block = (delims[0], delims[1])
+            elif delims[0] not in single:
+                single.append(delims[0])
+    except Exception:
+        pass
+
+    return single, block, alt_block
+
+
+def _parse_lines(
+    lines: Iterable[str],
+    single_prefixes: List[str],
+    block_delim: Optional[Tuple[str, str]],
+    alt_block: Optional[Tuple[str, str]],
+) -> Dict[str, int]:
+    """Counts total, blank, comment, and code lines from an iterable of lines."""
+    total = blank = comment = 0
+    in_block = False
+    active_close: Optional[str] = None
+
+    for raw_line in lines:
+        total += 1
+        line = raw_line.strip()
+        if not line:
+            blank += 1
+            continue
+
+        if in_block:
+            comment += 1
+            if active_close and active_close in line:
+                in_block = False
+                active_close = None
+            elif block_delim and block_delim[1] in line:
+                in_block = False
+                active_close = None
+            continue
+
+        # Check block comment openers
+        opened = False
+        for delim in (block_delim, alt_block):
+            if delim and line.startswith(delim[0]):
+                comment += 1
+                if delim[1] not in line[len(delim[0]):]:
+                    in_block = True
+                    active_close = delim[1]
+                opened = True
+                break
+
+        if opened:
+            continue
+
+        # Check single-line comment prefixes
+        if any(line.startswith(p) for p in single_prefixes):
+            comment += 1
+            continue
+
+    return {
+        "total": total,
+        "blank": blank,
+        "comment": comment,
+        "code": max(0, total - blank - comment),
     }
 
 
@@ -198,100 +265,23 @@ class CodeMetricsTracker:
         language: Optional[str] = None,
         ext: Optional[str] = None,
     ) -> Dict[str, int]:
-        """Counts total lines, blank lines, comment lines, and SLOC in a file."""
-        total = blank = comment = 0
-
-        ext = (ext or (os.path.splitext(filepath)[1].lower() if filepath else "")).lower()
-        lang_lower = (language or "").lower().strip()
-
-        single_prefixes = list(SINGLE_LINE_COMMENTS.get(lang_lower, []))
-        block_delim = BLOCK_COMMENTS.get(lang_lower)
-
-        # Fallback to extension lookup if language did not specify delimiters
-        if not single_prefixes:
-            if ext in (".py", ".pyi", ".rb", ".sh", ".bash", ".yaml", ".yml", ".tf", ".conf", ".ini", ".cfg", ".toml"):
-                single_prefixes = ["#"]
-            elif ext in (".java", ".kt", ".js", ".ts", ".c", ".cpp", ".cc", ".h", ".hpp", ".go", ".rs", ".cs"):
-                single_prefixes = ["//"]
-            elif ext == ".sql":
-                single_prefixes = ["--"]
-
-        alt_block_delim = ("'''", "'''") if lang_lower == "python" or ext in (".py", ".pyi") else None
-
-        if not block_delim:
-            if ext in (".java", ".kt", ".js", ".ts", ".c", ".cpp", ".cc", ".h", ".hpp", ".cs", ".sql"):
-                block_delim = ("/*", "*/")
-            elif ext in (".html", ".xml", ".htm", ".xhtml"):
-                block_delim = ("<!--", "-->")
-            elif ext in (".py", ".pyi"):
-                block_delim = ('"""', '"""')
-
-        # Consult code_utils mappings if present
-        try:
-            from utils import code_utils
-            delims = code_utils.get_comment_delimiters_for_language(lang_lower) if lang_lower else None
-            if not delims and ext:
-                delims = code_utils.get_comment_delimiters_for_file_extension(ext)
-            if delims and len(delims) >= 2 and delims[0]:
-                if delims[1]:
-                    block_delim = (delims[0], delims[1])
-                elif delims[0] not in single_prefixes:
-                    single_prefixes.append(delims[0])
-        except Exception:
-            pass
-
-        in_block = False
-        active_close = None
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    total += 1
-                    s = line.strip()
-                    if not s:
-                        blank += 1
-                        continue
-
-                    if in_block:
-                        comment += 1
-                        if active_close and active_close in s:
-                            in_block = False
-                            active_close = None
-                        elif block_delim and block_delim[1] in s:
-                            in_block = False
-                            active_close = None
-                        continue
-
-                    if block_delim and s.startswith(block_delim[0]):
-                        comment += 1
-                        if block_delim[1] not in s[len(block_delim[0]):]:
-                            in_block = True
-                            active_close = block_delim[1]
-                        continue
-
-                    if alt_block_delim and s.startswith(alt_block_delim[0]):
-                        comment += 1
-                        if alt_block_delim[1] not in s[len(alt_block_delim[0]):]:
-                            in_block = True
-                            active_close = alt_block_delim[1]
-                        continue
-
-                    if any(s.startswith(p) for p in single_prefixes):
-                        comment += 1
-                        continue
-        except Exception as e:
-            logging.debug("Error reading file %s for line count: %s", filepath, e)
+        """Counts total, blank, comment, and code lines in a source file."""
+        if not filepath or not os.path.isfile(filepath):
             return {"total": 0, "blank": 0, "comment": 0, "code": 0}
 
-        return {
-            "total": total,
-            "blank": blank,
-            "comment": comment,
-            "code": max(0, total - blank - comment),
-        }
+        ext = ext or os.path.splitext(filepath)[1]
+        single, block, alt = _resolve_delimiters(language or "", ext)
+
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                return _parse_lines(f, single, block, alt)
+        except Exception as e:
+            logging.debug("Error reading %s for line count: %s", filepath, e)
+            return {"total": 0, "blank": 0, "comment": 0, "code": 0}
 
     @staticmethod
     def _detect_code_syntax(content_or_fpath: str, is_content: bool = False) -> Optional[str]:
-        """Detects programming language from code syntax signatures."""
+        """Detects programming language from signature syntax patterns."""
         try:
             if is_content:
                 sample = content_or_fpath[:2500]
@@ -299,29 +289,37 @@ class CodeMetricsTracker:
                 with open(content_or_fpath, "r", encoding="utf-8", errors="ignore") as f:
                     sample = "".join(f.readline() for _ in range(40))
 
-            if re.search(r"\b(def\s+\w+\s*\(|import\s+[\w.]+|from\s+[\w.]+\s+import|class\s+\w+\s*[:\(]|if\s+__name__\s*==)", sample):
-                return "python"
-            if re.search(r"\b(public\s+(class|interface|enum)|package\s+[\w.]+;|import\s+java\.)", sample):
-                return "java"
-            if re.search(r"\b(func\s+(\(\w+\s+\*?\w+\)\s+)?\w+\s*\(|package\s+\w+|import\s*\()", sample):
-                return "go"
-            if re.search(r"\b(fn\s+main\s*\(|use\s+std::|pub\s+(struct|fn|enum))", sample):
-                return "rust"
-            if re.search(r"\b(const\s+\w+\s*=\s*require|export\s+(default|const)|import\s+.*from\s+['\"])", sample):
-                return "javascript"
-            if re.search(r"\b(interface\s+\w+\s*\{|type\s+\w+\s*=\s*|:\s*(string|number|boolean)\b)", sample):
-                return "typescript"
-            if re.search(r"\b(#include\s+[<\"].+[>\"]|std::cout|int\s+main\s*\()", sample):
-                return "c++"
-            if re.search(r"\b(using\s+System|namespace\s+[\w.]+|public\s+class\s+\w+)", sample):
-                return "c#"
-            if re.search(r"\b(SELECT\s+.+\s+FROM\s+|CREATE\s+TABLE\s+|INSERT\s+INTO\s+)", sample, re.IGNORECASE):
-                return "sql"
-            if re.search(r"^#!\s*/bin/(bash|sh)", sample):
-                return "shell"
+            for lang, pattern in _SYNTAX_PATTERNS:
+                if pattern.search(sample):
+                    return lang
         except Exception:
             pass
         return None
+
+    @classmethod
+    def _read_metadata_file(cls, meta_path: str) -> Tuple[Optional[str], str, Optional[str]]:
+        """Extracts original file path and language from a generated metadata text file."""
+        try:
+            with open(meta_path, "r", encoding="utf-8", errors="ignore") as f:
+                orig_path, lang = None, None
+                for _ in range(30):
+                    line = f.readline()
+                    if not line:
+                        break
+                    line_s = line.strip()
+                    if line_s.startswith("file_path:"):
+                        orig_path = line_s.split(":", 1)[1].strip().strip("'\"")
+                    elif line_s.startswith("language:"):
+                        lang = line_s.split(":", 1)[1].strip().strip("'\"").lower()
+
+                if orig_path:
+                    fname = os.path.basename(orig_path)
+                    ext = os.path.splitext(fname)[1].lower()
+                    if ext and ext != ".txt":
+                        return fname, ext, lang
+                return None, ".txt", lang
+        except Exception:
+            return None, ".txt", None
 
     @classmethod
     def _inspect_txt_file(
@@ -331,63 +329,37 @@ class CodeMetricsTracker:
         fname: str,
         filter_languages: Optional[Set[str]] = None,
     ) -> Tuple[str, str, Optional[str]]:
-        """
-        Inspects a .txt file (often created during GraphRAG data generation) to
-        determine its real original filename, extension, and language.
-        Returns: (resolved_base_fname, resolved_ext, resolved_language)
-        """
-        # 1. Double extension: e.g. "Main.java.txt" -> "Main.java", ".java"
-        if fname.endswith(".txt") and "." in fname[:-4]:
-            base_fname = fname[:-4]
-            ext = os.path.splitext(base_fname)[1].lower()
-            return base_fname, ext, None
-
+        """Resolves original filename, extension, and language for generated .txt files."""
         stem = fname[:-4] if fname.endswith(".txt") else fname
 
-        # 2. Sibling metadata file: e.g. "Main_metadata.txt" or "app_metadata.txt"
+        # 1. Double extension: e.g. "Main.java.txt" -> ("Main.java", ".java", None)
+        if fname.endswith(".txt") and "." in stem:
+            return stem, os.path.splitext(stem)[1].lower(), None
+
+        # 2. Sibling metadata file
+        parent_dir = os.path.dirname(root)
         meta_candidates = [
             os.path.join(root, f"{stem}_metadata.txt"),
             os.path.join(root, f"{fname}_metadata.txt"),
+            os.path.join(parent_dir, f"{stem}_metadata.txt"),
+            os.path.join(parent_dir, "target", f"{stem}_metadata.txt"),
         ]
-        parent_dir = os.path.dirname(root)
-        if os.path.basename(root) == "input" and parent_dir:
-            meta_candidates.extend([
-                os.path.join(parent_dir, f"{stem}_metadata.txt"),
-                os.path.join(parent_dir, "target", f"{stem}_metadata.txt"),
-            ])
-
         for meta_path in meta_candidates:
             if os.path.isfile(meta_path):
-                try:
-                    with open(meta_path, "r", encoding="utf-8", errors="ignore") as mf:
-                        lines = [mf.readline() for _ in range(30)]
-                    orig_path = None
-                    lang = None
-                    for line in lines:
-                        line_s = line.strip()
-                        if line_s.startswith("file_path:"):
-                            orig_path = line_s.split(":", 1)[1].strip().strip("'\"")
-                        elif line_s.startswith("language:"):
-                            lang = line_s.split(":", 1)[1].strip().strip("'\"").lower()
-                    if orig_path:
-                        orig_fname = os.path.basename(orig_path)
-                        orig_ext = os.path.splitext(orig_fname)[1].lower()
-                        if orig_ext and orig_ext != ".txt":
-                            return orig_fname, orig_ext, lang
-                    if lang and lang != "text":
-                        return fname, ".txt", lang
-                except Exception:
-                    pass
+                orig_fname, orig_ext, lang = cls._read_metadata_file(meta_path)
+                if orig_fname:
+                    return orig_fname, orig_ext, lang
+                if lang and lang != "text":
+                    return fname, ".txt", lang
 
-        # 3. Header comment in the file itself (written by data_generation.py)
+        # 3. Header comment in the file
         try:
             with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                 head = [f.readline() for _ in range(25)]
             for line in head:
-                m = re.search(r"This file is located at\s+([^\s,]+)", line)
-                if m:
-                    orig_path = m.group(1).strip()
-                    orig_fname = os.path.basename(orig_path)
+                m_path = re.search(r"This file is located at\s+([^\s,]+)", line)
+                if m_path:
+                    orig_fname = os.path.basename(m_path.group(1).strip())
                     orig_ext = os.path.splitext(orig_fname)[1].lower()
                     if orig_ext and orig_ext != ".txt":
                         return orig_fname, orig_ext, None
@@ -399,7 +371,7 @@ class CodeMetricsTracker:
         except Exception:
             pass
 
-        # 4. Content syntax detection
+        # 4. Syntax signature detection
         syntax_lang = cls._detect_code_syntax(fpath)
         if syntax_lang:
             std_ext = {
@@ -409,9 +381,9 @@ class CodeMetricsTracker:
             }.get(syntax_lang, ".txt")
             return f"{stem}{std_ext}", std_ext, syntax_lang
 
-        # 5. Filter languages fallback (if single language is being filtered/targeted)
+        # 5. Targeted language fallback
         if filter_languages and len(filter_languages) == 1:
-            fl = list(filter_languages)[0]
+            fl = next(iter(filter_languages))
             if fl != "text":
                 return fname, ".txt", fl
 
@@ -422,10 +394,10 @@ class CodeMetricsTracker:
         base_fname: str,
         ext: str,
         rel_path: str,
-        filter_langs: Optional[Set[str]],
-        code_utils_mod: Any,
+        filter_langs: Optional[Set[str]] = None,
+        code_utils_mod: Any = None,
     ) -> Optional[Tuple[str, bool]]:
-        """Determines the language and whether the file is a configuration/build file."""
+        """Determines language and whether file is a configuration/build manifest."""
         fname_lower = base_fname.lower()
 
         # Build / manifest files have explicit language mappings
@@ -435,28 +407,35 @@ class CodeMetricsTracker:
                 return b_lang, True
 
         # When filtering by specific languages, match against their code and config extensions
-        if filter_langs and code_utils_mod:
-            for fl in filter_langs:
+        if filter_langs:
+            if code_utils_mod is None:
                 try:
-                    if ext in set(code_utils_mod.get_file_extensions_for_language(fl)):
-                        return fl, False
+                    from utils import code_utils as code_utils_mod
                 except Exception:
                     pass
 
-            rel_p_lower = rel_path.lower()
-            for fl in filter_langs:
-                try:
-                    if fl in rel_p_lower and (ext in set(code_utils_mod.get_config_file_extensions_for_language(fl)) or fname_lower in BUILD_FILE_LANGUAGE):
-                        return fl, True
-                except Exception:
-                    pass
-
-            for fl in filter_langs:
-                try:
-                    if ext in set(code_utils_mod.get_config_file_extensions_for_language(fl)):
-                        return fl, True
-                except Exception:
-                    pass
+            if code_utils_mod:
+                for fl in filter_langs:
+                    try:
+                        if ext in set(code_utils_mod.get_file_extensions_for_language(fl)):
+                            return fl, False
+                    except Exception:
+                        pass
+                for fl in filter_langs:
+                    try:
+                        if fl in rel_path.lower() and (
+                            ext in set(code_utils_mod.get_config_file_extensions_for_language(fl))
+                            or fname_lower in BUILD_FILE_LANGUAGE
+                        ):
+                            return fl, True
+                    except Exception:
+                        pass
+                for fl in filter_langs:
+                    try:
+                        if ext in set(code_utils_mod.get_config_file_extensions_for_language(fl)):
+                            return fl, True
+                    except Exception:
+                        pass
 
             if "other" in filter_langs:
                 return "other", (fname_lower in BUILD_FILE_LANGUAGE or ext in CONFIG_EXTENSIONS)
@@ -470,6 +449,20 @@ class CodeMetricsTracker:
 
         is_config = fname_lower in BUILD_FILE_LANGUAGE or ext in CONFIG_EXTENSIONS
         return lang, is_config
+
+    def _record_file(self, language: str, is_config: bool, counts: Dict[str, int]):
+        """Records file count and line metrics for a language."""
+        rec = self.languages.setdefault(language, _empty_lang_stats())
+        if is_config:
+            rec["config_files"] += 1
+        else:
+            rec["source_files"] += 1
+
+        rec["total_files"] += 1
+        rec["code_lines"] += counts["code"]
+        rec["comment_lines"] += counts["comment"]
+        rec["blank_lines"] += counts["blank"]
+        rec["total_lines"] += counts["total"]
 
     def _recalculate_totals(self):
         self.total_repo_files = sum(l["total_files"] for l in self.languages.values())
@@ -486,8 +479,6 @@ class CodeMetricsTracker:
             logging.warning("CodeMetricsTracker: Source path '%s' does not exist.", source_path)
             return
 
-        from utils import code_utils
-
         filter_languages = {l.lower() for l in languages} if languages else None
         if filter_languages:
             for fl in filter_languages:
@@ -499,7 +490,10 @@ class CodeMetricsTracker:
             for fname in files:
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
-                if fname.endswith("_metadata.txt") or fname in ("metadata.json", "code-metadata.json", "durations.json", "tokens.json", "project_metrics.json"):
+                if fname.endswith("_metadata.txt") or fname in (
+                    "metadata.json", "code-metadata.json", "durations.json",
+                    "tokens.json", "project_metrics.json"
+                ):
                     continue
 
                 fpath = os.path.join(root, fname)
@@ -516,12 +510,10 @@ class CodeMetricsTracker:
                     continue
 
                 rel_path = os.path.relpath(fpath, source_path)
-
-                resolved = self._resolve_language(base_fname, ext, rel_path, filter_languages, code_utils)
+                resolved = self._resolve_language(base_fname, ext, rel_path, filter_languages)
                 if not resolved:
                     if resolved_lang:
-                        lang = resolved_lang
-                        is_config = False
+                        lang, is_config = resolved_lang, False
                     else:
                         continue
                 else:
@@ -552,18 +544,7 @@ class CodeMetricsTracker:
                     continue
 
                 counts = self.count_file_lines(fpath, language=lang, ext=ext)
-                rec = self.languages.setdefault(lang, _empty_lang_stats())
-
-                if is_config:
-                    rec["config_files"] += 1
-                else:
-                    rec["source_files"] += 1
-
-                rec["total_files"] += 1
-                rec["code_lines"] += counts["code"]
-                rec["comment_lines"] += counts["comment"]
-                rec["blank_lines"] += counts["blank"]
-                rec["total_lines"] += counts["total"]
+                self._record_file(lang, is_config=is_config, counts=counts)
 
         self._recalculate_totals()
 
@@ -572,8 +553,6 @@ class CodeMetricsTracker:
         if code_df is None or len(code_df) == 0:
             return
 
-        from utils import code_utils
-
         for _, row in code_df.iterrows():
             code_text = row.get("code") or row.get("text") or ""
             fpath = row.get("file_path") or row.get("title") or ""
@@ -581,13 +560,13 @@ class CodeMetricsTracker:
             row_config = config
             ext = os.path.splitext(fpath)[1].lower() if fpath else ""
 
-            # Check if header contains original file path
+            # Check header comment for original file path
             m = re.search(r"This file is located at\s+([^\s,]+)", str(code_text)[:1000])
             if m:
                 orig_path = m.group(1).strip()
                 orig_fname = os.path.basename(orig_path)
                 orig_ext = os.path.splitext(orig_fname)[1].lower()
-                resolved = self._resolve_language(orig_fname, orig_ext, orig_path, None, code_utils)
+                resolved = self._resolve_language(orig_fname, orig_ext, orig_path)
                 if resolved and resolved[0] not in ("text", "other"):
                     row_lang, row_config = resolved
                     ext = orig_ext
@@ -596,10 +575,7 @@ class CodeMetricsTracker:
                 syntax_lang = self._detect_code_syntax(str(code_text), is_content=True)
                 if syntax_lang:
                     row_lang = syntax_lang
-                    ext = {
-                        "python": ".py", "java": ".java", "go": ".go", "rust": ".rs",
-                        "javascript": ".js", "typescript": ".ts", "c++": ".cpp", "c#": ".cs"
-                    }.get(syntax_lang, "")
+                    ext = f".{syntax_lang}"
 
             final_lang = row_lang or "other"
             file_key = f"{final_lang}:{row_config}:{fpath}"
@@ -607,60 +583,9 @@ class CodeMetricsTracker:
                 continue
             self._scanned_files.add(file_key)
 
-            rec = self.languages.setdefault(final_lang, _empty_lang_stats())
-
-            lines = str(code_text).splitlines()
-            blank = sum(1 for line in lines if not line.strip())
-
-            single_prefixes = list(SINGLE_LINE_COMMENTS.get(final_lang, []))
-            block_delim = BLOCK_COMMENTS.get(final_lang)
-            alt_block_delim = ("'''", "'''") if final_lang == "python" or ext in (".py", ".pyi") else None
-
-            comment = 0
-            in_block = False
-            active_close = None
-            for line in lines:
-                s = line.strip()
-                if not s:
-                    continue
-                if in_block:
-                    comment += 1
-                    if active_close and active_close in s:
-                        in_block = False
-                        active_close = None
-                    elif block_delim and block_delim[1] in s:
-                        in_block = False
-                        active_close = None
-                    continue
-                if block_delim and s.startswith(block_delim[0]):
-                    comment += 1
-                    if block_delim[1] not in s[len(block_delim[0]):]:
-                        in_block = True
-                        active_close = block_delim[1]
-                    continue
-                if alt_block_delim and s.startswith(alt_block_delim[0]):
-                    comment += 1
-                    if alt_block_delim[1] not in s[len(alt_block_delim[0]):]:
-                        in_block = True
-                        active_close = alt_block_delim[1]
-                    continue
-                if any(s.startswith(p) for p in single_prefixes):
-                    comment += 1
-                    continue
-
-            total = len(lines)
-            code = max(0, total - blank - comment)
-
-            if row_config:
-                rec["config_files"] += 1
-            else:
-                rec["source_files"] += 1
-
-            rec["total_files"] += 1
-            rec["code_lines"] += code
-            rec["comment_lines"] += comment
-            rec["blank_lines"] += blank
-            rec["total_lines"] += total
+            single, block, alt = _resolve_delimiters(final_lang, ext)
+            counts = _parse_lines(str(code_text).splitlines(), single, block, alt)
+            self._record_file(final_lang, is_config=row_config, counts=counts)
 
         self._recalculate_totals()
 
@@ -675,12 +600,10 @@ class CodeMetricsTracker:
             "languages": self.languages,
             "skipped_large_files": self.skipped_large_files,
         }
-        if self.git_slug:
-            d["git_slug"] = self.git_slug
-        if self.git_repo:
-            d["git_repo"] = self.git_repo
-        if self.run_id:
-            d["run_id"] = self.run_id
+        for attr in ("git_slug", "git_repo", "run_id"):
+            val = getattr(self, attr)
+            if val:
+                d[attr] = val
         return d
 
     @classmethod
@@ -704,10 +627,8 @@ class CodeMetricsTracker:
         if self.total_repo_files == 0 and os.path.isfile(filepath):
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-                if existing.get("total_repo_files", 0) > 0:
-                    logging.debug("Skipping overwrite of non-empty metrics file %s with empty tracker.", filepath)
-                    return
+                    if json.load(f).get("total_repo_files", 0) > 0:
+                        return
             except Exception:
                 pass
 
@@ -718,7 +639,7 @@ class CodeMetricsTracker:
     @classmethod
     def load_from_file(cls, filepath: str) -> Optional["CodeMetricsTracker"]:
         """Loads metrics from a JSON file, returning None if missing or corrupt."""
-        if not filepath or not os.path.exists(filepath):
+        if not filepath or not os.path.isfile(filepath):
             return None
         try:
             with open(filepath, "r", encoding="utf-8") as f:
@@ -729,7 +650,7 @@ class CodeMetricsTracker:
 
     def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
         """Loads external metrics and merges max counts into this tracker."""
-        if not filepath or not os.path.exists(filepath):
+        if not filepath or not os.path.isfile(filepath):
             return
 
         norm_path = os.path.normpath(os.path.abspath(filepath))
@@ -745,14 +666,11 @@ class CodeMetricsTracker:
         self.run_id = self.run_id or other.run_id
 
         for lang, rec in other.languages.items():
-            if lang not in self.languages:
-                self.languages[lang] = dict(rec)
-            else:
-                for k, v in rec.items():
-                    self.languages[lang][k] = max(self.languages[lang].get(k, 0), v)
+            current = self.languages.setdefault(lang, dict(rec))
+            for k, v in rec.items():
+                current[k] = max(current.get(k, 0), v)
 
         self._recalculate_totals()
-
         for sf in other.skipped_large_files:
             if sf not in self.skipped_large_files:
                 self.skipped_large_files.append(sf)
@@ -796,11 +714,19 @@ class CodeMetricsTracker:
     ):
         """Uploads project_metrics.json as an MLflow artifact and via DefaultAssetLoader."""
         slug = git_slug or self.git_slug
+        tags = {
+            "git_slug": str(slug or "multi-repo"),
+            "category": "telemetry",
+            "type": "code_metrics",
+            "stage": str(stage or ""),
+            "multi_repo": str(multi_repo),
+        }
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_file = os.path.join(tmp_dir, "project_metrics.json")
             self.save_to_file(tmp_file)
 
-            # Direct MLflow artifact logging
+            # Direct MLflow artifact upload
             try:
                 import mlflow
                 active = mlflow.active_run()
@@ -810,14 +736,6 @@ class CodeMetricsTracker:
                     or os.environ.get("MLFLOW_RUN_ID")
                 )
                 if target_run:
-                    tags = {
-                        "category": "telemetry",
-                        "type": "code_metrics",
-                        "git_slug": str(slug or "multi-repo"),
-                    }
-                    if stage:
-                        tags["stage"] = str(stage)
-
                     if active and hasattr(active, "info") and active.info.run_id == target_run:
                         mlflow.set_tags(tags)
                         mlflow.log_artifact(tmp_file, artifact_path="telemetry")
@@ -826,7 +744,7 @@ class CodeMetricsTracker:
                             mlflow.set_tags(tags)
                             mlflow.log_artifact(tmp_file, artifact_path="telemetry")
             except Exception as e:
-                logging.debug("Direct MLflow log_artifact failed for project_metrics.json: %s", e)
+                logging.debug("MLflow log_artifact failed for project_metrics.json: %s", e)
 
             # Asset loader artifact upload
             try:
@@ -836,17 +754,7 @@ class CodeMetricsTracker:
                     git_slug=slug,
                     multi_repo=multi_repo,
                 )
-                DefaultAssetLoader().log_results(
-                    tmp_file,
-                    artifact_path=artifact_path,
-                    tags={
-                        "git_slug": str(slug or "multi-repo"),
-                        "category": "telemetry",
-                        "type": "code_metrics",
-                        "stage": str(stage or ""),
-                        "multi_repo": str(multi_repo),
-                    },
-                )
+                DefaultAssetLoader().log_results(tmp_file, artifact_path=artifact_path, tags=tags)
             except Exception as e:
                 logging.debug("Asset loader upload failed for project_metrics.json: %s", e)
 
@@ -927,13 +835,13 @@ class CodeMetricsTracker:
                 f"{rec['blank_lines']:>8,d} | {rec['total_lines']:>12,d}"
             )
 
-        lines.append("-" * 98)
-        lines.append(
+        lines.extend([
+            "-" * 98,
             f" {'TOTAL':<14} | {total_source:>8,d} | {total_config:>8,d} | "
             f"{self.total_repo_files:>12,d} | {total_code:>12,d} | {total_comments:>10,d} | "
-            f"{total_blanks:>8,d} | {self.total_repo_lines:>12,d}"
-        )
-        lines.append("=" * 98)
+            f"{total_blanks:>8,d} | {self.total_repo_lines:>12,d}",
+            "=" * 98,
+        ])
         return "\n".join(lines)
 
     def format_markdown_section(self) -> str:
@@ -953,10 +861,7 @@ class CodeMetricsTracker:
                     f"| Total Files | {self.total_repo_files:,} |\n"
                     f"| Total Lines | {self.total_repo_lines:,} |\n"
                 )
-            return (
-                "\n### Project Codebase & Scope Summary\n\n"
-                "*No source files analyzed.*\n"
-            )
+            return "\n### Project Codebase & Scope Summary\n\n*No source files analyzed.*\n"
 
         total_code = sum(l.get("code_lines", 0) for l in self.languages.values())
         total_comments = sum(l.get("comment_lines", 0) for l in self.languages.values())
@@ -966,12 +871,10 @@ class CodeMetricsTracker:
 
         num_langs = len(self.languages)
         if num_langs == 1:
-            lang_key = list(self.languages.keys())[0]
+            lang_key = next(iter(self.languages))
             display_name = format_language_name(lang_key)
-            if self.total_repo_files == 1:
-                scope_desc = f"**1** file analyzed across **1** language ({display_name}) with **{self.total_repo_lines:,}** total lines."
-            else:
-                scope_desc = f"**{self.total_repo_files:,}** files analyzed across **1** language ({display_name}) with **{self.total_repo_lines:,}** total lines."
+            files_desc = "**1** file" if self.total_repo_files == 1 else f"**{self.total_repo_files:,}** files"
+            scope_desc = f"{files_desc} analyzed across **1** language ({display_name}) with **{self.total_repo_lines:,}** total lines."
         else:
             scope_desc = f"**{self.total_repo_files:,}** files analyzed across **{num_langs}** languages with **{self.total_repo_lines:,}** total lines."
 
@@ -1021,7 +924,7 @@ def extract_data_generation_code_metrics(
     if tracker.languages and tracker.total_repo_files > 0:
         return tracker
 
-    # Fallback: scan candidate input or root directories for files
+    # Fallback: scan candidate input or root directories
     for cand in dirs:
         if not cand or not os.path.exists(cand):
             continue

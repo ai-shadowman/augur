@@ -777,20 +777,23 @@ class DependencyAnalyzer:
 
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
-            code_metrics_section = CodeMetricsTracker.get_instance(git_slug=self.git_slug).format_markdown_section()
+            cms = CodeMetricsTracker.get_instance(git_slug=self.git_slug).format_markdown_section()
+            code_metrics_section = cms if isinstance(cms, str) else ""
         except Exception as e:
             logging.debug(f"Code metrics formatting in generate_migration_report: {e}")
             code_metrics_section = ""
 
-        token_summary_section = self.token_tracker.format_markdown_section()
+        tss = self.token_tracker.format_markdown_section()
+        token_summary_section = tss if isinstance(tss, str) else ""
 
         try:
             from utils.duration_tracker import DurationTracker
-            duration_section = DurationTracker.get_instance().format_markdown_section()
+            ds = DurationTracker.get_instance().format_markdown_section()
+            duration_section = ds if isinstance(ds, str) else ""
         except Exception:
             duration_section = ""
 
-        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if s.strip()]
+        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if isinstance(s, str) and s.strip()]
         metrics_section = "\n\n".join(sections)
 
         if not self.multi_repo:

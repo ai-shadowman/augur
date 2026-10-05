@@ -761,21 +761,12 @@ class DataGenerationPipeline:
                 from utils.code_metrics_tracker import CodeMetricsTracker
                 code_tr = CodeMetricsTracker.get_instance()
                 if target_path:
-                    try:
-                        code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
-                        parent_t = os.path.dirname(target_path)
-                        if parent_t and parent_t != target_path:
-                            code_tr.save_to_file(os.path.join(parent_t, "project_metrics.json"))
-                        if os.path.isdir("target"):
-                            code_tr.save_to_file(os.path.join("target", "project_metrics.json"))
-                    except Exception as e:
-                        logging.debug(f"Failed to save code metrics to {target_path}: {e}")
+                    code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
                 code_tr.log_to_mlflow()
                 code_tr.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
-                summary = code_tr.format_summary()
-                logging.info("\n" + summary)
+                logging.info("\n" + code_tr.format_summary())
             except Exception as e:
-                logging.debug(f"Failed to process code metrics in data generation pipeline: {e}")
+                logging.debug("Code metrics handling in data generation: %s", e)
 
         return result
 

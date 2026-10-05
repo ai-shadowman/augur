@@ -98,23 +98,12 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
             code_tracker = CodeMetricsTracker.get_instance()
-            for metrics_file in find_all_telemetry_files(candidate_dirs, "project_metrics.json"):
-                code_tracker.load_and_merge(metrics_file, current_stage="Indexing")
-                if not git_slug and code_tracker.git_slug:
-                    git_slug = code_tracker.git_slug
-                if not git_repo and code_tracker.git_repo:
-                    git_repo = code_tracker.git_repo
-            try:
-                code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
-            except Exception as e:
-                logging.debug(f"Failed to download code metrics from MLflow in indexing: {e}")
-            if not code_tracker.languages or code_tracker.total_repo_files == 0:
-                try:
-                    extract_data_generation_code_metrics(candidate_dirs, code_tracker)
-                except Exception as e:
-                    logging.debug(f"Failed fallback code metrics extraction in indexing: {e}")
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            git_slug = git_slug or code_tracker.git_slug
+            git_repo = git_repo or code_tracker.git_repo
+            code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
         except Exception as e:
-            logging.debug(f"CodeMetricsTracker handling in indexing: {e}")
+            logging.debug("Code metrics handling in indexing: %s", e)
 
         # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
         if dur_tracker:
