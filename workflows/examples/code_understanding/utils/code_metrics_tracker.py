@@ -809,43 +809,85 @@ class CodeMetricsTracker:
                 logging.debug("Asset loader download failed for project_metrics.json: %s", e)
 
     def format_summary(self) -> str:
-        """Returns an ASCII table of code metrics for terminal and pod logging."""
+        """Returns an ASCII table of code metrics for terminal, pod logging, and markdown reports."""
+        title = "PROJECT CODEBASE & SCOPE SUMMARY"
+        if not self.languages:
+            table_w = 78
+            divider_eq = "=" * table_w
+            if self.total_repo_files > 0:
+                return "\n".join([
+                    f"{title:^{table_w}}",
+                    divider_eq,
+                    f" Total Analyzed Files : {self.total_repo_files:,}",
+                    f" Total Lines of Code  : {self.total_repo_lines:,}",
+                    divider_eq,
+                ])
+            return "\n".join([
+                f"{title:^{table_w}}",
+                divider_eq,
+                " No source files analyzed.",
+                divider_eq,
+            ])
+
         total_code = sum(l.get("code_lines", 0) for l in self.languages.values())
         total_comments = sum(l.get("comment_lines", 0) for l in self.languages.values())
         total_blanks = sum(l.get("blank_lines", 0) for l in self.languages.values())
         total_source = sum(l.get("source_files", 0) for l in self.languages.values())
         total_config = sum(l.get("config_files", 0) for l in self.languages.values())
 
+        max_lang_len = max([len(format_language_name(l)) for l in self.languages.keys()] or [0])
+        lang_col_w = max(17, max_lang_len + 2)
+
+        header_str = "Language".ljust(lang_col_w)
+        header_line = f" {header_str}Source Files   Config Files   Total Files    Code (SLOC)    Comments   Blanks     Total Lines"
+        table_w = max(78, len(header_line.rstrip()))
+
+        divider_eq = "=" * table_w
+        divider_dash = "-" * table_w
+
         lines = [
-            "=" * 98,
-            f" PROJECT CODEBASE & REPOSITORY METRICS : {self.git_slug or 'unknown'}",
-            "=" * 98,
+            f"{title:^{table_w}}",
+            divider_eq,
             f" Total Analyzed Files : {self.total_repo_files:,}",
-            f" Total Lines of Code  : {self.total_repo_lines:,} (Code: {total_code:,} | Comments: {total_comments:,} | Blanks: {total_blanks:,})",
-            "-" * 98,
-            f" {'Language':<14} | {'Source':>8} | {'Config':>8} | {'Total Files':>12} | {'Code (SLOC)':>12} | {'Comments':>10} | {'Blanks':>8} | {'Total Lines':>12}",
-            "-" * 98,
+            f" Total Lines of Code  : {self.total_repo_lines:,}",
+            f" Total Code (SLOC)    : {total_code:,}",
+            f" Total Comments       : {total_comments:,}",
+            f" Total Blank Lines    : {total_blanks:,}",
+            divider_dash,
+            header_line,
+            divider_dash,
         ]
 
         for lang, rec in sorted(self.languages.items()):
             display_lang = format_language_name(lang)
-            lines.append(
-                f" {display_lang:<14} | {rec['source_files']:>8,d} | {rec['config_files']:>8,d} | "
-                f"{rec['total_files']:>12,d} | {rec['code_lines']:>12,d} | {rec['comment_lines']:>10,d} | "
-                f"{rec['blank_lines']:>8,d} | {rec['total_lines']:>12,d}"
+            row = (
+                f" {display_lang:<{lang_col_w}}"
+                f"{rec['source_files']:<15,}"
+                f"{rec['config_files']:<15,}"
+                f"{rec['total_files']:<15,}"
+                f"{rec['code_lines']:<15,}"
+                f"{rec['comment_lines']:<11,}"
+                f"{rec['blank_lines']:<11,}"
+                f"{rec['total_lines']:<11,}"
             )
+            lines.append(row)
 
         lines.extend([
-            "-" * 98,
-            f" {'TOTAL':<14} | {total_source:>8,d} | {total_config:>8,d} | "
-            f"{self.total_repo_files:>12,d} | {total_code:>12,d} | {total_comments:>10,d} | "
-            f"{total_blanks:>8,d} | {self.total_repo_lines:>12,d}",
-            "=" * 98,
+            divider_dash,
+            f" {'TOTAL':<{lang_col_w}}"
+            f"{total_source:<15,}"
+            f"{total_config:<15,}"
+            f"{self.total_repo_files:<15,}"
+            f"{total_code:<15,}"
+            f"{total_comments:<11,}"
+            f"{total_blanks:<11,}"
+            f"{self.total_repo_lines:<11,}",
+            divider_eq,
         ])
         return "\n".join(lines)
 
     def format_markdown_section(self) -> str:
-        """Returns a Markdown section with formatted tables for migration_report.md."""
+        """Returns a Markdown section containing the scope text and formatted ASCII table."""
         if not self.languages:
             if self.total_repo_files > 0:
                 scope_desc = (
@@ -856,18 +898,9 @@ class CodeMetricsTracker:
                 return (
                     "\n### Project Codebase & Scope Summary\n\n"
                     f"{scope_desc}\n\n"
-                    "| Metric | Count |\n"
-                    "| :--- | ---: |\n"
-                    f"| Total Files | {self.total_repo_files:,} |\n"
-                    f"| Total Lines | {self.total_repo_lines:,} |\n"
+                    f"```\n{self.format_summary()}\n```\n"
                 )
             return "\n### Project Codebase & Scope Summary\n\n*No source files analyzed.*\n"
-
-        total_code = sum(l.get("code_lines", 0) for l in self.languages.values())
-        total_comments = sum(l.get("comment_lines", 0) for l in self.languages.values())
-        total_blanks = sum(l.get("blank_lines", 0) for l in self.languages.values())
-        total_source = sum(l.get("source_files", 0) for l in self.languages.values())
-        total_config = sum(l.get("config_files", 0) for l in self.languages.values())
 
         num_langs = len(self.languages)
         if num_langs == 1:
@@ -881,22 +914,8 @@ class CodeMetricsTracker:
         lines = [
             "\n### Project Codebase & Scope Summary\n",
             f"{scope_desc}\n",
-            "| Language | Source Files | Config Files | Total Files | Code (SLOC) | Comments | Blanks | Total Lines |",
-            "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            f"```\n{self.format_summary()}\n```",
         ]
-
-        for lang, rec in sorted(self.languages.items()):
-            display_lang = format_language_name(lang)
-            lines.append(
-                f"| {display_lang} | {rec['source_files']:,} | {rec['config_files']:,} | "
-                f"{rec['total_files']:,} | {rec['code_lines']:,} | {rec['comment_lines']:,} | "
-                f"{rec['blank_lines']:,} | {rec['total_lines']:,} |"
-            )
-
-        lines.append(
-            f"| **TOTAL** | **{total_source:,}** | **{total_config:,}** | **{self.total_repo_files:,}** | "
-            f"**{total_code:,}** | **{total_comments:,}** | **{total_blanks:,}** | **{self.total_repo_lines:,}** |"
-        )
 
         if self.skipped_large_files:
             lines.append(

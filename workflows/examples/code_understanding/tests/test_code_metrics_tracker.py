@@ -295,7 +295,7 @@ class TestCodeMetricsTracker(unittest.TestCase):
             self.assertEqual(logged_dict["project_python_code_lines"], 800.0)
 
     def test_format_summary(self):
-        """Verify ASCII summary formatting contains repo slug, counts, and language columns."""
+        """Verify ASCII summary formatting contains title, counts, and language columns."""
         self.tracker.total_repo_files = 4
         self.tracker.total_repo_lines = 250
         self.tracker.languages = {
@@ -309,14 +309,14 @@ class TestCodeMetricsTracker(unittest.TestCase):
             }
         }
         summary = self.tracker.format_summary()
-        self.assertIn("PROJECT CODEBASE & REPOSITORY METRICS", summary)
+        self.assertIn("PROJECT CODEBASE & SCOPE SUMMARY", summary)
         self.assertIn("Total Analyzed Files : 4", summary)
         self.assertIn("Python", summary)
         self.assertIn("Java", summary)
         self.assertIn("TOTAL", summary)
 
     def test_format_markdown_section(self):
-        """Verify markdown section formatting contains headers and summary note."""
+        """Verify markdown section formatting contains scope text, code block, and summary note."""
         self.tracker.total_repo_files = 12
         self.tracker.total_repo_lines = 1500
         self.tracker.languages = {
@@ -329,8 +329,9 @@ class TestCodeMetricsTracker(unittest.TestCase):
         md = self.tracker.format_markdown_section()
         self.assertIn("### Project Codebase & Scope Summary", md)
         self.assertIn("**12** files analyzed across **1** language (Python) with **1,500** total lines.", md)
-        self.assertIn("| Python |", md)
-        self.assertIn("| **TOTAL** |", md)
+        self.assertIn("```", md)
+        self.assertIn("Python", md)
+        self.assertIn("TOTAL", md)
         self.assertIn("oversized file(s)", md)
 
     def test_extract_data_generation_code_metrics(self):
