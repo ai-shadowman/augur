@@ -2,15 +2,25 @@
 
 This directory contains standalone OpenShift build manifests and templates to build all four Augur container images directly on an OpenShift cluster and push them to **Quay.io**.
 
-This process is completely decoupled from the local `make build-images` workflow.
+---
+
+## Architecture Overview
+
+Instead of building images locally using Podman/Docker on a workstation, OpenShift `BuildConfig` objects run build pods directly inside the OpenShift cluster and push images directly to `quay.io`.
+
+The four images built are:
+1. **`data-generation`**: Builds from `resources/images/data-generation`.
+2. **`data-indexing`**: Builds from `resources/images/data-indexing`.
+3. **`data-analysis`**: Builds from repo root `.` (copies `workflows/examples/code_understanding`).
+4. **`pipeline-tools`**: Builds from repo root `.` (copies `workflows/examples/code_understanding`).
 
 ---
 
-## Prerequisites: Quay Secret (`quay-secret`)
+## Step 1: Quay.io Authentication Secret (`quay-secret`)
 
 OpenShift build pods need authentication credentials to push to Quay.io.
 
-### 1. Create `quay-secret` via OpenShift CLI:
+### 1. Create the `quay-secret` via the OpenShift CLI:
 ```bash
 oc create secret docker-registry quay-secret \
   --docker-server=quay.io \
@@ -20,21 +30,23 @@ oc create secret docker-registry quay-secret \
   -n <YOUR_NAMESPACE>
 ```
 
+> **Note:** If using the Makefile, `<YOUR_NAMESPACE>` should match `KFP_NAMESPACE` in your `.env`.
+
 ### 2. (Recommended) Link the secret to the `builder` ServiceAccount:
 ```bash
 oc secrets link builder quay-secret --for=mount -n <YOUR_NAMESPACE>
 ```
 
-Alternatively, you can edit and apply [quay-secret-example.yaml](quay-secret-example.yaml).
+*(Alternatively, you can edit and apply [quay-secret-example.yaml](quay-secret-example.yaml)).*
 
 ---
 
-## Deploying the BuildConfigs
+## Step 2: Deploying the BuildConfigs
 
-You can deploy the BuildConfigs either using the **parameterized Template** or the **static manifest**.
+The BuildConfig definitions are maintained separately from the Makefile and can be deployed using either the parameterized template or the static manifest.
 
 ### Option A: Parameterized Template (Recommended)
-Customize Git repository, branch, Quay organization, and tags:
+Allows dynamic parameter configuration for Git repository, branch, Quay organization, and tags:
 
 ```bash
 oc process -f resources/openshift/buildconfigs-template.yaml \
@@ -47,16 +59,32 @@ oc process -f resources/openshift/buildconfigs-template.yaml \
 ```
 
 ### Option B: Static Manifest
-Edit target image repositories in [buildconfigs.yaml](buildconfigs.yaml) and apply:
+Edit the repository and image coordinates in [buildconfigs.yaml](buildconfigs.yaml) and apply directly:
 ```bash
 oc apply -f resources/openshift/buildconfigs.yaml -n <YOUR_NAMESPACE>
 ```
 
 ---
 
-## Triggering the Builds
+## Step 3: Triggering the Builds
 
-### Trigger cluster Git builds:
+### Option A: Via Makefile (`make oc-build-images`)
+A Makefile target is available to kick off all four OpenShift builds concurrently:
+
+```bash
+make oc-build-images
+```
+
+* **Namespace:** Automatically uses the `KFP_NAMESPACE` defined in your `.env` file.
+* **BuildConfig Names:** Automatically aligns with the image names configured in `.env` (`KFP_DATA_GENERATION_BASE_IMAGE_NAME`, `KFP_INDEXING_BASE_IMAGE_NAME`, `KFP_ANALYSIS_BASE_IMAGE_NAME`, `KFP_PIPELINE_TOOLS_IMAGE_NAME`).
+* **Streaming Logs:** Pass `BUILD_FLAGS=--follow` to wait and stream build pod output:
+  ```bash
+  BUILD_FLAGS=--follow make oc-build-images
+  ```
+
+### Option B: Via OpenShift CLI Directly
+You can start individual builds on the cluster using `oc start-build`:
+
 ```bash
 oc start-build data-generation -n <YOUR_NAMESPACE> --follow
 oc start-build data-indexing   -n <YOUR_NAMESPACE> --follow
@@ -64,10 +92,26 @@ oc start-build data-analysis   -n <YOUR_NAMESPACE> --follow
 oc start-build pipeline-tools  -n <YOUR_NAMESPACE> --follow
 ```
 
-### Or trigger local binary builds (without committing/pushing to Git):
+### Option C: Binary Builds (Local Workstation Context)
+If you have uncommitted or local experimental changes and want OpenShift to build from your local directory without pushing to Git:
+
 ```bash
 oc start-build data-generation --from-dir=resources/images/data-generation -n <YOUR_NAMESPACE> --follow
 oc start-build data-indexing   --from-dir=resources/images/data-indexing -n <YOUR_NAMESPACE> --follow
 oc start-build data-analysis   --from-dir=. -n <YOUR_NAMESPACE> --follow
 oc start-build pipeline-tools  --from-dir=. -n <YOUR_NAMESPACE> --follow
+```
+
+---
+
+## Monitoring Builds
+
+Check build statuses in your namespace:
+```bash
+oc get builds -n <YOUR_NAMESPACE>
+```
+
+Stream logs from an active build:
+```bash
+oc logs -f build/<BUILD_NAME> -n <YOUR_NAMESPACE>
 ```

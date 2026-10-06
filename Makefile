@@ -127,6 +127,14 @@ build-images:
 	echo "==> Pushing pipeline-tools image..." && \
 	podman push "$$TOOLS_IMG"
 
+oc-build-images:
+	@set -a && . $(ENV_FILE) && set +a && \
+	echo "==> Kicking off OpenShift BuildConfigs in namespace $$KFP_NAMESPACE..." && \
+	oc start-build "$${KFP_DATA_GENERATION_BASE_IMAGE_NAME:-data-generation}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-} && \
+	oc start-build "$${KFP_INDEXING_BASE_IMAGE_NAME:-data-indexing}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-} && \
+	oc start-build "$${KFP_ANALYSIS_BASE_IMAGE_NAME:-data-analysis}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-} && \
+	oc start-build "$${KFP_PIPELINE_TOOLS_IMAGE_NAME:-pipeline-tools}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-}
+
 upload-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
