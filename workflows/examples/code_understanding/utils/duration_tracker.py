@@ -169,7 +169,7 @@ class DurationTracker:
         return list(self.records)
 
     @staticmethod
-    def _is_aggregate_step(rec: Dict[str, Any]) -> bool:
+    def _is_aggregate_step(rec: Dict[str, Any], all_records: Optional[List[Dict[str, Any]]] = None) -> bool:
         """Determines if a step is a parent or summary aggregate to avoid double-counting in totals."""
         meta = rec.get("metadata") or {}
         if meta.get("is_aggregate") or meta.get("is_parent"):
@@ -179,10 +179,19 @@ class DurationTracker:
             "migration report total",
             "generate migration report",
             "graphrag indexing total",
+            "graphrag indexing execution",
             "data generation total",
             "indexing total",
         ]:
             return True
+        if step_name == "graphrag indexing" and all_records:
+            has_substeps = any(
+                r.get("stage", "").lower() == "indexing"
+                and str(r.get("step", "")).lower().startswith("graphrag:")
+                for r in all_records
+            )
+            if has_substeps:
+                return True
         return False
 
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
@@ -198,7 +207,7 @@ class DurationTracker:
         sorted_stages = sorted(stages.keys(), key=lambda s: stage_order.get(s.lower(), 99))
         for stage in sorted_stages:
             recs = stages[stage]
-            non_agg = [r for r in recs if not self._is_aggregate_step(r)]
+            non_agg = [r for r in recs if not self._is_aggregate_step(r, all_records=all_recs)]
             if non_agg:
                 stage_totals[stage] = sum(r["duration"] for r in non_agg)
             else:
@@ -260,11 +269,11 @@ class DurationTracker:
 
         stages_with_substeps = set()
         for rec in all_records:
-            if not self._is_aggregate_step(rec):
+            if not self._is_aggregate_step(rec, all_records=all_records):
                 stages_with_substeps.add(rec["stage"])
 
         for rec in all_records:
-            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec):
+            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec, all_records=all_records):
                 continue
             dur_str = self.format_duration(rec["duration"])
             stage_name = rec["stage"]
@@ -314,7 +323,7 @@ class DurationTracker:
         stages = self.get_stage_durations(include_active=include_active)
 
         # Identify slowest non-aggregate step as bottleneck
-        non_agg = [r for r in records if not self._is_aggregate_step(r)]
+        non_agg = [r for r in records if not self._is_aggregate_step(r, all_records=records)]
         bottleneck = max(non_agg, key=lambda r: r.get("duration", 0.0)) if non_agg else None
 
         lines = [
@@ -348,11 +357,11 @@ class DurationTracker:
         max_bar_width = 15
         stages_with_substeps = set()
         for rec in records:
-            if not self._is_aggregate_step(rec):
+            if not self._is_aggregate_step(rec, all_records=records):
                 stages_with_substeps.add(rec["stage"])
 
         for rec in records:
-            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec):
+            if rec["stage"] in stages_with_substeps and self._is_aggregate_step(rec, all_records=records):
                 continue
             dur = rec.get("duration", 0.0)
             pct = (dur / total_duration * 100.0) if total_duration > 0 else 0.0
@@ -885,6 +894,16 @@ def extract_graphrag_indexing_durations(graphrag_dir: str, dur_tracker: Duration
                         extracted_any = True
                         recorded_workflows = True
 
+        if recorded_workflows:
+            for r in dur_tracker.records:
+                if r.get("stage", "").lower() == "indexing" and r.get("step") in (
+                    "GraphRAG Indexing",
+                    "GraphRAG Indexing Execution",
+                ):
+                    meta = r.setdefault("metadata", {})
+                    meta["is_aggregate"] = True
+                    meta["is_parent"] = True
+
         # Total runtime handling
         total_runtime = stats_data.get("total_runtime", stats_data.get("runtime", stats_data.get("duration", 0.0)))
         try:
@@ -904,7 +923,7 @@ def extract_graphrag_indexing_durations(graphrag_dir: str, dur_tracker: Duration
                         step="GraphRAG Indexing Total",
                         duration=total_float,
                         status="success",
-                        metadata={"is_aggregate": True},
+                        metadata={"is_aggregate": True, "is_parent": True},
                     )
                     extracted_any = True
             else:

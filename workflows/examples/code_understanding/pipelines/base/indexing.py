@@ -152,7 +152,15 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                         f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
                         f"for git_slug='{git_slug}'. Ensure data generation produced code files."
                     )
-            cm_exec = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution") if dur_tracker else nullcontext()
+            cm_exec = (
+                dur_tracker.measure(
+                    stage="Indexing",
+                    step="GraphRAG Indexing Execution",
+                    metadata={"is_aggregate": True, "is_parent": True},
+                )
+                if dur_tracker
+                else nullcontext()
+            )
             with cm_exec:
                 logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
                 run_graphrag(graphrag_source_path)

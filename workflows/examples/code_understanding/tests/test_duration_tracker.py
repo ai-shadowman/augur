@@ -996,6 +996,61 @@ class TestDurationTracker(unittest.TestCase):
             self.assertIn("Reset Environment", report)
             self.assertIn("GraphRAG: Create Base Extracted Entities", report)
 
+    def test_indexing_avoids_triple_counting_with_workflows_and_wrappers(self):
+        """Verify that Indexing does not double/triple count when GraphRAG Indexing,
+        GraphRAG Indexing Execution, and GraphRAG: <workflow> sub-steps are all present."""
+        tracker = DurationTracker()
+        tracker.record_step("Indexing", "Prepare Settings & Config", 0.3)
+        tracker.record_step("Indexing", "Copy Source to Input", 0.01)
+        tracker.record_step("Indexing", "Initialize GraphRAG Project", 0.01)
+        tracker.record_step("Indexing", "GraphRAG Indexing", 3258.0)
+        tracker.record_step("Indexing", "GraphRAG Indexing Execution", 3258.0, metadata={"is_aggregate": True, "is_parent": True})
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = os.path.join(tmp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            stats = {
+                "total_runtime": 3258.0,
+                "workflows": {
+                    "load_input_documents": {"overall": 0.043},
+                    "create_base_text_units": {"overall": 0.253},
+                    "extract_graph": {"overall": 291.9},
+                    "create_community_reports": {"overall": 2960.2},
+                    "generate_text_embeddings": {"overall": 5.604},
+                },
+            }
+            with open(os.path.join(output_dir, "stats.json"), "w") as f:
+                json.dump(stats, f)
+
+            result = extract_graphrag_indexing_durations(tmp_dir, tracker)
+            self.assertTrue(result)
+
+        stage_durations = tracker.get_stage_durations()
+        expected_indexing = 0.3 + 0.01 + 0.01 + 0.043 + 0.253 + 291.9 + 2960.2 + 5.604
+        self.assertAlmostEqual(stage_durations["Indexing"], expected_indexing, places=2)
+        self.assertAlmostEqual(tracker.get_total_duration(), expected_indexing, places=2)
+
+        summary = tracker.format_summary()
+        self.assertNotIn("GraphRAG Indexing Execution", summary)
+        self.assertNotIn("GraphRAG Indexing Total", summary)
+        self.assertIn("GraphRAG: Extract Graph", summary)
+        self.assertIn("GraphRAG: Create Community Reports", summary)
+
+    def test_indexing_single_counted_when_no_workflows(self):
+        """Verify that GraphRAG Indexing is counted once when no sub-steps exist,
+        while GraphRAG Indexing Execution is recognized as aggregate."""
+        tracker = DurationTracker()
+        tracker.record_step("Indexing", "Prepare Settings & Config", 0.3)
+        tracker.record_step("Indexing", "GraphRAG Indexing", 120.0)
+        tracker.record_step("Indexing", "GraphRAG Indexing Execution", 120.0, metadata={"is_aggregate": True})
+
+        stage_durations = tracker.get_stage_durations()
+        self.assertAlmostEqual(stage_durations["Indexing"], 120.3, places=2)
+
+        summary = tracker.format_summary()
+        self.assertIn("GraphRAG Indexing", summary)
+        self.assertNotIn("GraphRAG Indexing Execution", summary)
+
 
 if __name__ == "__main__":
     unittest.main()
