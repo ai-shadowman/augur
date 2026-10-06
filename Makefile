@@ -24,7 +24,10 @@ install:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Creating namespace $$KFP_NAMESPACE..." && \
-	sed "s|{{ .Values.namespace }}|$$KFP_NAMESPACE|g; s|{{ .Values.requester }}|$$(oc whoami)|g" resources/helm/templates/namespace.yaml | oc apply -f - && \
+	helm template agent-mesh-for-sw resources/helm \
+             --set namespace="$$KFP_NAMESPACE" \
+             --set requester="$$(oc whoami)" \
+             -s templates/namespace.yaml | oc apply -f - && \
 	\
 	echo "==> Waiting for OpenShift to inject service CA into odh-trusted-ca-bundle..." && \
 	until oc get configmap odh-trusted-ca-bundle -n $$KFP_NAMESPACE \
