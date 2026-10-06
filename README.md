@@ -85,4 +85,5 @@ python -m unittest discover -s workflows/examples/code_understanding/tests
 - 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
 - 👉 **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
 - 👉 **[resources/images/README.md](resources/images/README.md)**: Container image build process and disconnected/air-gapped registry mirroring.
+- 👉 **[resources/openshift/README.md](resources/openshift/README.md)**: OpenShift image build process
 - 👉 **[workflows/examples/code_understanding/README.md](workflows/examples/code_understanding/README.md)**: Code understanding package overview.
