@@ -106,28 +106,26 @@ build-images:
 	INDEX_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_INDEXING_BASE_IMAGE_NAME:$$KFP_INDEXING_BASE_IMAGE_TAG" && \
 	ANALYSIS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_ANALYSIS_BASE_IMAGE_NAME:$$KFP_ANALYSIS_BASE_IMAGE_TAG" && \
 	TOOLS_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_PIPELINE_TOOLS_IMAGE_NAME:$$KFP_PIPELINE_TOOLS_IMAGE_TAG" && \
-	CACHE_VOL="augur-pip-cache" && \
-	podman volume exists "$$CACHE_VOL" 2>/dev/null || podman volume create "$$CACHE_VOL" >/dev/null 2>&1 || true && \
 	\
 	echo "==> Building data generation image..." && \
-	podman build -v "$$CACHE_VOL:/opt/app-root/src/.cache/pip:Z" -t "$$DATAGEN_IMG" resources/images/data-generation && \
+	podman build -t "$$DATAGEN_IMG" resources/images/data-generation && \
 	echo "==> Pushing data generation image..." && \
 	podman push "$$DATAGEN_IMG" && \
 	\
 	echo "==> Building indexing image..." && \
-	podman build -v "$$CACHE_VOL:/opt/app-root/src/.cache/pip:Z" -t "$$INDEX_IMG" resources/images/data-indexing && \
+	podman build -t "$$INDEX_IMG" resources/images/data-indexing && \
 	echo "==> Pushing indexing image..." && \
 	podman push "$$INDEX_IMG" && \
 	\
 	echo "==> Building analysis image..." && \
-	podman build -v "$$CACHE_VOL:/opt/app-root/src/.cache/pip:Z" -f resources/images/data-analysis/Containerfile \
+	podman build -f resources/images/data-analysis/Containerfile \
 		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
 		-t "$$ANALYSIS_IMG" . && \
 	echo "==> Pushing analysis image..." && \
 	podman push "$$ANALYSIS_IMG" && \
 	\
 	echo "==> Building pipeline-tools image..." && \
-	podman build -v "$$CACHE_VOL:/opt/app-root/src/.cache/pip:Z" -f resources/images/pipeline-tools/Containerfile \
+	podman build -f resources/images/pipeline-tools/Containerfile \
 		$${KFP_BASE_IMAGE:+--build-arg BASE_IMAGE=$$KFP_BASE_IMAGE} \
 		-t "$$TOOLS_IMG" . && \
 	echo "==> Pushing pipeline-tools image..." && \

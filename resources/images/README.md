@@ -63,17 +63,22 @@ podman push localhost/pipeline-tools:$TAG quay.io/ai-shadowman/pipeline-tools:$T
 
 ---
 
-## Python Package Build Caching (`augur-pip-cache` & Layer Optimization)
+## Python Package Build Caching (Layer Optimization)
 
 To prevent redownloading large Python packages across repeated builds:
 
-1. **Persistent Podman Volume Cache (`augur-pip-cache`)**:
-   `make build-images` creates and mounts a persistent Podman volume:
-   ```bash
-   podman build -v augur-pip-cache:/opt/app-root/src/.cache/pip:Z ...
-   ```
-   * All Containerfiles declare `ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip`.
-   * Downloaded `.whl` files are stored in `augur-pip-cache` across runs and shared between `data-generation`, `data-indexing`, `data-analysis`, and `pipeline-tools`.
+1. **Native Podman Layer Caching**:
+   * Podman caches image layers across builds by default.
+   * `requirements.txt` is installed in a dedicated build step:
+     ```dockerfile
+     ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
+
+     COPY requirements.txt ./requirements.txt
+
+     RUN pip install --upgrade pip \
+         && pip install -r requirements.txt
+     ```
+   * As long as `requirements.txt` does not change, Podman reuses the cached layer (`--> Using cache <layer-id>`), completing in seconds with zero network downloads.
    * Standard Containerfile syntax is preserved (`RUN pip install ...`), ensuring 100% compatibility across all Podman/Buildah versions and OpenShift BuildConfigs.
 
 2. **Optimized Layer Caching in `data-analysis` and `pipeline-tools`**:
