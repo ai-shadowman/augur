@@ -34,6 +34,42 @@ To power this intensive process, AUGUR relies on an enterprise-grade, AI-acceler
 
 * **Tooling:** AUGUR utilizes MLflow for evaluation/tracking, MinIO for S3-compatible data storage, and OpenShift Pipelines to automate the workflow.
 
+## Tested Configuration
+
+| Component                                   | Version |
+|---------------------------------------------|---------|
+| OpenShift                                   | 4.22    |
+| Authorino Operator                          | 1.4     |
+| cert-manager Operator for Red Hat OpenShift | 1.20    |
+| Cluster Observability Operator              | 1.5     |
+| Custom Metrics Autoscaler                   | 2.19    |
+| DNS Operator                                | 1.4     |
+| Kiali Operator                              | 2.27    |
+| Limitador Operator                          | 1.4     |
+| MetalLB Operator                            | 4.22    |
+| Node Feature Discovery Operator             | 4.22    |
+| NVIDIA GPU Operator                         | 26.3    |
+| Red Hat build of Kueue                      | 1.3     |
+| Red Hat build of Leader Worker Set          | 1.0     |
+| Red Hat build of OpenTelemetry              | 0.152   |
+| Red Hat Connectivity Link                   | 1.4     |
+| Red Hat OpenShift AI                        | 3.4     |
+| Red Hat OpenShift GitOps                    | 1.21    |
+| Red Hat OpenShift Pipelines                 | 1.23    |
+| Red Hat OpenShift Service Mesh 3            | 3.4     |
+| Tempo Operator                              | 0.21    |
+
+## Release Notes
+
+### v1.0.2 (x October 2026)
+
+* #40 Support for .augurignore files
+* #41 Improvements to logging to use logger throughout; also switches to using pgsty/silo due to changes in community minio
+
+### v1.0.1 (1 October 2026)
+
+* Initial Release
+
 ## Required Software / Tested with
 
 - Red Hat OpenShift 4.18+
