@@ -1,10 +1,38 @@
-# WIP: AUGUR: Agentic Understanding for Guided Upgrade Recommendations
+# AUGUR: **A**gentic **U**nderstanding for **G**uided **U**pgrade **R**ecommendations
 
 ![AUGUR](media/AUGUR.png)
 
 ## Overview
 
-***TODO***
+**AUGUR** (**A**gentic **U**nderstanding for **G**uided **U**pgrade **R**ecommendations). It serves as the "Code Understanding" phase of a future larger multi-agent system designed to support iterative, agent-driven development for modernizing legacy software ("brownfield applications").
+
+### What It Does
+
+The primary goal of AUGUR is to deeply analyze existing codebases and generate strategic insights to plan for software migration and refactoring. Specifically, it:
+
+* Generates architectural artifacts to build a refactoring catalog and a structured high-level migration plan.
+
+* Allows developers to execute ad-hoc, natural-language queries against the Graph-RAG representation of AUGUR's knowledge of the codebase. For example, users can ask the system to identify the data stores, determine which modules are the riskiest to refactor, or recommend an upgrade order to minimize breaking changes.
+
+### How It Works
+
+AUGUR executes its code understanding workflow through a three-step pipeline:
+
+1. **Data Generation:** AUGUR scans the target codebase, generating raw text versions and metadata for each relevant file. It can also merge output from external tools—like vulnerability scanners, static code parsers, and dependency analyzers—into this dataset to enrich the context.
+
+2. **Data Indexing:** The file set and metadata are ingested into **GraphRAG** (**Graph** **R**etrieval-**A**ugmented **G**eneration). This process indexes the data to create a comprehensive, graph-based representation of the codebase, mapping out how different components and functions relate to one another.
+
+3. **Data Analysis:** AUGUR queries the generated GraphRAG index using the GraphRAG SDK and Large Language Models (LLMs). By running both canned and custom queries, the agents explore the code graph to generate the final refactoring assets and migration recommendations.
+
+### Technology Stack
+
+To power this intensive process, AUGUR relies on an enterprise-grade, AI-accelerated infrastructure:
+
+* **Platform:** AUGUR is designed to be deployed on Red Hat OpenShift and Red Hat OpenShift AI using dedicated GPU worker nodes (such as NVIDIA H100, A100, or L40 instances).
+
+* **AI Models:** AUGUR federates different tasks to specialized models, including a GraphRAG "chat" model (e.g., gpt-oss-120b), an "embedding" model for indexing (e.g., e5-mistral-7b-instruct), etc...
+
+* **Tooling:** AUGUR utilizes MLflow for evaluation/tracking, MinIO for S3-compatible data storage, and OpenShift Pipelines to automate the workflow.
 
 ## Required Software / Tested with
 
