@@ -14,8 +14,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from kfp import dsl
-from utils.kubeflow_utils import compile_all_and_exit
+from utils.kubeflow_utils import compile_all_and_exit, setup_logging
 from utils.pipeline_utils import uses_kfp
+
+setup_logging()
 
 if uses_kfp():
     from pipelines.kubeflow.data_generation import DataGenerationPipeline

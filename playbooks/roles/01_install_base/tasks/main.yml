@@ -1,0 +1,76 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks
+---
+# tasks file for install_base
+
+- name: Get current OpenShift user
+  ansible.builtin.command: oc whoami
+  register: oc_whoami
+  changed_when: false
+
+- name: Set requester fact
+  ansible.builtin.set_fact:
+    k8s_requester: "{{ oc_whoami.stdout | trim }}"
+
+- name: Apply namespace resource template
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'resources/helm/templates/namespace.yaml') | from_yaml }}"
+  vars:
+    namespace: "{{ kfp_namespace }}"
+    requester: "{{ k8s_requester }}"
+
+- name: Wait for OpenShift to inject service CA into odh-trusted-ca-bundle ConfigMap
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    name: odh-trusted-ca-bundle
+    namespace: "{{ kfp_namespace }}"
+  register: ca_bundle
+  until:
+    - ca_bundle.resources is defined
+    - ca_bundle.resources | length > 0
+    - ca_bundle.resources[0].data['ca-bundle.crt'] is defined
+    - "'CERTIFICATE' in ca_bundle.resources[0].data['ca-bundle.crt']"
+  retries: 60
+  delay: 5
+
+- name: Deploy base Helm chart release
+  kubernetes.core.helm:
+    name: agent-mesh-for-sw
+    chart_ref: "{{ maven_or_helm_path | default('resources/helm') }}"
+    release_namespace: "{{ kfp_namespace }}"
+    create_namespace: true
+    disable_hooks: true
+    values:
+      namespace: "{{ kfp_namespace }}"
+      requester: "{{ k8s_requester }}"
+      repoUrl: "{{ git_repo_url }}"
+      repoRef: "{{ git_repo_branch }}"
+      minio:
+        rootUser: "{{ aws_access_key_id }}"
+        rootPassword: "{{ aws_secret_access_key }}"
+        image: "{{ minio_image }}"
+      dataGeneration:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_data_generation_base_image_name }}"
+          tag: "{{ kfp_data_generation_base_image_tag }}"
+      graphrag:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_indexing_base_image_name }}"
+          tag: "{{ kfp_indexing_base_image_tag }}"
+      analysis:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_analysis_base_image_name }}"
+          tag: "{{ kfp_analysis_base_image_tag }}"
+      pipelineTools:
+        image:
+          registry: "{{ kfp_image_registry }}"
+          name: "{{ kfp_pipeline_tools_image_name }}"
+          tag: "{{ kfp_pipeline_tools_image_tag }}"
+      clusterDomain: "{{ cluster_domain }}"
+      tls:
+        enableVerification: "{{ enable_tls_verification | default(false) }}"
+
+...

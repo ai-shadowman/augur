@@ -24,7 +24,10 @@ install:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Creating namespace $$KFP_NAMESPACE..." && \
-	sed "s|{{ .Values.namespace }}|$$KFP_NAMESPACE|g; s|{{ .Values.requester }}|$$(oc whoami)|g" resources/helm/templates/namespace.yaml | oc apply -f - && \
+	helm template agent-mesh-for-sw resources/helm \
+             --set namespace="$$KFP_NAMESPACE" \
+             --set requester="$$(oc whoami)" \
+             -s templates/namespace.yaml | oc apply -f - && \
 	\
 	echo "==> Waiting for OpenShift to inject service CA into odh-trusted-ca-bundle..." && \
 	until oc get configmap odh-trusted-ca-bundle -n $$KFP_NAMESPACE \
@@ -42,7 +45,8 @@ install:
 		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set minio.rootUser="$$AWS_ACCESS_KEY_ID" \
 		--set minio.rootPassword="$$AWS_SECRET_ACCESS_KEY" \
-		--set minio.image="$$MINIO_IMAGE" \
+		--set minio.image="$${MINIO_IMAGE:-docker.io/pgsty/silo:latest}" \
+		--set minio.mcImage="$${MINIO_MC_IMAGE:-docker.io/pgsty/mc:latest}" \
 		--set dataGeneration.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set dataGeneration.image.name="$$KFP_DATA_GENERATION_BASE_IMAGE_NAME" \
 		--set dataGeneration.image.tag="$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" \
@@ -294,6 +298,7 @@ deploy-otel:
 		--set minio.endpoint=http://minio-service.$$KFP_NAMESPACE.svc.cluster.local:9000 \
 		--set minio.rootUser=$$AWS_ACCESS_KEY_ID \
 		--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
+		--set minio.mcImage="$${MINIO_MC_IMAGE:-docker.io/pgsty/mc:latest}" \
 		-s templates/create-tempo-bucket-job.yaml | oc apply -f - && \
 	oc wait job/create-tempo-bucket -n $$OTEL_NAMESPACE --for=condition=complete --timeout=120s && \
 	oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
