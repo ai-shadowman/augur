@@ -8,8 +8,11 @@ ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
 RUN mkdir -p /opt/app-root/src/tiktoken_cache
 COPY --chown=1001:0 cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
+ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
+
 COPY requirements.txt ./requirements.txt
 
-RUN pip install --upgrade pip \
+RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
+	pip install --upgrade pip \
 	&& pip install -r requirements.txt
 

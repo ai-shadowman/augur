@@ -9,9 +9,15 @@ ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
 RUN mkdir -p /opt/app-root/src/tiktoken_cache
 COPY --chown=1001:0 resources/images/data-analysis/cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
+ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
+
 COPY --chown=1001:0 resources/images/data-analysis/requirements.txt ./requirements.txt
+
+RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
+	pip install --upgrade pip \
+	&& pip install -r requirements.txt
+
 COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
 
-RUN pip install --no-cache-dir --upgrade pip \
-	&& pip install --no-cache-dir -r requirements.txt \
-	&& pip install --no-cache-dir ./workflows/examples/code_understanding
+RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
+	pip install ./workflows/examples/code_understanding
