@@ -179,6 +179,7 @@ In Kubeflow, the three pipelines run in separate pods:
 | **Pipelines (KFP)** | `pipelines/kubeflow/data_generation.py` | **MODIFIED** | Added duration and token tracking to KFP component ops; logs summaries to pod stdout. |
 | **Pipelines (KFP)** | `pipelines/kubeflow/indexing.py` | **MODIFIED** | Telemetry persistence and pod stdout summary logging in KFP indexing ops. |
 | **Pipelines (KFP)** | `pipelines/kubeflow/analysis.py` | **MODIFIED** | Telemetry reporting in KFP analysis ops. |
+| **Utilities** | `utils/code_metrics_tracker.py` | **NEW** | Codebase scope, file count & lines of code (SLOC, comments, blanks) tracker. See [`README_CODE_METRICS.md`](README_CODE_METRICS.md). |
 | **Utilities** | `utils/graphrag_utils.py` | **MODIFIED** | Instrumented `query_with_llm`, per-prompt timing in `generate_migration_report`, and telemetry section injection into Markdown. |
 | **Utilities** | `utils/kubeflow_utils.py` | **MODIFIED** | Updated `setup_logging()` to output directly to `sys.stdout` and remove `FileHandler`s so Kubernetes captures live metrics. |
 | **Evaluators** | `eval/mlflow_custom_evaluator.py` | **MODIFIED** | Instrumented judge evaluations with token tracking. |
@@ -186,6 +187,7 @@ In Kubeflow, the three pipelines run in separate pods:
 | **Infrastructure** | `resources/helm/templates/create-tempo-bucket-job.yaml` | **NEW** | Helm template for S3 bucket creation job. |
 | **Infrastructure** | `Makefile` | **MODIFIED** | Added `deploy-otel` target. |
 | **Infrastructure** | `.env.template` | **MODIFIED** | Added OpenTelemetry configuration variables. |
+| **Tests** | `tests/test_code_metrics_tracker.py` | **NEW** | 16 unit tests for CodeMetricsTracker. |
 | **Tests** | `tests/test_token_tracker.py` | **NEW** | 40+ unit tests for token tracker. |
 | **Tests** | `tests/test_duration_tracker.py` | **NEW** | 30+ unit tests for duration tracker. |
 | **Tests** | `tests/test_data_generation_telemetry.py` | **NEW** | End-to-end telemetry pipeline tests. |

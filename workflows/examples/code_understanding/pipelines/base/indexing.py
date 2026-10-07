@@ -72,6 +72,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in indexing: {e}")
+            try:
+                dur_tracker.record_pod_creation_overhead(stage="Indexing")
+            except Exception as e:
+                logging.debug(f"Failed to record pod creation overhead in indexing: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker handling in indexing: {e}")
 
@@ -94,17 +98,34 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in indexing: {e}")
 
-        # Immediately preserve prior durations.json and tokens.json in graphrag_source_path
+        code_tracker = None
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance()
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            git_slug = git_slug or code_tracker.git_slug
+            git_repo = git_repo or code_tracker.git_repo
+            code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
+        except Exception as e:
+            logging.debug("Code metrics handling in indexing: %s", e)
+
+        # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
         if dur_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     dur_tracker.save_to_file(os.path.join(d, "durations.json"))
                 except Exception:
                     pass
         if token_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
+                except Exception:
+                    pass
+        if code_tracker and code_tracker.total_repo_files > 0:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
                 except Exception:
                     pass
 
@@ -122,7 +143,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in ["durations.json", "tokens.json"]:
+                for fname in ["durations.json", "tokens.json", "project_metrics.json"]:
                     fpath = os.path.join(f"{graphrag_source_path}/input", fname)
                     if os.path.exists(fpath):
                         try:
@@ -135,7 +156,15 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                         f"No .txt files found in codebase input directory ({graphrag_source_path}/input) "
                         f"for git_slug='{git_slug}'. Ensure data generation produced code files."
                     )
-            cm_exec = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing Execution") if dur_tracker else nullcontext()
+            cm_exec = (
+                dur_tracker.measure(
+                    stage="Indexing",
+                    step="GraphRAG Indexing Execution",
+                    metadata={"is_aggregate": True, "is_parent": True},
+                )
+                if dur_tracker
+                else nullcontext()
+            )
             with cm_exec:
                 logging.info(f"Running index for git_slug={git_slug}, multi_repo={multi_repo}...")
                 run_graphrag(graphrag_source_path)
@@ -188,6 +217,23 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     logging.info("\n" + summary)
                 except Exception as e:
                     logging.debug(f"Failed to log token summary: {e}")
+
+            if code_tracker and code_tracker.total_repo_files > 0:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                    try:
+                        code_tracker.save_to_file(os.path.join(save_dir, "project_metrics.json"))
+                    except Exception as e:
+                        logging.debug(f"Failed to save code metrics to {save_dir}: {e}")
+                try:
+                    code_tracker.log_to_mlflow()
+                    code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload code metrics to MLflow in indexing: {e}")
+                try:
+                    summary = code_tracker.format_summary()
+                    logging.info("\n" + summary)
+                except Exception as e:
+                    logging.debug(f"Failed to log code metrics summary: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
@@ -244,30 +290,72 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
                             multi_repo: bool = False):
     """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""
     import os
-
+    from pipelines.base.data_generation import generate_git_slug
     from eval.default_custom_evaluator import DefaultCustomEvaluator
 
     logging.info("Starting GraphRAG index evaluation...")
 
-    try:
-        try:
-            from utils.duration_tracker import DurationTracker
-            dur_tracker = DurationTracker.get_instance()
-        except Exception:
-            dur_tracker = None
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
+    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-        eval_cm = dur_tracker.measure(stage="Indexing", step="Evaluate Index") if dur_tracker else nullcontext()
+    dur_tracker = None
+    try:
+        from utils.duration_tracker import DurationTracker, find_all_telemetry_files
+        dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+
+        candidate_dirs = [
+            graphrag_source_path,
+            os.path.join(graphrag_source_path, "output"),
+            os.path.join(graphrag_source_path, "input"),
+        ]
+        for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
+            dur_tracker.load_and_merge(dur_file, current_stage="Evaluation")
+            if not git_slug and dur_tracker.git_slug:
+                git_slug = dur_tracker.git_slug
+            if not git_repo and dur_tracker.git_repo:
+                git_repo = dur_tracker.git_repo
+        try:
+            dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Evaluation")
+        except Exception as e:
+            logging.debug(f"Failed to download durations from MLflow in evaluation: {e}")
+        try:
+            dur_tracker.record_pod_creation_overhead(stage="Evaluation")
+        except Exception as e:
+            logging.debug(f"Failed to record pod creation overhead in evaluation: {e}")
+    except Exception as e:
+        logging.debug(f"DurationTracker handling in evaluate_graphrag_index: {e}")
+
+    try:
+        already_measuring = False
+        if dur_tracker and hasattr(dur_tracker, "_active_measurements"):
+            already_measuring = any(
+                m.get("step") == "GraphRAG Evaluation" for m in dur_tracker._active_measurements
+            )
+
+        eval_cm = nullcontext() if (not dur_tracker or already_measuring) else dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation")
         with eval_cm:
             results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
                                                                      git_repo, git_branch,
                                                                      multi_repo=multi_repo)
-            if dur_tracker:
-                try:
-                    dur_tracker.log_to_mlflow()
-                except Exception as e:
-                    logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
         logging.info("GraphRAG index evaluation complete.")
+
+        if dur_tracker:
+            for save_dir in [graphrag_source_path, os.path.join(graphrag_source_path, "output")]:
+                try:
+                    dur_tracker.save_to_file(os.path.join(save_dir, "durations.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save durations to {save_dir}: {e}")
+            try:
+                dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"Failed to upload evaluation durations to MLflow: {e}")
+            try:
+                summary = dur_tracker.format_summary()
+                logging.info("\n" + summary)
+            except Exception as e:
+                logging.debug(f"Failed to log duration summary in evaluation: {e}")
 
         return results
 

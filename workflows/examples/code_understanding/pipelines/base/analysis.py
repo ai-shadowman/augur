@@ -72,6 +72,10 @@ class AnalysisPipeline:
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in analysis: {e}")
+            try:
+                dur_tracker.record_pod_creation_overhead(stage="Analysis")
+            except Exception as e:
+                logging.debug(f"Failed to record pod creation overhead in analysis: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker handling in analysis: {e}")
 
@@ -98,9 +102,23 @@ class AnalysisPipeline:
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in analysis: {e}")
 
+        code_tracker = None
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            git_slug = git_slug or code_tracker.git_slug
+            git_repo = git_repo or code_tracker.git_repo
+            code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in analysis: {e}")
+
         report = asyncio.run(analyzer.generate_migration_report())
 
-        # Safeguard: ensure token and duration summaries are present in the markdown report
+        # Safeguard: ensure telemetry summaries are present in the final report
+        if code_tracker and "### Project Codebase & Scope Summary" not in report:
+            report = _inject_section(report, code_tracker.format_markdown_section())
+
         if analyzer.token_tracker and "### LLM Token Usage & Cost Summary" not in report:
             report = _inject_section(report, analyzer.token_tracker.format_markdown_section())
 
@@ -117,6 +135,15 @@ class AnalysisPipeline:
                 dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
             except Exception as e:
                 logging.debug(f"Failed to upload duration metrics to MLflow: {e}")
+
+        if code_tracker:
+            try:
+                code_tracker.log_to_mlflow()
+                code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
+                summary = code_tracker.format_summary()
+                logging.info("\n" + summary)
+            except Exception as e:
+                logging.debug(f"Failed to upload/log code metrics in analysis: {e}")
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 

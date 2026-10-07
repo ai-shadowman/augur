@@ -1,0 +1,200 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: augur-buildconfigs
+  annotations:
+    description: "OpenShift BuildConfigs for Augur container images pushing to Quay.io"
+    tags: "augur,buildconfig,quay"
+parameters:
+  - name: AUGUR_GIT_REPO_URL
+    displayName: Git Repository URL
+    description: URL of the Git repository containing Augur code.
+    value: "https://github.com/ai-shadowman/augur.git"
+    required: true
+  - name: AUGUR_GIT_REPO_BRANCH
+    displayName: Git Branch
+    description: Git branch or ref to build.
+    value: "main"
+    required: true
+  - name: QUAY_REGISTRY_ORG
+    displayName: Quay Registry Organization or Username
+    description: Quay.io organization or user namespace (e.g. ai-shadowman or dbrletic).
+    value: "ai-shadowman"
+    required: true
+  - name: IMAGE_TAG
+    displayName: Image Tag
+    description: Target container image tag.
+    value: "latest"
+    required: true
+  - name: QUAY_SECRET_NAME
+    displayName: Quay Push Secret Name
+    description: Name of the kubernetes.io/dockerconfigjson secret used to authenticate to Quay.io.
+    value: "quay-secret"
+    required: true
+  - name: BASE_IMAGE_DATASCIENCE
+    displayName: Base Datascience Workbench Image
+    description: Base image for data-generation, data-indexing, and data-analysis.
+    value: "quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-python-3.11-2024b-20250904-858c895"
+    required: false
+  - name: BASE_IMAGE_UBI_PYTHON
+    displayName: Base Python UBI Image
+    description: Base image for pipeline-tools.
+    value: "registry.access.redhat.com/ubi9/python-311"
+    required: false
+
+objects:
+  # ---------------------------------------------------------------------------
+  # 1. Data Generation Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-generation
+      labels:
+        app: augur
+        component: data-generation
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: ${AUGUR_GIT_REPO_URL}
+          ref: ${AUGUR_GIT_REPO_BRANCH}
+        contextDir: resources/images/data-generation
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile
+          buildArgs:
+            - name: BASE_IMAGE
+              value: ${BASE_IMAGE_DATASCIENCE}
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/${QUAY_REGISTRY_ORG}/data-generation:${IMAGE_TAG}
+        pushSecret:
+          name: ${QUAY_SECRET_NAME}
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 2. Data Indexing Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-indexing
+      labels:
+        app: augur
+        component: data-indexing
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: ${AUGUR_GIT_REPO_URL}
+          ref: ${AUGUR_GIT_REPO_BRANCH}
+        contextDir: resources/images/data-indexing
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile
+          buildArgs:
+            - name: BASE_IMAGE
+              value: ${BASE_IMAGE_DATASCIENCE}
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/${QUAY_REGISTRY_ORG}/data-indexing:${IMAGE_TAG}
+        pushSecret:
+          name: ${QUAY_SECRET_NAME}
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 3. Data Analysis Image (Build context is repo root)
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-analysis
+      labels:
+        app: augur
+        component: data-analysis
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: ${AUGUR_GIT_REPO_URL}
+          ref: ${AUGUR_GIT_REPO_BRANCH}
+        contextDir: ""
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: resources/images/data-analysis/Containerfile
+          buildArgs:
+            - name: BASE_IMAGE
+              value: ${BASE_IMAGE_DATASCIENCE}
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/${QUAY_REGISTRY_ORG}/data-analysis:${IMAGE_TAG}
+        pushSecret:
+          name: ${QUAY_SECRET_NAME}
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 4. Pipeline Tools Image (Build context is repo root)
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: pipeline-tools
+      labels:
+        app: augur
+        component: pipeline-tools
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: ${AUGUR_GIT_REPO_URL}
+          ref: ${AUGUR_GIT_REPO_BRANCH}
+        contextDir: ""
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: resources/images/pipeline-tools/Containerfile
+          buildArgs:
+            - name: BASE_IMAGE
+              value: ${BASE_IMAGE_UBI_PYTHON}
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/${QUAY_REGISTRY_ORG}/pipeline-tools:${IMAGE_TAG}
+        pushSecret:
+          name: ${QUAY_SECRET_NAME}
+      resources:
+        limits:
+          cpu: "2"
+          memory: 4Gi
+        requests:
+          cpu: 500m
+          memory: 1Gi

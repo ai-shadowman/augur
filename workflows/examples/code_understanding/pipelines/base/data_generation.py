@@ -554,6 +554,12 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             t_tr.save_to_file(os.path.join(target_path, "tokens.json"))
         except Exception:
             pass
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            c_tr = CodeMetricsTracker.get_instance()
+            c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
+        except Exception:
+            pass
 
         log_meta_cm = dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})") if dur_tracker else nullcontext()
         with log_meta_cm:
@@ -655,19 +661,52 @@ class DataGenerationPipeline:
             dur_tracker = None
 
         try:
-            total_cm = dur_tracker.measure(
-                stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}
-            ) if dur_tracker else nullcontext()
-            with total_cm:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            CodeMetricsTracker.reset_instance()
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+        except Exception:
+            code_tracker = None
+
+        try:
+            if dur_tracker:
+                try:
+                    dur_tracker.record_pod_creation_overhead(stage="Data Generation")
+                except Exception as e:
+                    logging.debug(f"Failed to record pod creation overhead in data generation: {e}")
+                with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
+                    prepare_environment(source_path=source_path, target_path=target_path,
+                                        git_repo=git_repo, git_branch=git_branch)
+
+                    with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
+                        languages = detect_languages(source_path)
+
+                    if code_tracker:
+                        try:
+                            with dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics"):
+                                code_tracker.measure_repository(source_path, languages=languages)
+                        except Exception as e:
+                            logging.debug(f"Code metrics measurement failed: {e}")
+
+                    with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
+                        external_metadata = load_external_data(source_path)
+
+                    for language in languages:
+                        for config in [False, True]:
+                            generate_code_and_meta(
+                                git_repo=git_repo, git_branch=git_branch,
+                                language=language, source_path=source_path, target_path=target_path,
+                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                            )
+            else:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
-                ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
-                detect_cm = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
-                with detect_cm:
-                    languages = detect_languages(source_path, ignore_policy)
-                metadata_cm = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
-                with metadata_cm:
-                    external_metadata = load_external_data(source_path, ignore_policy)
+                languages = detect_languages(source_path)
+                if code_tracker:
+                    try:
+                        code_tracker.measure_repository(source_path, languages=languages)
+                    except Exception as e:
+                        logging.debug(f"Code metrics measurement failed: {e}")
+                external_metadata = load_external_data(source_path)
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(
@@ -744,6 +783,17 @@ class DataGenerationPipeline:
                 logging.info("\n" + summary)
             except Exception as e:
                 logging.debug(f"Failed to print token summary in data generation pipeline: {e}")
+
+            try:
+                from utils.code_metrics_tracker import CodeMetricsTracker
+                code_tr = CodeMetricsTracker.get_instance()
+                if target_path:
+                    code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
+                code_tr.log_to_mlflow()
+                code_tr.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                logging.info("\n" + code_tr.format_summary())
+            except Exception as e:
+                logging.debug("Code metrics handling in data generation: %s", e)
 
         return result
 
