@@ -648,6 +648,10 @@ class DataGenerationPipeline:
 
         try:
             if dur_tracker:
+                try:
+                    dur_tracker.record_pod_creation_overhead(stage="Data Generation")
+                except Exception as e:
+                    logging.debug(f"Failed to record pod creation overhead in data generation: {e}")
                 with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
                     prepare_environment(source_path=source_path, target_path=target_path,
                                         git_repo=git_repo, git_branch=git_branch)

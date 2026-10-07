@@ -238,6 +238,7 @@ class DurationTracker:
             except Exception as e:
                 logging.debug("Could not retrieve pod creation time via K8s API: %s", e)
 
+        recorded_total = 0.0
         if k8s_pull_duration is not None and k8s_pull_duration >= min_threshold_seconds:
             self.record_step(
                 stage=stage,
@@ -245,14 +246,19 @@ class DurationTracker:
                 duration=k8s_pull_duration,
                 metadata={"is_pod_overhead": True, "source": "k8s_api"},
             )
-            if k8s_startup_duration is not None and k8s_startup_duration >= min_threshold_seconds:
-                self.record_step(
-                    stage=stage,
-                    step="Container Startup & Setup",
-                    duration=k8s_startup_duration,
-                    metadata={"is_pod_overhead": True, "source": "k8s_api"},
-                )
-            return k8s_pull_duration + (k8s_startup_duration or 0.0)
+            recorded_total += k8s_pull_duration
+
+        if k8s_startup_duration is not None and k8s_startup_duration >= min_threshold_seconds:
+            self.record_step(
+                stage=stage,
+                step="Container Startup & Setup",
+                duration=k8s_startup_duration,
+                metadata={"is_pod_overhead": True, "source": "k8s_api"},
+            )
+            recorded_total += k8s_startup_duration
+
+        if recorded_total > 0.0:
+            return recorded_total
 
         # 2. Fallback: Inter-Stage Telemetry Delta
         prior_end_times = [
