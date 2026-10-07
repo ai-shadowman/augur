@@ -3,6 +3,7 @@ import os
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+from utils.request_timing import timing_span
 
 from utils.kubeflow_utils import setup_logging
 setup_logging()
@@ -257,7 +258,8 @@ def get_parsed_code_metadata(df, language, config=False):
 
         converted_df = None
         try:
-            converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
+            with timing_span("sdg.generate_batch", "batch"):
+                converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens

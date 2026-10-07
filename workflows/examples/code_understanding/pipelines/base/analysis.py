@@ -9,6 +9,7 @@ from utils.kubeflow_utils import setup_logging
 setup_logging()
 
 from utils.otel_utils import enable_telemetry
+from utils.request_timing import timed, timing_span
 
 
 def _inject_section(report: str, section_md: str) -> str:
@@ -152,6 +153,7 @@ class AnalysisPipeline:
 
         return self.run(graphrag_source_path=graphrag_source_path, multi_repo=True)
 
+    @timed("analysis.adhoc_invocation")
     @enable_telemetry
     def run_adhoc_query(
         self,
@@ -178,12 +180,13 @@ class AnalysisPipeline:
         adhoc_results_header = "\n---\n\n# ##################ADHOC RESULTS##################\n"
 
         try:
-            DependencyAnalyzer.download_graphrag_directory(
-                download_dir=graphrag_source_path,
-                git_slug=git_slug,
-                multi_repo=use_multi_repo,
-                git_repo=git_repo,
-            )
+            with timing_span("analysis.index_download", "io"):
+                DependencyAnalyzer.download_graphrag_directory(
+                    download_dir=graphrag_source_path,
+                    git_slug=git_slug,
+                    multi_repo=use_multi_repo,
+                    git_repo=git_repo,
+                )
         except Exception:
             msg = (
                 "Could not perform query: "
@@ -195,7 +198,8 @@ class AnalysisPipeline:
             print(adhoc_results_header, flush=True)
             return msg
 
-        analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=use_multi_repo)
+        with timing_span("analysis.analyzer_setup", "io"):
+            analyzer = DependencyAnalyzer(graphrag_source_path, git_slug=git_slug, multi_repo=use_multi_repo)
 
         postamble = "Provide as much detail as possible. Include the git repo url(s) in the report."
 
