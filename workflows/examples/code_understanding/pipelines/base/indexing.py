@@ -72,6 +72,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in indexing: {e}")
+            try:
+                dur_tracker.record_pod_creation_overhead(stage="Indexing")
+            except Exception as e:
+                logging.debug(f"Failed to record pod creation overhead in indexing: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker handling in indexing: {e}")
 
@@ -298,12 +302,18 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
         except Exception:
             dur_tracker = None
 
-        eval_cm = dur_tracker.measure(stage="Indexing", step="Evaluate Index") if dur_tracker else nullcontext()
+        already_measuring = False
+        if dur_tracker and hasattr(dur_tracker, "_active_measurements"):
+            already_measuring = any(
+                m.get("step") == "GraphRAG Evaluation" for m in dur_tracker._active_measurements
+            )
+
+        eval_cm = nullcontext() if (not dur_tracker or already_measuring) else dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation")
         with eval_cm:
             results = DefaultCustomEvaluator().evaluate_with_dataset(graphrag_source_path,
                                                                      git_repo, git_branch,
                                                                      multi_repo=multi_repo)
-            if dur_tracker:
+            if dur_tracker and not already_measuring:
                 try:
                     dur_tracker.log_to_mlflow()
                 except Exception as e:

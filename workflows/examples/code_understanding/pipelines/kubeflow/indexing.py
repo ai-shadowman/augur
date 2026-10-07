@@ -106,11 +106,14 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     import logging
     import os
     import pandas as pd
+    from contextlib import nullcontext
+    from pipelines.base.data_generation import generate_git_slug
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
     git_repo = git_repo or os.getenv("GIT_REPO", "")
     git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
+    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
     if not git_repo or multi_repo:
         logging.info("Skipping evaluation: git_repo not provided or multi_repo=True.")
@@ -119,17 +122,64 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
 
     from pipelines.base.indexing import evaluate_graphrag_index
 
-    with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
+    dur_tracker = None
+    try:
+        from utils.duration_tracker import DurationTracker, find_all_telemetry_files
+        dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+    except Exception as e:
+        logging.debug(f"DurationTracker initialization skipped in graphrag_evaluation_op: {e}")
 
-        results = evaluate_graphrag_index(
-            graphrag_source_path=tmp_graphrag,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            multi_repo=multi_repo,
-        )
+    with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
+        if dur_tracker:
+            try:
+                candidate_dirs = [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]
+                for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
+                    dur_tracker.load_and_merge(dur_file, current_stage="Evaluation")
+            except Exception as e:
+                logging.debug(f"Failed to load prior durations in graphrag_evaluation_op: {e}")
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Evaluation")
+            except Exception as e:
+                logging.debug(f"Failed to download durations from MLflow in evaluation: {e}")
+
+            try:
+                dur_tracker.record_pod_creation_overhead(stage="Evaluation")
+            except Exception as e:
+                logging.debug(f"Failed to record pod creation overhead in evaluation: {e}")
+
+        cm_eval = dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation") if dur_tracker else nullcontext()
+        with cm_eval:
+            results = evaluate_graphrag_index(
+                graphrag_source_path=tmp_graphrag,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
 
     df = results if isinstance(results, pd.DataFrame) else pd.DataFrame(results or [])
     df.to_csv(eval_results.path, index=False)
+
+    if dur_tracker:
+        save_dirs = [os.path.dirname(eval_results.path)]
+        if not os.path.splitext(eval_results.path)[1]:
+            save_dirs.append(eval_results.path)
+        for sdir in save_dirs:
+            try:
+                os.makedirs(sdir, exist_ok=True)
+                dur_tracker.save_to_file(os.path.join(sdir, "durations.json"))
+            except Exception as e:
+                logging.debug(f"Failed to persist durations.json to {sdir}: {e}")
+
+        try:
+            dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
+        except Exception as e:
+            logging.debug(f"Failed to upload durations to MLflow in evaluation: {e}")
+
+        try:
+            summary = dur_tracker.format_summary()
+            logging.info("\n" + summary)
+        except Exception as e:
+            logging.debug(f"Failed to print duration summary in evaluation pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

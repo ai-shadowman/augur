@@ -19,10 +19,15 @@ class DurationTracker:
     _global_instance: Optional["DurationTracker"] = None
 
     @classmethod
-    def get_instance(cls) -> "DurationTracker":
+    def get_instance(cls, git_slug: Optional[str] = None, git_repo: Optional[str] = None, **kwargs) -> "DurationTracker":
         """Returns the shared global DurationTracker instance."""
         if cls._global_instance is None:
-            cls._global_instance = cls()
+            cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, **kwargs)
+        else:
+            if git_slug and not cls._global_instance.git_slug:
+                cls._global_instance.git_slug = git_slug
+            if git_repo and not cls._global_instance.git_repo:
+                cls._global_instance.git_repo = git_repo
         return cls._global_instance
 
     @classmethod
@@ -168,6 +173,110 @@ class DurationTracker:
         """Returns a copy of all recorded steps."""
         return list(self.records)
 
+    def record_pod_creation_overhead(self, stage: str, min_threshold_seconds: float = 2.0) -> Optional[float]:
+        """Calculates and records the pod creation and startup overhead for the specified stage.
+
+        Attempts to query the in-cluster Kubernetes API to distinguish pod scheduling & image pulling
+        from container initialization. If running outside Kubernetes or lacking RBAC permissions,
+        falls back to calculating the inter-stage delta between current execution time and the
+        completion of preceding stages.
+
+        Args:
+            stage: The pipeline stage name (e.g. "Indexing", "Evaluation", "Analysis").
+            min_threshold_seconds: Minimum duration required to record the step (defaults to 2.0s
+                                   to avoid recording sub-second noise during local runs).
+
+        Returns:
+            Total overhead recorded in seconds, or None if no overhead exceeded the threshold.
+        """
+        import os
+        import time
+
+        now = time.time()
+        k8s_pull_duration = None
+        k8s_startup_duration = None
+
+        # Do not record pod overhead more than once per stage
+        for rec in self.records:
+            if rec.get("stage", "").lower() == stage.lower() and rec.get("metadata", {}).get("is_pod_overhead"):
+                return None
+
+        # 1. Attempt Kubernetes In-Cluster Pod Spec Query
+        sa_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        if os.path.exists(sa_token):
+            try:
+                from kubernetes import client, config
+                config.load_incluster_config()
+                v1 = client.CoreV1Api()
+                pod_name = os.environ.get("HOSTNAME")
+                ns_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+                namespace = "default"
+                if os.path.exists(ns_file):
+                    with open(ns_file, "r") as f:
+                        namespace = f.read().strip()
+
+                if pod_name:
+                    pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                    created_at = pod.metadata.creation_timestamp
+                    if created_at:
+                        created_ts = created_at.timestamp()
+                        main_c = next(
+                            (c for c in (pod.status.container_statuses or []) if c.name == "main"),
+                            None,
+                        )
+                        if (
+                            main_c
+                            and main_c.state
+                            and main_c.state.running
+                            and main_c.state.running.started_at
+                        ):
+                            started_ts = main_c.state.running.started_at.timestamp()
+                            k8s_pull_duration = max(0.0, started_ts - created_ts)
+                            k8s_startup_duration = max(0.0, now - started_ts)
+                        else:
+                            k8s_pull_duration = max(0.0, now - created_ts)
+            except Exception as e:
+                logging.debug("Could not retrieve pod creation time via K8s API: %s", e)
+
+        if k8s_pull_duration is not None and k8s_pull_duration >= min_threshold_seconds:
+            self.record_step(
+                stage=stage,
+                step="Pod Scheduling & Image Pull",
+                duration=k8s_pull_duration,
+                metadata={"is_pod_overhead": True, "source": "k8s_api"},
+            )
+            if k8s_startup_duration is not None and k8s_startup_duration >= min_threshold_seconds:
+                self.record_step(
+                    stage=stage,
+                    step="Container Startup & Setup",
+                    duration=k8s_startup_duration,
+                    metadata={"is_pod_overhead": True, "source": "k8s_api"},
+                )
+            return k8s_pull_duration + (k8s_startup_duration or 0.0)
+
+        # 2. Fallback: Inter-Stage Telemetry Delta
+        prior_end_times = [
+            rec.get("end_time")
+            for rec in self.records
+            if rec.get("stage", "").lower() != stage.lower() and rec.get("end_time")
+        ]
+        if prior_end_times:
+            latest_prior_end = max(prior_end_times)
+            if now > latest_prior_end:
+                delta = now - latest_prior_end
+                if delta >= min_threshold_seconds:
+                    self.record_step(
+                        stage=stage,
+                        step="Pod Creation & Startup",
+                        duration=delta,
+                        start_time=latest_prior_end,
+                        end_time=now,
+                        metadata={"is_pod_overhead": True, "source": "inter_stage_delta"},
+                    )
+                    return delta
+
+        return None
+
     @staticmethod
     def _is_aggregate_step(rec: Dict[str, Any], all_records: Optional[List[Dict[str, Any]]] = None) -> bool:
         """Determines if a step is a parent or summary aggregate to avoid double-counting in totals."""
@@ -197,7 +306,7 @@ class DurationTracker:
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
         """Returns a mapping of stage names to total elapsed seconds in canonical stage order,
         avoiding double-counting parent/aggregate steps when sub-steps exist."""
-        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
+        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_recs = self.get_all_records(include_active=include_active)
         stages: Dict[str, List[Dict[str, Any]]] = {}
         for rec in all_recs:
@@ -238,7 +347,7 @@ class DurationTracker:
 
     def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
-        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
+        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
@@ -307,7 +416,7 @@ class DurationTracker:
 
     def format_markdown_table(self, include_active: bool = False) -> str:
         """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
-        stage_order = {"data generation": 1, "indexing": 2, "analysis": 3}
+        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         records = self.get_all_records(include_active=include_active)
         if not records:
             return ""
@@ -612,6 +721,8 @@ class DurationTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
+                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+            elif current_stage and current_stage.lower() == "evaluation":
                 upstream_targets = ["Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
                 upstream_targets = ["Data Generation"]

@@ -71,6 +71,10 @@ class AnalysisPipeline:
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in analysis: {e}")
+            try:
+                dur_tracker.record_pod_creation_overhead(stage="Analysis")
+            except Exception as e:
+                logging.debug(f"Failed to record pod creation overhead in analysis: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker handling in analysis: {e}")
 

@@ -979,6 +979,8 @@ class TokenCostTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
+                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+            elif current_stage and current_stage.lower() == "evaluation":
                 upstream_targets = ["Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
                 upstream_targets = ["Data Generation"]

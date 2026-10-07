@@ -29,6 +29,16 @@ if isinstance(mlflow_mock, MagicMock):
     mlflow_mock.get_tracking_uri.return_value = "http://localhost:5000"
     mlflow_mock.active_run.return_value = None
 
+pandas_mock = sys.modules.get("pandas")
+if isinstance(pandas_mock, MagicMock):
+    class MockDataFrame:
+        def __init__(self, data=None):
+            self.data = data
+        def to_csv(self, path, index=False):
+            with open(path, "w") as f:
+                f.write("mock_csv")
+    pandas_mock.DataFrame = MockDataFrame
+
 from utils.duration_tracker import (
     DurationTracker,
     track_duration,
@@ -1050,6 +1060,204 @@ class TestDurationTracker(unittest.TestCase):
         summary = tracker.format_summary()
         self.assertIn("GraphRAG Indexing", summary)
         self.assertNotIn("GraphRAG Indexing Execution", summary)
+
+    def test_record_pod_creation_overhead_inter_stage_delta(self):
+        """Verify record_pod_creation_overhead calculates inter-stage delta when prior stage records exist."""
+        tracker = DurationTracker()
+        now = time.time()
+        # Prior stage Indexing completed 25 seconds ago
+        tracker.record_step("Indexing", "Final Step", 10.0, start_time=now - 35.0, end_time=now - 25.0)
+
+        overhead = tracker.record_pod_creation_overhead("Evaluation", min_threshold_seconds=2.0)
+        self.assertIsNotNone(overhead)
+        self.assertGreaterEqual(overhead, 24.0)
+
+        # Verify step recorded
+        eval_recs = [r for r in tracker.records if r["stage"] == "Evaluation"]
+        self.assertEqual(len(eval_recs), 1)
+        self.assertEqual(eval_recs[0]["step"], "Pod Creation & Startup")
+        self.assertTrue(eval_recs[0]["metadata"].get("is_pod_overhead"))
+        self.assertEqual(eval_recs[0]["metadata"].get("source"), "inter_stage_delta")
+
+        # Second call immediately after should be below min_threshold (since now - end_time is ~0)
+        overhead2 = tracker.record_pod_creation_overhead("Evaluation", min_threshold_seconds=2.0)
+        self.assertIsNone(overhead2)
+
+    def test_record_pod_creation_overhead_k8s_api(self):
+        """Verify record_pod_creation_overhead extracts image pull time from Kubernetes API."""
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock, patch
+
+        tracker = DurationTracker()
+        created_dt = datetime.fromtimestamp(1000.0, tz=timezone.utc)
+        started_dt = datetime.fromtimestamp(1120.0, tz=timezone.utc)
+
+        mock_pod = MagicMock()
+        mock_pod.metadata.creation_timestamp = created_dt
+        mock_container = MagicMock()
+        mock_container.name = "main"
+        mock_container.state.running.started_at = started_dt
+        mock_pod.status.container_statuses = [mock_container]
+
+        mock_v1 = MagicMock()
+        mock_v1.read_namespaced_pod.return_value = mock_pod
+
+        mock_k8s = MagicMock()
+        mock_k8s.client.CoreV1Api.return_value = mock_v1
+
+        with patch("os.path.exists", side_effect=lambda p: True if "serviceaccount" in p else False), \
+             patch("builtins.open", unittest.mock.mock_open(read_data="test-ns")), \
+             patch("os.environ.get", side_effect=lambda k, d=None: "pod-123" if k == "HOSTNAME" else d), \
+             patch("time.time", return_value=1125.0), \
+             patch.dict("sys.modules", {"kubernetes": mock_k8s, "kubernetes.client": mock_k8s.client, "kubernetes.config": mock_k8s.config}):
+
+            overhead = tracker.record_pod_creation_overhead("Indexing", min_threshold_seconds=2.0)
+            self.assertIsNotNone(overhead)
+            self.assertEqual(overhead, 125.0)  # 120s image pull + 5s container startup
+
+            steps = {r["step"]: r["duration"] for r in tracker.records if r["stage"] == "Indexing"}
+            self.assertEqual(steps.get("Pod Scheduling & Image Pull"), 120.0)
+            self.assertEqual(steps.get("Container Startup & Setup"), 5.0)
+
+    def test_evaluation_stage_canonical_ordering_and_summary(self):
+        """Verify Evaluation stage is canonically ordered between Indexing and Analysis in reports."""
+        tracker = DurationTracker()
+        tracker.record_step("Analysis", "Prompt 1", 30.0)
+        tracker.record_step("Data Generation", "Checkout", 5.0)
+        tracker.record_step("Evaluation", "GraphRAG Evaluation", 120.0)
+        tracker.record_step("Indexing", "Extract Graph", 60.0)
+
+        stages = list(tracker.get_stage_durations().keys())
+        self.assertEqual(stages, ["Data Generation", "Indexing", "Evaluation", "Analysis"])
+
+        summary = tracker.format_summary()
+        self.assertIn("Evaluation", summary)
+        self.assertIn("GraphRAG Evaluation", summary)
+        self.assertIn("2m 0.0s", summary)
+
+        # Check line order in summary
+        idx_data = summary.index("Data Generation")
+        idx_index = summary.index("Indexing")
+        idx_eval = summary.index("Evaluation")
+        idx_analysis = summary.index("Analysis")
+        self.assertTrue(idx_data < idx_index < idx_eval < idx_analysis)
+
+        # Markdown table check (rows in table body)
+        md_table = tracker.format_markdown_table()
+        m_data = md_table.index("| **Data Generation** |")
+        m_index = md_table.index("| **Indexing** |")
+        m_eval = md_table.index("| **Evaluation** |")
+        m_analysis = md_table.index("| **Analysis** |")
+        self.assertTrue(m_data < m_index < m_eval < m_analysis)
+
+    def test_evaluate_graphrag_index_direct_and_wrapped(self):
+        """Verify evaluate_graphrag_index measures Evaluation and avoids duplicate when outer wrapped."""
+        from unittest.mock import MagicMock, patch
+
+        mock_evaluator = MagicMock()
+        mock_evaluator.evaluate_with_dataset.return_value = [{"metric": "score", "value": 0.95}]
+        mock_eval_module = MagicMock()
+        mock_eval_module.DefaultCustomEvaluator.return_value = mock_evaluator
+
+        with patch.dict("sys.modules", {"eval.default_custom_evaluator": mock_eval_module}):
+            from pipelines.base.indexing import evaluate_graphrag_index
+
+            tracker = DurationTracker.get_instance()
+            tracker.records.clear()
+
+            # 1. Direct call outside any wrapper
+            res = evaluate_graphrag_index("/mock/path", "test/repo", "main")
+            self.assertEqual(len(res), 1)
+
+            eval_steps = [r for r in tracker.records if r["stage"] == "Evaluation"]
+            self.assertEqual(len(eval_steps), 1)
+            self.assertEqual(eval_steps[0]["step"], "GraphRAG Evaluation")
+
+            # 2. Wrapped call inside outer dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation")
+            tracker.records.clear()
+            with tracker.measure(stage="Evaluation", step="GraphRAG Evaluation"):
+                res2 = evaluate_graphrag_index("/mock/path", "test/repo", "main")
+                self.assertEqual(len(res2), 1)
+
+            eval_steps = [r for r in tracker.records if r["stage"] == "Evaluation" and r["step"] == "GraphRAG Evaluation"]
+            # Must NOT be duplicated
+            self.assertEqual(len(eval_steps), 1)
+
+    def test_graphrag_evaluation_op_duration_tracking_and_persistence(self):
+        """Verify graphrag_evaluation_op wraps execution, logs summary, and persists durations.json."""
+        import tempfile
+        import shutil
+        from unittest.mock import MagicMock, patch
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Prepare mock input dataset
+            graphrag_input = MagicMock()
+            graphrag_input.path = os.path.join(temp_dir, "graphrag_input")
+            os.makedirs(graphrag_input.path, exist_ok=True)
+            # Seed with prior durations
+            prior_tracker = DurationTracker()
+            prior_tracker.record_step("Indexing", "Extract Graph", 45.0)
+            prior_tracker.save_to_file(os.path.join(graphrag_input.path, "durations.json"))
+
+            # Prepare mock output dataset
+            eval_output = MagicMock()
+            eval_output.path = os.path.join(temp_dir, "eval_output", "eval_results.csv")
+            os.makedirs(os.path.dirname(eval_output.path), exist_ok=True)
+
+            mock_evaluator = MagicMock()
+            mock_evaluator.evaluate_with_dataset.return_value = [{"metric": "f1", "value": 0.88}]
+            mock_eval_module = MagicMock()
+            mock_eval_module.DefaultCustomEvaluator.return_value = mock_evaluator
+
+            mock_kfp = MagicMock()
+            mock_dsl = MagicMock()
+            mock_dsl.component = lambda **kwargs: (lambda fn: fn)
+            mock_dsl.pipeline = lambda **kwargs: (lambda fn: fn)
+            mock_dsl.Input = MagicMock
+            mock_dsl.Output = MagicMock
+            mock_dsl.Dataset = MagicMock
+            mock_kfp.dsl = mock_dsl
+
+            mock_datagen = MagicMock()
+            mock_datagen.generate_git_slug.return_value = "test-repo-main"
+
+            from contextlib import contextmanager
+            @contextmanager
+            def mock_read(art):
+                yield art.path
+
+            with patch.dict("sys.modules", {
+                "eval.default_custom_evaluator": mock_eval_module,
+                "pipelines.base.data_generation": mock_datagen,
+                "kfp": mock_kfp,
+                "kfp.dsl": mock_dsl,
+            }), patch("utils.kubeflow_utils.read_from_input_artifact", side_effect=mock_read):
+                from pipelines.kubeflow.indexing import graphrag_evaluation_op
+
+                graphrag_evaluation_op(
+                    graphrag_dir=graphrag_input,
+                    eval_results=eval_output,
+                    git_repo="https://github.com/test/repo",
+                    git_branch="main",
+                    multi_repo=False,
+                )
+
+            # Check that eval_results.csv was written
+            self.assertTrue(os.path.exists(eval_output.path))
+
+            # Check that durations.json was persisted to output artifact directory
+            dur_file = os.path.join(os.path.dirname(eval_output.path), "durations.json")
+            self.assertTrue(os.path.exists(dur_file))
+
+            with open(dur_file, "r") as f:
+                saved_dur = json.load(f)
+
+            steps = {(r["stage"], r["step"]) for r in saved_dur.get("records", [])}
+            self.assertIn(("Indexing", "Extract Graph"), steps)
+            self.assertIn(("Evaluation", "GraphRAG Evaluation"), steps)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
