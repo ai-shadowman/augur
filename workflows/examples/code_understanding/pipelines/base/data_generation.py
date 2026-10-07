@@ -8,6 +8,11 @@ from utils.kubeflow_utils import setup_logging
 setup_logging()
 
 from utils.otel_utils import enable_telemetry
+from utils.repository_ignore import (
+    AUGURIGNORE_FILENAME,
+    RepositoryIgnoreError,
+    RepositoryIgnorePolicy,
+)
 
 
 def clone_from_repo(repo_url, 
@@ -27,11 +32,6 @@ def clone_from_repo(repo_url,
     try:
 
         Repo.clone_from(updated_repo_url, destination_path, branch=branch)
-
-        all_files = [os.path.join(root, f) for root, _, files in
-                     os.walk(destination_path) for f in files]
-
-        logging.debug(f"Files in code_dir: {all_files}")
 
         logging.info(f"Repository '{repo_url}' cloned successfully to '{destination_path}'.")
 
@@ -91,7 +91,7 @@ def prepare_environment(source_path: str,
 
 def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_branch: str,
                          language: str = "python", split_sections=True, config=False,
-                         multi_repo: bool = False):
+                         multi_repo: bool = False, ignore_policy=None):
     """Walks source_path and returns a DataFrame of source files for the given language."""
     from dotenv import load_dotenv
     import os
@@ -108,9 +108,15 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
         logging.info(f"Generating raw dataset for git repo={git_repo}, language={language}...")
         records = []
         excluded_dirs = code_utils.get_exclude_dirs_for_language(language)
+        ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
 
         for root, dirs, files in os.walk(source_path):
-            dirs[:] = [d for d in dirs if d not in excluded_dirs]
+            dirs[:] = ignore_policy.filter_directories(
+                root, dirs, built_in_names=excluded_dirs
+            )
+            files = ignore_policy.filter_files(
+                root, files, built_in_names={AUGURIGNORE_FILENAME}
+            )
             include_extensions = (
                 code_utils.get_config_file_extensions_for_language(language) if config
                 else code_utils.get_file_extensions_for_language(language)
@@ -272,18 +278,21 @@ def get_parsed_code_metadata(df, language, config=False):
         raise e
 
 
-def load_external_data(source_path: str) -> dict:
+def load_external_data(source_path: str, ignore_policy=None) -> dict:
     """Loads and merges all JSON files from source_path/.code_metadata/ into a single dict."""
     import os, json
     from utils import code_utils
 
     code_metadata_dir = os.path.join(source_path, code_utils.CODE_METADATA_DIR)
     result = {}
+    ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
 
     if not os.path.isdir(code_metadata_dir):
         return result
 
-    for root, _, files in os.walk(code_metadata_dir):
+    for root, dirs, files in os.walk(code_metadata_dir):
+        dirs[:] = ignore_policy.filter_directories(root, dirs)
+        files = ignore_policy.filter_files(root, files)
         for filename in files:
             try:
                 with open(os.path.join(root, filename), "r", encoding="utf-8") as f:
@@ -477,7 +486,8 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 @enable_telemetry
 def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
                             source_path: str, target_path: str, config: bool = False,
-                            multi_repo: bool = False, external_metadata: dict = None):
+                            multi_repo: bool = False, external_metadata: dict = None,
+                            ignore_policy=None):
     """Generates and saves code metadata for one language/config combination."""
     import json, traceback
     from loaders.default_asset_loader import DefaultAssetLoader
@@ -502,7 +512,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         parse_cm = dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})") if dur_tracker else nullcontext()
         with parse_cm:
             code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
-                                           language=language, config=config, multi_repo=multi_repo)
+                                           language=language, config=config, multi_repo=multi_repo,
+                                           ignore_policy=ignore_policy)
 
         if code_df is None:
             logging.info(f"No {language} files found (config={config}).")
@@ -591,16 +602,26 @@ def generate_git_slug(git_repo: str, git_branch: str) -> str:
     return code_utils.generate_slug_from_repo(git_repo, git_branch)
 
 
-def detect_languages(source_path: str) -> list:
+def detect_languages(source_path: str, ignore_policy=None) -> list:
     """Returns the list of programming languages detected in source_path."""
     from utils import code_utils
 
-    languages = code_utils.get_detected_languages_for_repo(source_path)
+    ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
+    languages = code_utils.get_detected_languages_for_repo(source_path, ignore_policy)
 
     if not languages:
+        if ignore_policy.has_custom_exclusions:
+            raise RepositoryIgnoreError(
+                "No supported source or configuration files remain after exclusions."
+            )
         raise Exception(f"No languages detected in source_path='{source_path}'.")
 
     return languages
+
+
+def should_reraise_processing_error(error: Exception, *, multi_repo: bool) -> bool:
+    """Return whether a repository-processing error must fail the task."""
+    return not multi_repo or isinstance(error, RepositoryIgnoreError)
 
 
 ##############################################################################
@@ -634,36 +655,28 @@ class DataGenerationPipeline:
             dur_tracker = None
 
         try:
-            if dur_tracker:
-                with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
-                    prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
-
-                    with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                        languages = detect_languages(source_path)
-
-                    with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                        external_metadata = load_external_data(source_path)
-
-                    for language in languages:
-                        for config in [False, True]:
-                            generate_code_and_meta(
-                                git_repo=git_repo, git_branch=git_branch,
-                                language=language, source_path=source_path, target_path=target_path,
-                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                            )
-            else:
+            total_cm = dur_tracker.measure(
+                stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}
+            ) if dur_tracker else nullcontext()
+            with total_cm:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
-                languages = detect_languages(source_path)
-                external_metadata = load_external_data(source_path)
+                ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
+                detect_cm = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
+                with detect_cm:
+                    languages = detect_languages(source_path, ignore_policy)
+                metadata_cm = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
+                with metadata_cm:
+                    external_metadata = load_external_data(source_path, ignore_policy)
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(
                             git_repo=git_repo, git_branch=git_branch,
                             language=language, source_path=source_path, target_path=target_path,
                             config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                            ignore_policy=ignore_policy,
                         )
+                ignore_policy.log_summary()
 
             git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
