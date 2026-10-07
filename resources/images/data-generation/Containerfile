@@ -12,6 +12,5 @@ ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
 
 COPY requirements.txt ./requirements.txt
 
-RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
-	pip install --upgrade pip \
+RUN pip install --upgrade pip \
 	&& pip install -r requirements.txt

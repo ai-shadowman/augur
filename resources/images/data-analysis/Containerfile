@@ -13,11 +13,9 @@ ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
 
 COPY --chown=1001:0 resources/images/data-analysis/requirements.txt ./requirements.txt
 
-RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
-	pip install --upgrade pip \
+RUN pip install --upgrade pip \
 	&& pip install -r requirements.txt
 
 COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
 
-RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
-	pip install ./workflows/examples/code_understanding
+RUN pip install ./workflows/examples/code_understanding

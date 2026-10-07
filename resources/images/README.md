@@ -63,24 +63,22 @@ podman push localhost/pipeline-tools:$TAG quay.io/ai-shadowman/pipeline-tools:$T
 
 ---
 
-## Python Package Build Caching (`RUN --mount=type=cache`)
+## Python Package Build Caching (`augur-pip-cache` & Layer Optimization)
 
-All container images use BuildKit/Buildah cache mounts for Python package installations to prevent redownloading packages on every build:
+To prevent redownloading large Python packages across repeated builds:
 
-1. **Persistent Local Wheel Cache**:
-   ```dockerfile
-   ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
-
-   RUN --mount=type=cache,target=/opt/app-root/src/.cache/pip,uid=1001,gid=0 \
-       pip install --upgrade pip \
-       && pip install -r requirements.txt
+1. **Persistent Podman Volume Cache (`augur-pip-cache`)**:
+   `make build-images` creates and mounts a persistent Podman volume:
+   ```bash
+   podman build -v augur-pip-cache:/opt/app-root/src/.cache/pip:Z ...
    ```
-   * Downloaded `.whl` files are cached locally by Podman across builds and shared between `data-generation`, `data-indexing`, `data-analysis`, and `pipeline-tools`.
-   * The cache mount is unmounted before creating image layers, keeping final container images small.
+   * All Containerfiles declare `ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip`.
+   * Downloaded `.whl` files are stored in `augur-pip-cache` across runs and shared between `data-generation`, `data-indexing`, `data-analysis`, and `pipeline-tools`.
+   * Standard Containerfile syntax is preserved (`RUN pip install ...`), ensuring 100% compatibility across all Podman/Buildah versions and OpenShift BuildConfigs.
 
 2. **Optimized Layer Caching in `data-analysis` and `pipeline-tools`**:
    * `requirements.txt` is copied and installed **before** `workflows/examples/code_understanding` is copied.
-   * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install ./workflows/examples/code_understanding`), skipping package downloads completely and rebuilding in seconds.
+   * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install ./workflows/examples/code_understanding`), skipping heavy package downloads completely and rebuilding in seconds.
 
 ---
 
