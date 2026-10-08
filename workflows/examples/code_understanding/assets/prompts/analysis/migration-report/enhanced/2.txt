@@ -1,40 +1,50 @@
 ---
-title: "### RHEL-Enhanced Code Migration Plan (JSON)"
-skip_prompt: "multi_repo"
+title: "### Modernization-Enhanced Code Migration Plan (JSON)"
 ---
-{{system_prompt_rhel_admin}}
+{{system_prompt_application_migration}}
 
-The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
-Use it to structure your migration plan.
-
---- BEGIN RHEL UPGRADE MATERIAL ---
+--- BEGIN APPLICATION MODERNIZATION GUIDANCE ---
 {{additional_context}}
---- END RHEL UPGRADE MATERIAL ---
+--- END APPLICATION MODERNIZATION GUIDANCE ---
 
-The following is a generic migration plan for the applications hosted on this system.
+--- BEGIN APPLICATION ANALYSIS ---
+{{application_analysis_context}}
+--- END APPLICATION ANALYSIS ---
 
---- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
-{{answers[5]}}
---- END GENERIC RECOMMENDED MIGRATION PLAN ---
-
-Revise the high-level migration plan provided above by enhancing it to take
-into account any relevant information from the provided RHEL upgrade reference material.
-Generate the migration plan in JSON format using the following schema:
+Enhance the component migration plan from the findings above using the detected application dependencies, modernization recommendations, integration contracts, and regression risks.
+Keep the repository ownership and observed versions of each dependency explicit. Resolve sequencing around runtime/framework/library prerequisites; retain justified unchanged components and flag incomplete evidence.
+Do not turn provisional recommendations into confirmed compatibility findings. Exact target versions, CVEs, and support-status claims require supplied reference evidence; otherwise use target_version null and verification_required with a concrete verification task.
+Generate the plan in JSON using the following schema. Use null for unknown scalar values and [] for absent lists. Evidence and reference sources must be verbatim identifiers or paths present in the findings; earlier generated prose alone does not substantiate authoritative compatibility claims.
 {
-    "rhel_enhanced_code_migration_plan": [
+    "modernization_enhanced_code_migration_plan": [
         {
             "migration_order": <migration order; 1 = migrate first>,
             "component": <component name>,
             "git_repo": <git repo url associated with the component>,
             "description": <component description>,
-            "relevant_files": [<verbatim file paths from source data only; use [] if none are explicitly present>],
+            "relevant_files": [<verbatim file paths from source data only>],
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
             "complexity_justification": <rationale for the complexity score>,
             "rank_justification": <rationale for the migration order>,
-            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
-            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>],
-            "runtime_upgrade_required": <runtime stack upgrade needed for RHEL 10 compatibility, if any (e.g., "JDK 1.8 → JDK 21"); omit if not applicable>
+            "application_compatibility_issues": [<documented issues or explicitly labeled potential risks>],
+            "application_compatibility_issues_reference_sources": [<supplied reference identifiers supporting compatibility findings>],
+            "modernization_recommendations": [
+                {
+                    "dependency": <detected library, framework, runtime, or build component>,
+                    "current_version": <observed version or constraint, labeled accordingly, or null>,
+                    "action": <retain | upgrade | replace | remove>,
+                    "target_component": <proposed component name, or null if undecided>,
+                    "target_version": <reference-supported target version, or null>,
+                    "rationale": <application benefit and reason for the action>,
+                    "evidence_status": <observed | supported_reference | verification_required>,
+                    "evidence_sources": [<verbatim source paths or supplied reference identifiers>],
+                    "verification_tasks": [<unresolved version, compatibility, usage, or support checks>]
+                }
+            ],
+            "runtime_upgrade_required": <reference-supported runtime change, provisional direction labeled verification required, or null>,
+            "prerequisites": [<dependency, coordinated-change, or verification prerequisites>],
+            "validation_steps": [<build, behavior, and integration checks>]
         }
     ]
 }

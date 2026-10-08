@@ -1,16 +1,18 @@
 ---
 title: "### Characterization Tests Generation Plan"
-skip_prompt: "multi_repo"
 ---
+{{system_prompt_application_migration}}
+
 {{system_prompt_characterization_tests}}
 
-The following is a summary of the application that is currently being migrated:
+The following findings describe the application stack, dependencies, security assessment, modernization recommendations, component migration plan, integration contracts, and regression risks:
 
---- BEGIN APPLICATION SUMMARY ---
-{{answers[1]}}
---- END APPLICATION SUMMARY ---
+--- BEGIN APPLICATION ANALYSIS ---
+{{application_analysis_context}}
+--- END APPLICATION ANALYSIS ---
 
-Using this context, generate a plan for generating characterization tests for this application.
-The characterization tests will be used as a baseline for regression testing during refactoring for compatibility with RHEL 10.
+Generate a characterization test generation plan suited to each repository's detected language, frameworks, libraries, runtimes, and integration boundaries.
+Use current behavior as the regression baseline. Prioritize the components and contracts affected by proposed modernization, and include validation before and after each migration increment.
+For multiple repositories, give each application its own plan and include shared contract validation only where an integration is evidenced. Identify missing test or dependency information as discovery work.
 
 Output the plan in markdown format.

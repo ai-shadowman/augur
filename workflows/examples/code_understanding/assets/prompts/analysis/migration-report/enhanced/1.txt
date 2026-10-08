@@ -1,6 +1,5 @@
 ---
 title: "### Code Migration Plan (JSON)"
-skip_prompt: "multi_repo"
 ---
 {{system_prompt_data_extraction}}
 
@@ -10,7 +9,7 @@ The following is a previously generated migration plan for a software project:
 {{answers[5]}}
 --- END MIGRATION PLAN ---
 
-Generate the migration plan in JSON format using the following schema:
+Convert only the supplied plan into JSON using the following schema. Preserve repository ownership, ordering, modernization actions, prerequisites, and validation steps. Do not add new recommendations or infer paths. Use null for unknown scalar values and [] for missing lists.
 {
     "code_migration_plan": [
         {
@@ -22,7 +21,10 @@ Generate the migration plan in JSON format using the following schema:
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
             "complexity_justification": <rationale for the complexity score>,
-            "rank_justification": <rationale for the migration order>
+            "rank_justification": <rationale for the migration order>,
+            "modernization_actions": [<actions from the plan, including any required verification>],
+            "prerequisites": [<prerequisites from the plan>],
+            "validation_steps": [<validation steps from the plan>]
         }
     ]
 }
