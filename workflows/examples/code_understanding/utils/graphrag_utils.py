@@ -42,10 +42,10 @@ class DependencyAnalyzer:
         self.token_tracker = token_tracker or TokenCostTracker.get_instance()
 
         self.SYSTEM_PROMPT_DATA_EXTRACTION = ""
-        self.SYSTEM_PROMPT_RHEL_ADMIN = ""
+        self.SYSTEM_PROMPT_APPLICATION_MIGRATION = ""
         self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS = ""
         self.POST_AMBLE = ""
-        self.RHEL_8to10_CONTEXT = ""
+        self.APPLICATION_MIGRATION_CONTEXT = ""
 
         self._setup_configuration()
 
@@ -161,8 +161,8 @@ class DependencyAnalyzer:
         self.SYSTEM_PROMPT_DATA_EXTRACTION = _load(
             "analysis/system-prompt/data-extraction")
 
-        self.SYSTEM_PROMPT_RHEL_ADMIN = _load(
-            "analysis/system-prompt/rhel-admin")
+        self.SYSTEM_PROMPT_APPLICATION_MIGRATION = _load(
+            "analysis/system-prompt/application-migration")
 
         self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS = _load(
             "analysis/system-prompt/characterization-tests"
@@ -171,8 +171,8 @@ class DependencyAnalyzer:
         self.POST_AMBLE = _load(
             "analysis/post-amble/json-format")
 
-        self.RHEL_8to10_CONTEXT = _load(
-            "analysis/additional-context/rhel8-to-10")
+        self.APPLICATION_MIGRATION_CONTEXT = _load(
+            "analysis/additional-context/application-modernization")
 
     def _find_dependencies(self, module_name):
         """Find all dependencies for a given module"""
@@ -685,9 +685,13 @@ class DependencyAnalyzer:
             prompt, meta = loader.download_prompt(
                 prompt_path,
                 system_prompt_data_extraction=self.SYSTEM_PROMPT_DATA_EXTRACTION,
-                system_prompt_rhel_admin=self.SYSTEM_PROMPT_RHEL_ADMIN,
+                system_prompt_application_migration=self.SYSTEM_PROMPT_APPLICATION_MIGRATION,
                 system_prompt_characterization_tests=self.SYSTEM_PROMPT_CHARACTERIZATION_TESTS,
-                additional_context=self.RHEL_8to10_CONTEXT,
+                additional_context=self.APPLICATION_MIGRATION_CONTEXT,
+                application_analysis_context="\n\n".join(
+                    answer for answer in answers[1:len(graphrag_prompts)]
+                    if answer != "N/A"
+                ),
                 answers=answers,
                 post_amble=self.POST_AMBLE,
                 multi_repo=self.multi_repo,

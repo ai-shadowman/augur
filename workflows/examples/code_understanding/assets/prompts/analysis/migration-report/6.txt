@@ -1,6 +1,13 @@
 ---
 title: "### Integration Points"
-skip_prompt: "multi_repo"
 ---
-What external systems does this codebase integrate with?
-For each integration point, identify the component that connects to it, the type of integration (database, API, message queue, infrastructure service), and the nature of the interaction.
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+
+Identify the external systems and cross-repository interfaces each application integrates with.
+For each evidenced integration, identify the repository, connecting application component, client library or driver and observed version (if known), integration type (database, API, message queue, or other service), and nature of the interaction.
+Describe contracts to preserve during modernization: protocols, authentication, payload or serialization formats, schemas, transaction semantics, and failure handling where evidenced. Identify required integration checks and cite available source paths or identifiers.
+Do not infer a cross-repository integration merely from shared library usage or similar names. Mark unknown versions or contract details as assessment gaps.
