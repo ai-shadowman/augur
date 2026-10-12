@@ -182,7 +182,7 @@ spec:
             claimName: minio-pvc
       containers:
         - name: minio
-          image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          image: docker.io/pgsty/silo:latest
           imagePullPolicy: IfNotPresent
           args:
             - server

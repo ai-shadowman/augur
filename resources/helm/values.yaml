@@ -14,8 +14,8 @@ minio:
   rootPassword: ""
   bucket: demo
   region: us-east-1
-  image: "quay.io/minio/minio:latest"
-  mcImage: "quay.io/minio/mc:latest"
+  image: "docker.io/pgsty/silo:latest"
+  mcImage: "docker.io/pgsty/mc:latest"
 
 dataGeneration:
   image:

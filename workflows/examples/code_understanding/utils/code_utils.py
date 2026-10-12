@@ -120,7 +120,7 @@ def get_comment_delimiters_for_language(language):
     return tuple(mappings[language])
 
 
-def get_detected_languages_for_repo(code_dir: str):
+def get_detected_languages_for_repo(code_dir: str, ignore_policy=None):
     """
     Scans a local directory and returns a list of languages detected.
 
@@ -130,7 +130,10 @@ def get_detected_languages_for_repo(code_dir: str):
     Returns:
         list[str]: Deduplicated list of detected language keys.
     """
+    from utils.repository_ignore import AUGURIGNORE_FILENAME, RepositoryIgnorePolicy
+
     languages = set()
+    ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(code_dir)
 
     visited = defaultdict(int)
 
@@ -140,7 +143,13 @@ def get_detected_languages_for_repo(code_dir: str):
 
     logging.debug(f"Language mappings: {mappings}")
 
-    for root, _, files in os.walk(code_dir):
+    for root, dirs, files in os.walk(code_dir):
+        dirs[:] = ignore_policy.filter_directories(
+            root, dirs, built_in_names={CODE_METADATA_DIR}
+        )
+        files = ignore_policy.filter_files(
+            root, files, built_in_names={AUGURIGNORE_FILENAME}
+        )
 
         for f in files:
 

@@ -1,4 +1,5 @@
 langchain==0.3.26
+pathspec>=1.1.1,<2
 langchain-community==0.3.26
 langchain-core==0.3.66
 langchain-experimental==0.3.4

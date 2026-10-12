@@ -1,0 +1,34 @@
+---
+- name: Deploy Agent Mesh Infrastructure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: "---------- Install Base ----------" 
+      ansible.builtin.include_role:
+        name: 01_install_base
+      tags: [install]
+
+    - name: "---------- Apply Secrets ----------" 
+      ansible.builtin.include_role:
+        name: 02_apply_secrets
+      tags: [apply-secrets]
+
+    - name: "---------- Upload mlflow Assets ----------" 
+      ansible.builtin.include_role:
+        name: 03_upload_mlflow_assets
+      when: asset_loader | default('') == 'mlflow'
+      tags: [upload-mlflow-assets]
+    
+    - name: "---------- Upload Pipelines ----------" 
+      ansible.builtin.include_role:
+        name: 04_upload_pipelines
+      tags: [upload-pipelines]
+
+    - name: "---------- Deploy Notebooks ----------" 
+      ansible.builtin.include_role:
+        name: 05_deploy_notebooks
+      tags: [deploy-notebooks]
+
+...
