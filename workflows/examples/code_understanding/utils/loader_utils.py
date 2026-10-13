@@ -23,7 +23,10 @@ def download_result_directory(git_slug: str, download_dir: str, results_prefix: 
 
 
 def download_code_metadata_directories(git_repos: list, parent_target_path: str):
-    """Downloads generated code metadata for each repo in git_repos to parent_target_path/<slug>."""
+    """Downloads every requested repo's metadata, failing if any download fails."""
+    if not git_repos:
+        raise ValueError("No repositories configured for multi-repo indexing.")
+
     from loaders.default_asset_loader import DefaultAssetLoader
     from utils.code_utils import generate_slug_from_repo
 
@@ -41,7 +44,10 @@ def download_code_metadata_directories(git_repos: list, parent_target_path: str)
                 results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA,
                 multi_repo=True,
                 asset_tags={"git_slug": repo_slug, "category": "data-generation",
-                            "code-metadata": True, "multi_repo": True},
+                            "code-metadata": "true", "multi_repo": "True"},
             )
         except Exception as e:
-            logging.error(f"Could not find generated data for {git_repo} ({repo_slug}); skipping...")
+            raise RuntimeError(
+                f"Could not download generated data for {git_repo} ({repo_slug}). "
+                "Multi-repo indexing requires generated data for every configured repository."
+            ) from e
