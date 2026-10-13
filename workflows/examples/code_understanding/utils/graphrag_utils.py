@@ -664,6 +664,16 @@ class DependencyAnalyzer:
         except Exception as e:
             logging.debug(f"TokenCostTracker initialization in generate_migration_report: {e}")
 
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=self.git_slug)
+            extract_data_generation_code_metrics(candidate_dirs, code_tracker)
+            if not self.git_slug and code_tracker.git_slug:
+                self.git_slug = code_tracker.git_slug
+            code_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo, current_stage="Analysis")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker initialization in generate_migration_report: {e}")
+
         self._ensure_metrics_extracted(candidate_dirs, dur_tracker)
 
 
@@ -765,17 +775,26 @@ class DependencyAnalyzer:
 
         self._ensure_metrics_extracted(candidate_dirs)
 
-        token_summary_section = self.token_tracker.format_markdown_section()
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            cms = CodeMetricsTracker.get_instance(git_slug=self.git_slug).format_markdown_section()
+            code_metrics_section = cms if isinstance(cms, str) else ""
+        except Exception as e:
+            logging.debug(f"Code metrics formatting in generate_migration_report: {e}")
+            code_metrics_section = ""
+
+        tss = self.token_tracker.format_markdown_section()
+        token_summary_section = tss if isinstance(tss, str) else ""
 
         try:
             from utils.duration_tracker import DurationTracker
-            duration_section = DurationTracker.get_instance().format_markdown_section()
+            ds = DurationTracker.get_instance().format_markdown_section()
+            duration_section = ds if isinstance(ds, str) else ""
         except Exception:
             duration_section = ""
 
-        metrics_section = token_summary_section.strip()
-        if duration_section.strip():
-            metrics_section = f"{metrics_section}\n\n{duration_section.strip()}"
+        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if isinstance(s, str) and s.strip()]
+        metrics_section = "\n\n".join(sections)
 
         if not self.multi_repo:
             match = re.search(r'(#+\s*Code\s+Migration\s+Plan\s*\(?JSON\)?)', report, re.IGNORECASE)
@@ -808,6 +827,14 @@ class DependencyAnalyzer:
                 extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (durations): {e}")
+
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker, extract_data_generation_code_metrics
+            c_tracker = CodeMetricsTracker.get_instance(git_slug=self.git_slug)
+            if not c_tracker.languages or c_tracker.total_repo_files == 0:
+                extract_data_generation_code_metrics(candidate_dirs, c_tracker)
+        except Exception as e:
+            logging.debug(f"Metric extraction (code metrics): {e}")
 
     def get_token_usage_summary(self) -> str:
         """Returns the formatted ASCII token usage and cost summary table."""

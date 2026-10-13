@@ -55,6 +55,14 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
     except Exception as e:
         logging.debug(f"Failed to print token summary in analysis pod: {e}")
 
+    try:
+        from utils.code_metrics_tracker import CodeMetricsTracker
+        code_tr = CodeMetricsTracker.get_instance()
+        summary = code_tr.format_summary()
+        logging.info("\n" + summary)
+    except Exception as e:
+        logging.debug(f"Failed to print code metrics summary in analysis pod: {e}")
+
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
@@ -69,6 +77,14 @@ def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Mark
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
         write_migration_report(tmp_graphrag, report.path, multi_repo=True)
+
+    try:
+        from utils.code_metrics_tracker import CodeMetricsTracker
+        code_tr = CodeMetricsTracker.get_instance()
+        summary = code_tr.format_summary()
+        logging.info("\n" + summary)
+    except Exception as e:
+        logging.debug(f"Failed to print code metrics summary in analysis pod: {e}")
 
 
 ##############################################################################

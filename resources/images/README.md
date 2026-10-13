@@ -84,6 +84,44 @@ To prevent redownloading large Python packages across repeated builds:
 2. **Optimized Layer Caching in `data-analysis` and `pipeline-tools`**:
    * `requirements.txt` is copied and installed **before** `workflows/examples/code_understanding` is copied.
    * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install ./workflows/examples/code_understanding`), skipping heavy package downloads completely and rebuilding in seconds.
+## Building via OpenShift BuildConfig (Cluster-native Builds)
+
+Instead of building locally with Podman, you can offload builds to the OpenShift cluster using `BuildConfig` objects that push directly to `quay.io` using authentication secret `quay-secret`.
+
+### 1. Create the `quay-secret`
+```bash
+oc create secret docker-registry quay-secret \
+  --docker-server=quay.io \
+  --docker-username="<QUAY_USERNAME_OR_ROBOT_ACCOUNT>" \
+  --docker-password="<QUAY_TOKEN_OR_PASSWORD>" \
+  --docker-email="<QUAY_EMAIL>" \
+  -n <NAMESPACE>
+```
+
+### 2. Deploy BuildConfigs
+Deploy using the parameterized template:
+```bash
+oc process -f resources/openshift/buildconfigs-template.yaml \
+  -p AUGUR_GIT_REPO_URL="https://github.com/ai-shadowman/augur.git" \
+  -p AUGUR_GIT_REPO_BRANCH="main" \
+  -p QUAY_REGISTRY_ORG="ai-shadowman" \
+  -p IMAGE_TAG="latest" \
+  -p QUAY_SECRET_NAME="quay-secret" \
+  -n <NAMESPACE> | oc apply -n <NAMESPACE> -f -
+```
+Or apply the static manifest:
+```bash
+oc apply -f resources/openshift/buildconfigs.yaml -n <NAMESPACE>
+```
+
+### 3. Start Builds
+```bash
+oc start-build data-generation -n <NAMESPACE> --follow
+oc start-build data-indexing   -n <NAMESPACE> --follow
+oc start-build data-analysis   -n <NAMESPACE> --follow
+oc start-build pipeline-tools  -n <NAMESPACE> --follow
+```
+
 
 ---
 

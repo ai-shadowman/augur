@@ -587,6 +587,7 @@ class TokenCostTracker:
         """Registers a callback with litellm.success_callback to intercept and track
         all direct LiteLLM invocations (e.g. from sdg_hub, custom evaluators).
         """
+        self.disable_litellm_callbacks()
         self._active_category = category
         if not HAS_LITELLM or litellm is None:
             logging.debug("LiteLLM not available; skipping callback registration.")
@@ -978,6 +979,8 @@ class TokenCostTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
+                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+            elif current_stage and current_stage.lower() == "evaluation":
                 upstream_targets = ["Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
                 upstream_targets = ["Data Generation"]
