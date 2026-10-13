@@ -70,6 +70,16 @@ def prepare_environment_op(git_repo: str,
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in prepare_environment_op: {e}")
 
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            CodeMetricsTracker.reset_instance()
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
+            code_tracker.measure_repository(tmp_source)
+            code_tracker.save_to_file(os.path.join(tmp_source, "project_metrics.json"))
+            code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in prepare_environment_op: {e}")
+
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
@@ -123,6 +133,23 @@ def generate_code_and_meta_op(
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in generate_code_and_meta_op: {e}")
 
+        code_tracker = None
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            CodeMetricsTracker.reset_instance()
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
+            try:
+                code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"MLflow download code metrics skipped in generate_code_and_meta_op: {e}")
+            metrics_file = os.path.join(tmp_source, "project_metrics.json")
+            if os.path.exists(metrics_file):
+                code_tracker.load_and_merge(metrics_file)
+            else:
+                code_tracker.measure_repository(tmp_source)
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in generate_code_and_meta_op: {e}")
+
         try:
             from pipelines.base.data_generation import load_external_data
 
@@ -135,6 +162,11 @@ def generate_code_and_meta_op(
             if token_tracker:
                 try:
                     token_tracker.save_to_file(os.path.join(tmp_target, "tokens.json"))
+                except Exception:
+                    pass
+            if code_tracker:
+                try:
+                    code_tracker.save_to_file(os.path.join(tmp_target, "project_metrics.json"))
                 except Exception:
                     pass
 
@@ -205,6 +237,22 @@ def generate_code_and_meta_op(
                     logging.info("\n" + summary)
                 except Exception as e:
                     logging.debug(f"Failed to print token summary in data generation pod: {e}")
+
+            if code_tracker:
+                try:
+                    code_tracker.save_to_file(os.path.join(tmp_target, "project_metrics.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save project_metrics.json in generate_code_and_meta_op: {e}")
+                try:
+                    code_tracker.log_to_mlflow()
+                    code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload code metrics to MLflow in generate_code_and_meta_op: {e}")
+                try:
+                    summary = code_tracker.format_summary()
+                    logging.info("\n" + summary)
+                except Exception as e:
+                    logging.debug(f"Failed to print code metrics summary in data generation pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

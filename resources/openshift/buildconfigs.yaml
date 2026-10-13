@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: List
+metadata:
+  name: augur-buildconfigs
+items:
+  # ---------------------------------------------------------------------------
+  # 1. Data Generation Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-generation
+      labels:
+        app: augur
+        component: data-generation
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: https://github.com/ai-shadowman/augur.git
+          ref: main
+        contextDir: resources/images/data-generation
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/ai-shadowman/data-generation:latest
+        pushSecret:
+          name: quay-secret
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 2. Data Indexing Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-indexing
+      labels:
+        app: augur
+        component: data-indexing
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: https://github.com/ai-shadowman/augur.git
+          ref: main
+        contextDir: resources/images/data-indexing
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: Containerfile
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/ai-shadowman/data-indexing:latest
+        pushSecret:
+          name: quay-secret
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 3. Data Analysis Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: data-analysis
+      labels:
+        app: augur
+        component: data-analysis
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: https://github.com/ai-shadowman/augur.git
+          ref: main
+        contextDir: ""
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: resources/images/data-analysis/Containerfile
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/ai-shadowman/data-analysis:latest
+        pushSecret:
+          name: quay-secret
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+
+  # ---------------------------------------------------------------------------
+  # 4. Pipeline Tools Image
+  # ---------------------------------------------------------------------------
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: pipeline-tools
+      labels:
+        app: augur
+        component: pipeline-tools
+    spec:
+      runPolicy: Serial
+      source:
+        type: Git
+        git:
+          uri: https://github.com/ai-shadowman/augur.git
+          ref: main
+        contextDir: ""
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: resources/images/pipeline-tools/Containerfile
+      output:
+        to:
+          kind: DockerImage
+          name: quay.io/ai-shadowman/pipeline-tools:latest
+        pushSecret:
+          name: quay-secret
+      resources:
+        limits:
+          cpu: "2"
+          memory: 4Gi
+        requests:
+          cpu: 500m
+          memory: 1Gi
