@@ -246,7 +246,6 @@ def get_parsed_code_metadata(df, language, config=False):
             api_base=os.getenv("GRAPHRAG_LLM_API_BASE"),
             api_key=os.getenv("GRAPHRAG_LLM_TOKEN"),
             temperature=0,
-            best_of=1,
             n=1,
             max_tokens=32_000,
             response_format={"type": "json_object"},
