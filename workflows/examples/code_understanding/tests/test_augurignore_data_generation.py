@@ -1,10 +1,13 @@
 import builtins
+import ast
+import __future__
 import json
 import os
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -143,6 +146,129 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
         self.assertEqual(dataframe["file_path"].tolist(), ["visible.py"])
         self.assertNotIn(str(root / "hidden.py"), seen)
         self.assertNotIn(str(root / "hidden.py"), [call.args[0] for call in getsize.call_args_list])
+
+    def test_ingestion_skips_unsafe_links_and_continues_without_augurignore(self):
+        root = self.repository()
+        outside = self.repository()
+        (outside / "secret.py").write_text("secret", encoding="utf-8")
+        (root / "external.py").symlink_to(outside / "secret.py")
+        (root / "external-dir").symlink_to(outside, target_is_directory=True)
+        (root / "broken.py").symlink_to("missing.py")
+        (root / "loop.py").symlink_to("loop.py")
+        (root / "visible.py").write_text("visible", encoding="utf-8")
+        (root / "internal.py").symlink_to("visible.py")
+        (root / "internal-dir").symlink_to(".", target_is_directory=True)
+        policy = RepositoryIgnorePolicy.from_repository(root)
+        real_open = builtins.open
+        seen = []
+
+        def recording_open(path, *args, **kwargs):
+            seen.append(os.fspath(path))
+            return real_open(path, *args, **kwargs)
+
+        with patch("utils.code_utils.guess_lexer_for_filename") as lexer, patch(
+            "builtins.open", side_effect=recording_open
+        ), patch("utils.code_utils.is_large_code_file", return_value=False), patch(
+            "pandas.DataFrame", _DataFrame
+        ), self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+            lexer.return_value.name = "Python"
+            self.assertEqual(data_generation.detect_languages(str(root), policy), ["python"])
+            frame = data_generation.generate_raw_dataset(
+                str(root), str(root / "target"), "org/repo", "main", ignore_policy=policy
+            )
+
+        self.assertEqual(set(frame["file_path"].tolist()), {"visible.py", "internal.py"})
+        self.assertEqual(set(seen), {str(root / "visible.py"), str(root / "internal.py")})
+        self.assertEqual(len(logs.output), 4)
+        self.assertFalse(policy.has_custom_exclusions)
+
+    def test_external_metadata_directory_symlink_is_skipped_before_walk(self):
+        root = self.repository()
+        outside = self.repository()
+        (outside / "secret.json").write_text('{"secret": true}', encoding="utf-8")
+        (root / ".code_metadata").symlink_to(outside, target_is_directory=True)
+
+        with self.assertLogs("utils.repository_ignore", level="WARNING"):
+            self.assertEqual(data_generation.load_external_data(str(root)), {})
+
+    def test_internal_metadata_directory_symlink_is_not_followed(self):
+        root = self.repository()
+        (root / "actual_metadata").mkdir()
+        (root / "actual_metadata" / "item.json").write_text('{"secret": true}', encoding="utf-8")
+        (root / ".code_metadata").symlink_to("actual_metadata", target_is_directory=True)
+
+        self.assertEqual(data_generation.load_external_data(str(root)), {})
+
+    def test_broken_metadata_link_counts_as_one_excluded_file(self):
+        root = self.repository()
+        (root / ".code_metadata").symlink_to("missing")
+        policy = RepositoryIgnorePolicy.from_repository(root)
+
+        with self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+            policy.filter_files(root, [".code_metadata"])
+            self.assertEqual(data_generation.load_external_data(str(root), policy), {})
+
+        self.assertEqual(len(logs.output), 1)
+        self.assertEqual(policy.stats.ignored_files, 1)
+        self.assertEqual(policy.stats.ignored_directories, 0)
+
+    def test_local_and_kubeflow_pipelines_continue_after_external_link(self):
+        # Execute the actual component body without installing KFP or contacting services.
+        component_path = Path(data_generation.__file__).parents[1] / "kubeflow" / "data_generation.py"
+        tree = ast.parse(component_path.read_text(encoding="utf-8"))
+        component = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "generate_code_and_meta_op")
+        component.decorator_list = []
+        namespace = {}
+        exec(compile(ast.Module(body=[component], type_ignores=[]), str(component_path), "exec", flags=__future__.annotations.compiler_flag), namespace)
+
+        for mode in ("local", "local-with-telemetry", "kubeflow"):
+            with self.subTest(mode=mode):
+                root = self.repository()
+                target = self.repository()
+                outside = self.repository()
+                (outside / "secret.py").write_text("secret", encoding="utf-8")
+                (root / "external.py").symlink_to(outside / "secret.py")
+                (root / "visible.py").write_text("visible", encoding="utf-8")
+                records = []
+
+                def generate(**kwargs):
+                    frame = data_generation.generate_raw_dataset(
+                        kwargs["source_path"], kwargs["target_path"], kwargs["git_repo"], kwargs["git_branch"],
+                        config=kwargs["config"], ignore_policy=kwargs["ignore_policy"],
+                    )
+                    if frame is None:
+                        return
+                    records.extend(frame.records)
+                    for record in frame.records:
+                        (target / "visible.txt").write_text(record["code"], encoding="utf-8")
+
+                duration = MagicMock() if mode == "local-with-telemetry" else None
+                if duration is not None:
+                    duration.measure.side_effect = lambda *args, **kwargs: nullcontext()
+                modules = {
+                    "utils.duration_tracker": types.SimpleNamespace(DurationTracker=types.SimpleNamespace(get_instance=lambda: duration)),
+                    "utils.token_tracker": types.SimpleNamespace(TokenCostTracker=types.SimpleNamespace(reset_instance=lambda: None, get_instance=lambda: None)),
+                    "utils.code_metrics_tracker": types.SimpleNamespace(CodeMetricsTracker=types.SimpleNamespace(reset_instance=lambda: None, get_instance=lambda **kwargs: None)),
+                }
+                with patch.dict(sys.modules, modules), patch(
+                    "pipelines.base.data_generation.prepare_environment"
+                ), patch("utils.code_utils.guess_lexer_for_filename") as lexer, patch(
+                    "utils.code_utils.is_large_code_file", return_value=False
+                ), patch("pandas.DataFrame", _DataFrame), patch(
+                    "pipelines.base.data_generation.generate_code_and_meta", side_effect=generate
+                ), patch("utils.kubeflow_utils.read_from_input_artifact", return_value=nullcontext(str(root))), patch(
+                    "utils.kubeflow_utils.write_to_output_artifact", return_value=nullcontext(str(target))
+                ), self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+                    lexer.return_value.name = "Python"
+                    if mode == "kubeflow":
+                        namespace["generate_code_and_meta_op"]("org/repo", "main", object(), object(), multi_repo=True)
+                    else:
+                        result = data_generation.DataGenerationPipeline().run("org/repo", "main", str(root), str(target))
+                        self.assertEqual(result["status"], "complete", result["fail_message"])
+
+                self.assertEqual([record["file_path"] for record in records], ["visible.py"])
+                self.assertEqual((target / "visible.txt").read_text(encoding="utf-8"), "visible")
+                self.assertEqual(len(logs.output), 1)
 
     def test_external_metadata_skips_ignored_json_and_prunes_ignored_directories(self):
         root = self.repository(".code_metadata/private/\n.code_metadata/hidden.json\n")
