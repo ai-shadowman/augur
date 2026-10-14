@@ -85,11 +85,15 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 ######################
 -Output Format-
 ######################
-One tuple per line. No preamble, no explanation, no markdown fences — tuples only.
+No preamble, no explanation, no markdown fences — tuples only.
 Two tuple types:
 
 ("entity"<|><entity_name><|><entity_type><|><entity_description>)
 ("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
+
+End every tuple with {record_delimiter} on its own line, including the last tuple you
+emit. If you are asked to continue and add more tuples, terminate those the same way.
+After the final {record_delimiter}, emit {completion_delimiter} on its own line.
 
 CRITICAL — Emit exact source casing. ALL CAPS only if the source identifier is ALL CAPS (e.g. `MAX_SIZE = 100`). Never introduce ALL CAPS not present in the source:
 
@@ -129,12 +133,20 @@ def fetch_data(url):
 
 Output:
 ("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Runtime stack: Python 3.12. Contains the my-app service implementation.)
+{record_delimiter}
 ("entity"<|>src/utils/my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
+{record_delimiter}
 ("entity"<|>my_service.fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
+{record_delimiter}
 ("entity"<|>requests<|>dependency<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
+{record_delimiter}
 ("relationship"<|>src/utils/my_service.py<|>my-app-main<|>src/utils/my_service.py BELONGS_TO the my-app-main repository<|>10)
+{record_delimiter}
 ("relationship"<|>my_service.fetch_data<|>src/utils/my_service.py<|>my_service.fetch_data is defined in src/utils/my_service.py<|>10)
+{record_delimiter}
 ("relationship"<|>src/utils/my_service.py<|>requests<|>src/utils/my_service.py IMPORTS the requests library<|>8)
+{record_delimiter}
+{completion_delimiter}
 
 ######################
 -Real Data-
