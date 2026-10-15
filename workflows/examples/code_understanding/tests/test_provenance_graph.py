@@ -621,5 +621,118 @@ class TestGround(unittest.TestCase):
         self.assertIn("merged:", rendered)
 
 
+class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
+    """Creating an entity for a file the folding could not have matched.
+
+    The repair for a file with no entity is to create one, because the path is
+    known and the type is not in doubt. That reasoning holds only while a
+    failure to match means something. On a ``.java`` path the key keeps its
+    extension and can never meet a model's dotted spelling, so every corpus
+    file looks missing, every one gets a duplicate, and the module layer comes
+    out at twice its real size with nothing saying so.
+
+    Measured on two-file synthetic corpora before the gate: Java 2 entities to
+    5, TypeScript 2 to 5, Python 2 to 3.
+    """
+
+    def ground(self, paths, rows, edges=()):
+        report = GroundingReport()
+        entities, relationships = graph.ground_modules(
+            corpus(paths), entity_frame(rows), edge_frame(edges), report
+        )
+        return entities, relationships, report
+
+    def test_a_gated_file_gets_no_entity_and_the_report_says_why(self):
+        entities, _, report = self.ground(
+            ["src/main/java/com/example/Foo.java"],
+            [("COM.EXAMPLE.FOO", "MODULE", "The Foo class.")],
+        )
+        self.assertEqual(report.created, [])
+        self.assertEqual(sorted(entities["title"]), ["COM.EXAMPLE.FOO"])
+        self.assertEqual(len(report.unsupported_files), 1)
+        path, reason = report.unsupported_files[0]
+        self.assertEqual(path, "src/main/java/com/example/Foo.java")
+        self.assertIn(".java", reason)
+        self.assertIn("java", reason)
+
+    def test_an_unmapped_extension_is_gated_without_a_language_being_claimed(self):
+        _, _, report = self.ground(
+            ["cmd/server/main.go"], [("CMD.SERVER.MAIN", "MODULE", "Entrypoint.")],
+        )
+        self.assertEqual(report.created, [])
+        _, reason = report.unsupported_files[0]
+        self.assertIn(".go", reason)
+        self.assertIn("no language mapping", reason)
+
+    def test_the_skip_is_logged_once_per_reason_not_once_per_file(self):
+        """A five-hundred-file repository should say one true thing once."""
+        paths = [f"src/main/java/com/example/C{i}.java" for i in range(12)]
+        with self.assertLogs("provenance.graph", level="WARNING") as captured:
+            _, _, report = self.ground(paths, [("UNRELATED", "MODULE", "x")])
+        self.assertEqual(len(captured.records), 1)
+        self.assertIn("12 corpus file(s)", captured.output[0])
+        self.assertEqual(len(report.unsupported_files), 12)
+
+    def test_only_creation_is_gated_and_matching_still_works(self):
+        """A model that spells a gated path exactly still grounds onto it.
+
+        That match is evidence rather than a guess, so the gate leaves it
+        alone. What it removes is the inference drawn from a *failure* to
+        match, which on an unhandled extension carries no information.
+        """
+        entities, _, report = self.ground(
+            ["src/Foo.java"],
+            [("SRC/FOO.JAVA", "MODULE", "The Foo class."),
+             ("src.foo.java", "MODULE", "Foo again, another spelling.")],
+        )
+        self.assertEqual(sorted(entities["title"]), ["SRC/FOO.JAVA"])
+        self.assertEqual(report.merged, [("SRC/FOO.JAVA", ["src.foo.java"])])
+        self.assertEqual(report.unsupported_files, [])
+        self.assertEqual(report.created, [])
+
+    def test_a_mixed_corpus_grounds_the_python_and_gates_the_rest(self):
+        """The gate is per file, so one unhandled language does not stop the run.
+
+        A Django or Rails project is mostly templates with a Python or Ruby
+        core, and the half the folding handles should still be repaired.
+        """
+        paths = ["celery/worker/state.py", "celery/app/base.py",
+                 "src/App.java", "web/index.html"]
+        entities, _, report = self.ground(
+            paths,
+            # One spelling the folding recognises, and nothing for the rest.
+            [("CELERY.WORKER.STATE", "MODULE", "Worker state.")],
+        )
+        # The recognised one is retitled onto the header spelling, the other
+        # Python file is created because a missing .py genuinely is missing,
+        # and the two the folding cannot speak for are left alone.
+        self.assertEqual(report.created, ["CELERY/APP/BASE.PY"])
+        self.assertEqual(
+            [p for p, _ in report.unsupported_files],
+            ["src/App.java", "web/index.html"],
+        )
+        self.assertEqual(sorted(entities["title"]),
+                         ["CELERY/APP/BASE.PY", "CELERY/WORKER/STATE.PY"])
+
+    def test_the_whole_pass_lands_a_gated_corpus_on_the_control_shape(self):
+        """The exit predicate: before + 1, the +1 being the repository.
+
+        ``EX-APP`` comes from the header's ``git_slug``, which is a header fact
+        and has nothing to do with suffix stripping, so the gate does not take
+        it. A gated language lands on exactly the shape the Python control
+        lands on.
+        """
+        for extension in (".java", ".ts", ".rb", ".go", ".tsx"):
+            with self.subTest(extension=extension):
+                entities, _, report = graph.ground(
+                    corpus([f"pkg/a{extension}", f"pkg/b{extension}"]),
+                    entity_frame([("PKG.A", "MODULE", "a"), ("PKG.B", "MODULE", "b")]),
+                    edge_frame(),
+                )
+                self.assertEqual(report.entities_after, report.entities_before + 1)
+                self.assertEqual(report.created, ["CELERY-V2-5-5"])
+                self.assertIn("CELERY-V2-5-5", set(entities["title"].astype(str)))
+
+
 if __name__ == "__main__":
     unittest.main()

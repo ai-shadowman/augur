@@ -29,6 +29,12 @@ class GroundingReport:
     merged: list[tuple[str, list[str]]] = field(default_factory=list)
     #: Corpus files that had no entity at all and were created.
     created: list[str] = field(default_factory=list)
+    #: ``(path, reason)`` for each corpus file the module layer declined to
+    #: create an entity for, because the key folding cannot strip its
+    #: extension. The mirror of :attr:`created`: those are files a join could
+    #: repair, these are files it would only have guessed at. Creating one
+    #: anyway is what doubled the module layer on every non-Python corpus.
+    unsupported_files: list[tuple[str, str]] = field(default_factory=list)
     #: Module-shaped entities naming no indexed file. Reported, not deleted:
     #: they carry relationships, and a name the corpus cannot confirm is not
     #: automatically a name that is wrong.
@@ -82,6 +88,14 @@ def render(report: GroundingReport, limit: int = 15) -> str:
     if report.created:
         lines.append(f"created:       {len(report.created)} entity(ies) with no extraction")
         lines.extend(f"  {t}" for t in report.created[:limit])
+    if report.unsupported_files:
+        _section(
+            lines,
+            f"not grounded:  {len(report.unsupported_files)} corpus file(s) whose "
+            "extension the key folding cannot strip",
+            report.unsupported_files, limit,
+            lambda pair: f"  {pair[0]}: {pair[1]}",
+        )
     if report.relative_resolved:
         _section(
             lines,

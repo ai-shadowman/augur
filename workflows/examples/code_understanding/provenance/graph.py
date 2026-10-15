@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import declarations
+from . import declarations, languages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .grounding_report import GroundingReport
 from .tables import collapse, document_for, rewrite_edges, text_unit_documents, types_of
@@ -129,6 +129,42 @@ def resolve_relative_titles(
     return renames
 
 
+def _drop_unfoldable(missing, report: GroundingReport):
+    """Keep only the corpus files an entity could have been matched against.
+
+    Creating an entity for a file is a repair when the file genuinely had no
+    entity. It is damage when the file had one and the folding simply could
+    not recognise it, because then the graph carries both and nothing says
+    they are the same thing.
+
+    Only the creation half is gated, not the matching half above. A model that
+    happens to spell a ``.java`` path exactly as the header does still grounds
+    onto it, which is right: that match is evidence, not a guess. What the gate
+    removes is the inference drawn from a *failure* to match, which on an
+    unhandled extension carries no information at all.
+
+    One warning per distinct reason rather than per file, so a Java repository
+    with five hundred source files logs the one true thing once.
+    """
+    keepers = []
+    gated: dict[str, list[str]] = {}
+    for corpus_file in missing:
+        verdict = languages.classify(corpus_file.path)
+        if verdict.folded:
+            keepers.append(corpus_file)
+            continue
+        report.unsupported_files.append((corpus_file.path, verdict.reason))
+        gated.setdefault(verdict.reason, []).append(corpus_file.path)
+
+    for reason, paths in sorted(gated.items()):
+        logger.warning(
+            "grounding declined for %d corpus file(s): %s; no module entity "
+            "created for them (for example %s)",
+            len(paths), reason, paths[0],
+        )
+    return keepers
+
+
 def ground_modules(
     corpus: Corpus,
     entities,
@@ -211,8 +247,16 @@ def ground_modules(
 
     # A file with no entity at all is a recall failure, and the one thing a
     # join can repair outright: the path is known and the type is not in doubt.
+    #
+    # Unless the folding could not have matched it in the first place. A
+    # ``.java`` path folds to ``src.main.java.com.example.foo.java``, which no
+    # entity will ever carry, so every corpus file looks missing and each one
+    # gets a duplicate created beside the model's own entity for it. That is
+    # how a two-file Java corpus went from 2 entities to 5. Declining here is
+    # the difference between a graph that is wrong and one that says so.
     present = set(frame["title"].astype(str))
     missing = [f for f in corpus.files if f.title not in present]
+    missing = _drop_unfoldable(missing, report)
     if missing:
         new_rows = pd.DataFrame([
             {

@@ -34,6 +34,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 
+from .languages import source_suffixes
+
 logger = logging.getLogger(__name__)
 
 #: The header data generation writes. ``runtime`` is optional, and the trailing
@@ -46,11 +48,6 @@ HEADER = re.compile(
     r'(?:,\s*runtime\s+(?P<runtime>[^"\n]+?))?\s*(?:"""|\n|$)',
     re.IGNORECASE,
 )
-
-#: Suffixes stripped before comparing a model's entity name to a real path. A
-#: model writes ``celery.worker.state`` for ``celery/worker/state.py``, so the
-#: extension has to come off for the two to meet.
-_SOURCE_SUFFIXES = (".py", ".pyx", ".pyi", ".txt", ".cfg", ".toml", ".yaml", ".yml")
 
 #: Separators a model uses interchangeably for the same path. ``_`` is
 #: deliberately absent: folding it would make ``celery.app.__init__`` collide
@@ -76,9 +73,15 @@ def canonical_key(name: str) -> str:
     ``CELERY/WORKER/STATE`` are three spellings the model produced for one
     file in a single run. All three reduce to ``celery.worker.state`` here,
     which is what lets them be recognised as one entity.
+
+    The suffixes come from :func:`provenance.languages.source_suffixes`, which
+    derives them from the shipped language mapping rather than declaring them.
+    An extension outside that set is left on, so a Java or TypeScript path
+    folds to something no entity will match; :func:`provenance.graph.ground`
+    gates on the same question rather than letting that pass silently.
     """
     text = str(name).strip().lower()
-    for suffix in _SOURCE_SUFFIXES:
+    for suffix in source_suffixes():
         if text.endswith(suffix):
             text = text[: -len(suffix)]
             break

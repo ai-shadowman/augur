@@ -195,5 +195,64 @@ class TestFromDocuments(unittest.TestCase):
         self.assertEqual(corpus.unparsed, ["0"])
 
 
+class TestTheSuffixesComeFromTheMapping(unittest.TestCase):
+    """The folding strips what ``language_mappings.json`` says it strips.
+
+    ``_SOURCE_SUFFIXES`` used to be a tuple written out beside this function,
+    and the shipped mapping was the same answer given elsewhere. They drifted,
+    and a Java corpus folded to keys nothing could match with no warning. The
+    tuple is now derived, so the drift has nowhere to happen; these pin what
+    the derivation currently produces.
+
+    :mod:`tests.test_provenance_languages` holds the full per-language table.
+    """
+
+    def test_an_extension_of_a_folded_language_comes_off(self):
+        for path, expected in [
+            ("celery/worker/state.py", "celery.worker.state"),
+            ("celery/worker/state.pyi", "celery.worker.state"),
+            ("celery/worker/state.pyx", "celery.worker.state"),
+            ("setup.cfg", "setup"),
+            ("tox.ini", "tox"),
+            ("pyproject.toml", "pyproject"),
+            ("requirements.txt", "requirements"),
+            ("roles/web/tasks.yaml", "roles.web.tasks"),
+            ("roles/web/tasks.yml", "roles.web.tasks"),
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(canonical_key(path), expected)
+
+    def test_an_extension_the_folding_does_not_handle_stays_on(self):
+        """Which is why the key never meets the model's dotted spelling.
+
+        Left deliberately: stripping an extension the pipeline cannot parse
+        would manufacture a match it has no grounds for.
+        ``provenance.graph`` gates on the same question instead.
+        """
+        for path, expected in [
+            ("src/main/java/com/example/Foo.java", "src.main.java.com.example.foo.java"),
+            ("src/app/service.ts", "src.app.service.ts"),
+            ("lib/thing.rb", "lib.thing.rb"),
+            ("cmd/server/main.go", "cmd.server.main.go"),
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(canonical_key(path), expected)
+
+    def test_a_name_with_no_extension_folds_to_itself(self):
+        self.assertEqual(canonical_key("Makefile"), "makefile")
+        self.assertEqual(canonical_key("bin/mytool"), "bin.mytool")
+
+    def test_the_longest_matching_suffix_wins(self):
+        """Ordering is by length, not by however the mapping happened to list.
+
+        No folded language has a compound extension today, so this costs
+        nothing now and stops being a latent bug the moment one does.
+        """
+        from provenance.languages import source_suffixes
+
+        lengths = [len(s) for s in source_suffixes()]
+        self.assertEqual(lengths, sorted(lengths, reverse=True))
+
+
 if __name__ == "__main__":
     unittest.main()
