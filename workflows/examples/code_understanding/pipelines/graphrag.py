@@ -78,6 +78,17 @@ def run_graphrag(root_dir: str) -> None:
 
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
+
+    # Declared versions and the git remote are known exactly before any model
+    # runs, so they are written into the entity table directly. This has to
+    # happen inside the pipeline rather than after it: community reports and
+    # the entity embeddings are both built from these descriptions.
+    try:
+        from provenance.pipeline import install as install_provenance_stitch
+        install_provenance_stitch(config)
+    except Exception as e:
+        log.warning(f"Provenance stitch not installed, indexing without it: {e}")
+
     cm_build = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing") if dur_tracker else nullcontext()
     with cm_build:
         results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))

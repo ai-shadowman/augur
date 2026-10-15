@@ -76,11 +76,20 @@ def prepare_environment(source_path: str,
 
         cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
         with cm_clone:
-            clone_from_repo(git_repo, 
-                            source_path, 
+            clone_from_repo(git_repo,
+                            source_path,
                             branch=git_branch,
                             git_username=git_username,
                             git_token=git_token)
+
+        # Declared dependencies have to be read while the checkout exists;
+        # indexing runs in another pod, long after reset_environment removes
+        # it. Syft is skipped: it reports resolved versions, and the stitch
+        # consumes declared constraints, which come from the manifests.
+        cm_facts = dur_tracker.measure(stage="Data Generation", step="Extract Provenance Facts") if dur_tracker else nullcontext()
+        with cm_facts:
+            from provenance.pipeline import capture as capture_provenance
+            capture_provenance(source_path, target_path, run_syft=False)
 
     except Exception as e:
 
