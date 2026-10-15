@@ -123,16 +123,23 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     from pipelines.base.indexing import evaluate_graphrag_index
 
     dur_tracker = None
+    token_tracker = None
     try:
         from utils.duration_tracker import DurationTracker, find_all_telemetry_files
         dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
     except Exception as e:
         logging.debug(f"DurationTracker initialization skipped in graphrag_evaluation_op: {e}")
 
+    try:
+        from utils.token_tracker import TokenCostTracker
+        token_tracker = TokenCostTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+    except Exception as e:
+        logging.debug(f"TokenCostTracker initialization skipped in graphrag_evaluation_op: {e}")
+
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
+        candidate_dirs = [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]
         if dur_tracker:
             try:
-                candidate_dirs = [tmp_graphrag, os.path.join(tmp_graphrag, "output"), os.path.join(tmp_graphrag, "input")]
                 for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                     dur_tracker.load_and_merge(dur_file, current_stage="Evaluation")
             except Exception as e:
@@ -147,6 +154,20 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
             except Exception as e:
                 logging.debug(f"Failed to record pod creation overhead in evaluation: {e}")
 
+        if token_tracker:
+            try:
+                from utils.duration_tracker import find_all_telemetry_files
+                for tok_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
+                    token_tracker.load_and_merge(tok_file, current_stage="Evaluation")
+            except Exception as e:
+                logging.debug(f"Failed to load prior tokens in graphrag_evaluation_op: {e}")
+            try:
+                token_tracker.download_from_mlflow(
+                    git_slug=git_slug, multi_repo=multi_repo, current_stage="Evaluation", only_current_run=False
+                )
+            except Exception as e:
+                logging.debug(f"Failed to download tokens from MLflow in evaluation: {e}")
+
         cm_eval = dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation") if dur_tracker else nullcontext()
         with cm_eval:
             results = evaluate_graphrag_index(
@@ -159,10 +180,11 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     df = results if isinstance(results, pd.DataFrame) else pd.DataFrame(results or [])
     df.to_csv(eval_results.path, index=False)
 
+    save_dirs = [os.path.dirname(eval_results.path)]
+    if not os.path.splitext(eval_results.path)[1]:
+        save_dirs.append(eval_results.path)
+
     if dur_tracker:
-        save_dirs = [os.path.dirname(eval_results.path)]
-        if not os.path.splitext(eval_results.path)[1]:
-            save_dirs.append(eval_results.path)
         for sdir in save_dirs:
             try:
                 os.makedirs(sdir, exist_ok=True)
@@ -180,6 +202,25 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
             logging.info("\n" + summary)
         except Exception as e:
             logging.debug(f"Failed to print duration summary in evaluation pod: {e}")
+
+    if token_tracker:
+        for sdir in save_dirs:
+            try:
+                os.makedirs(sdir, exist_ok=True)
+                token_tracker.save_to_file(os.path.join(sdir, "tokens.json"))
+            except Exception as e:
+                logging.debug(f"Failed to persist tokens.json to {sdir}: {e}")
+
+        try:
+            token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
+        except Exception as e:
+            logging.debug(f"Failed to upload tokens to MLflow in evaluation: {e}")
+
+        try:
+            summary = token_tracker.format_summary()
+            logging.info("\n" + summary)
+        except Exception as e:
+            logging.debug(f"Failed to print token summary in evaluation pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

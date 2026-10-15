@@ -300,6 +300,7 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
     dur_tracker = None
+    token_tracker = None
     try:
         from utils.duration_tracker import DurationTracker, find_all_telemetry_files
         dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
@@ -325,6 +326,26 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
             logging.debug(f"Failed to record pod creation overhead in evaluation: {e}")
     except Exception as e:
         logging.debug(f"DurationTracker handling in evaluate_graphrag_index: {e}")
+
+    try:
+        from utils.token_tracker import TokenCostTracker
+        from utils.duration_tracker import find_all_telemetry_files
+        token_tracker = TokenCostTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+        candidate_dirs = [
+            graphrag_source_path,
+            os.path.join(graphrag_source_path, "output"),
+            os.path.join(graphrag_source_path, "input"),
+        ]
+        for tok_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
+            token_tracker.load_and_merge(tok_file, current_stage="Evaluation")
+        try:
+            token_tracker.download_from_mlflow(
+                git_slug=git_slug, multi_repo=multi_repo, current_stage="Evaluation", only_current_run=False
+            )
+        except Exception as e:
+            logging.debug(f"Failed to download tokens from MLflow in evaluation: {e}")
+    except Exception as e:
+        logging.debug(f"TokenCostTracker handling in evaluate_graphrag_index: {e}")
 
     try:
         already_measuring = False
@@ -356,6 +377,22 @@ def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch
                 logging.info("\n" + summary)
             except Exception as e:
                 logging.debug(f"Failed to log duration summary in evaluation: {e}")
+
+        if token_tracker:
+            for save_dir in [graphrag_source_path, os.path.join(graphrag_source_path, "output")]:
+                try:
+                    token_tracker.save_to_file(os.path.join(save_dir, "tokens.json"))
+                except Exception as e:
+                    logging.debug(f"Failed to save tokens to {save_dir}: {e}")
+            try:
+                token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
+            except Exception as e:
+                logging.debug(f"Failed to upload evaluation tokens to MLflow: {e}")
+            try:
+                summary = token_tracker.format_summary()
+                logging.info("\n" + summary)
+            except Exception as e:
+                logging.debug(f"Failed to log token summary in evaluation: {e}")
 
         return results
 

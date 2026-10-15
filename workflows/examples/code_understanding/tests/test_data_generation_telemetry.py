@@ -19,7 +19,8 @@ for pkg_name in [
     "requests", "deepeval",
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
     "sdg_hub", "sdg_hub.core", "sdg_hub.core.flow", "flows.flow_extensions", "datasets",
-    "lancedb", "nest_asyncio", "jsonpath_ng", "github", "pygments", "pygments.lexers", "pygments.util"
+    "lancedb", "nest_asyncio", "jsonpath_ng", "github", "pygments", "pygments.lexers", "pygments.util",
+    "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()

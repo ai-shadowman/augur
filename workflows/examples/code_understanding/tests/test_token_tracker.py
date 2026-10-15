@@ -18,7 +18,8 @@ for pkg_name in [
     "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
     "pandas", "yaml", "mlflow", "mlflow.tracking", "mlflow.metrics", "mlflow.metrics.genai",
     "requests", "deepeval",
-    "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm"
+    "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
+    "pygments", "pygments.lexers", "pygments.util", "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
@@ -31,6 +32,7 @@ if isinstance(mlflow_mock, MagicMock):
     mlflow_mock.active_run.return_value = None
 
 import loaders.default_asset_loader
+import utils.code_utils
 import utils.visualization_utils
 import telemetry.default_custom_telemetry
 from utils.token_tracker import TokenCostTracker
@@ -607,7 +609,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
              patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
              patch.object(DurationTracker, 'download_from_mlflow', side_effect=fake_dur_download), \
              patch.object(TokenCostTracker, 'download_from_mlflow', side_effect=fake_token_download), \
-             patch('sys.modules'):
+             patch.dict('sys.modules'):
 
             analyzer = DependencyAnalyzer(root_dir="/dummy/dir", git_slug="test-slug")
 
@@ -1146,7 +1148,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                  patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
                  patch('utils.visualization_utils.log_interactive_dependency_graph'), \
                  patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
-                 patch('sys.modules'):
+                 patch.dict('sys.modules'):
 
                 analyzer = DependencyAnalyzer(root_dir=tmp_dir, git_slug="test-slug")
 
@@ -1236,10 +1238,127 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertGreater(rec["prompt_tokens"], 0)
             self.assertGreater(rec["output_tokens"], 0)
 
+    def test_pricing_consistency_across_provider_prefixes_and_zero_cost_recalculation(self):
+        """Verify configured chat/embed pricing applies consistently across provider prefixes and recalculates 0.0 cost."""
+        tracker = TokenCostTracker(
+            chat_model="openai/gpt-oss-120b",
+            embed_model="e5-mistral-7b-instruct",
+            chat_prompt_price=0.000002,   # $2 / 1M
+            chat_output_price=0.000008,   # $8 / 1M
+            embed_prompt_price=0.0000002, # $0.20 / 1M
+        )
+        expected_chat_cost = 1000 * 0.000002 + 500 * 0.000008
+        for variant in ("openai/gpt-oss-120b", "gpt-oss-120b", "openrouter/openai/gpt-oss-120b"):
+            self.assertAlmostEqual(
+                tracker.calculate_cost(1000, 500, model=variant),
+                expected_chat_cost,
+                places=6,
+            )
+
+        # Passing cost=0.0 when tokens > 0 should recalculate cost
+        tracker.track(
+            "GraphRAG Indexing (openai/gpt-oss-120b)",
+            calls=10,
+            prompt_tokens=1000,
+            output_tokens=500,
+            cost=0.0,
+            model="openai/gpt-oss-120b",
+        )
+        self.assertAlmostEqual(
+            tracker.records["GraphRAG Indexing (openai/gpt-oss-120b)"]["cost"],
+            expected_chat_cost,
+            places=6,
+        )
+
+        # Merging an upstream record that had cost=0.0 with tokens > 0 should also recalculate cost
+        upstream = TokenCostTracker()
+        upstream.records["Data Generation (java) (openai/gpt-oss-120b)"] = {
+            "calls": 5,
+            "prompt_tokens": 1000,
+            "output_tokens": 500,
+            "total_tokens": 1500,
+            "cost": 0.0,
+            "model": "openai/gpt-oss-120b",
+        }
+        tracker.merge(upstream, current_stage="Analysis")
+        self.assertAlmostEqual(
+            tracker.records["Data Generation (java) (openai/gpt-oss-120b)"]["cost"],
+            expected_chat_cost,
+            places=6,
+        )
+
+    def test_separate_litellm_and_openai_categories_and_callback_guards(self):
+        """Verify enable_litellm_callbacks and enable_openai_tracking maintain separate categories and ignore failed/suppressed calls."""
+        tracker = TokenCostTracker()
+        tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
+        tracker.enable_openai_tracking(category="Evaluation (Judge)")
+
+        self.assertEqual(tracker._litellm_category, "Evaluation (Ground Truth)")
+        self.assertEqual(tracker._openai_category, "Evaluation (Judge)")
+
+        # Failed / None / Exception responses should NOT increment call count
+        tracker._litellm_callback({}, None, 0.0, 1.0)
+        tracker._litellm_callback({}, RuntimeError("bad param"), 0.0, 1.0)
+        self.assertEqual(len(tracker.records), 0)
+
+        # Suppressed callbacks should NOT record
+        tracker._suppress_callbacks = True
+        try:
+            tracker._litellm_callback(
+                {"model": "openai/gpt-oss-120b"},
+                {"usage": {"prompt_tokens": 100, "completion_tokens": 50}},
+                0.0,
+                1.0,
+            )
+        finally:
+            tracker._suppress_callbacks = False
+        self.assertEqual(len(tracker.records), 0)
+
+        # Valid LiteLLM callback uses _litellm_category ("Evaluation (Ground Truth)")
+        tracker._litellm_callback(
+            {"model": "openai/gpt-oss-120b"},
+            {"usage": {"prompt_tokens": 100, "completion_tokens": 50}},
+            0.0,
+            1.0,
+        )
+        self.assertIn("Evaluation (Ground Truth) (openai/gpt-oss-120b)", tracker.records)
+
+    def test_evaluation_stage_tracking_and_merge_in_analysis(self):
+        """Verify _in_evaluation prefixes GraphRAG tracking sources with 'Evaluation ' and merge preserves them in Analysis."""
+        eval_tracker = TokenCostTracker(chat_model="openai/gpt-oss-120b", embed_model="e5-mistral-7b-instruct")
+        eval_tracker._in_evaluation = True
+        try:
+            eval_tracker.track_local_search(prompt_tokens=2000, output_tokens=400)
+            eval_tracker.track_embedding(prompt_tokens=150)
+        finally:
+            eval_tracker._in_evaluation = False
+
+        self.assertIn("Evaluation GraphRAG Local Search (openai/gpt-oss-120b)", eval_tracker.records)
+        self.assertIn("Evaluation GraphRAG Embeddings (e5-mistral-7b-instruct)", eval_tracker.records)
+
+        # Merge into Analysis tracker: Evaluation records must be preserved while stale Analysis records are skipped
+        analysis_tracker = TokenCostTracker(chat_model="openai/gpt-oss-120b", embed_model="e5-mistral-7b-instruct")
+        analysis_tracker.track_local_search(prompt_tokens=5000, output_tokens=1000)
+        analysis_tracker.merge(eval_tracker, current_stage="Analysis")
+
+        self.assertIn("Evaluation GraphRAG Local Search (openai/gpt-oss-120b)", analysis_tracker.records)
+        self.assertIn("Evaluation GraphRAG Embeddings (e5-mistral-7b-instruct)", analysis_tracker.records)
+        self.assertIn("GraphRAG Local Search (openai/gpt-oss-120b)", analysis_tracker.records)
+
+        summary = analysis_tracker.format_summary()
+        pos_eval = summary.find("Evaluation GraphRAG Local Search")
+        pos_analysis = summary.find("GraphRAG Local Search")
+        self.assertTrue(0 <= pos_eval < pos_analysis)
+
+    def test_ensure_writable_tiktoken_cache_sets_writable_dir(self):
+        """Verify _ensure_writable_tiktoken_cache redirects non-writable TIKTOKEN_CACHE_DIR to a writable temp folder."""
+        from eval.custom_evaluator import _ensure_writable_tiktoken_cache
+        with patch.dict(os.environ, {"TIKTOKEN_CACHE_DIR": "/nonexistent_root_dir/tiktoken_cache"}):
+            with patch("os.access", return_value=False):
+                _ensure_writable_tiktoken_cache()
+                self.assertIn("tiktoken_cache", os.environ.get("TIKTOKEN_CACHE_DIR", ""))
+                self.assertNotEqual(os.environ.get("TIKTOKEN_CACHE_DIR"), "/nonexistent_root_dir/tiktoken_cache")
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-
