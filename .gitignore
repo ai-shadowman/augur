@@ -51,6 +51,12 @@ EPICS.md
 session-summaries/
 PROMPT_ANALYSIS*.md
 
+# Agent instructions for this checkout. Local for the same reason: it encodes
+# one contributor's working conventions, and a shared repository should not
+# inherit them without the other maintainers agreeing to them first. Rooted so
+# a tracked CLAUDE.md can still be added under a subdirectory later.
+/CLAUDE.md
+
 # GraphRAG copies the prompts it runs with into a prompts/ directory beside the
 # index. The tracked source of truth is assets/graphrag/.
 workflows/examples/code_understanding/prompts/
