@@ -8,6 +8,10 @@ version = "0.1.0"
 dependencies = [
     "litellm",
     "pathspec>=1.1.1,<2",
+    # Imported directly by utils/json_utils.py and loaders/asset_loader.py. It
+    # arrives transitively via litellm today, so an install that drops or
+    # unpins litellm breaks asset loading with a bare ModuleNotFoundError.
+    "pyyaml>=6,<7",
 ]
 
 [project.optional-dependencies]
