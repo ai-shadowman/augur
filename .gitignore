@@ -32,3 +32,25 @@ durations.json
 tokens.json
 **/tokens.json
 /flows/
+
+# Local tooling artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+
+# Written into the working directory by the indexing tests
+indexing_result_*.json
+
+# Planning and session scratch. This repository keeps these local rather than
+# tracked: they carry per-session context for one contributor's workflow and
+# would read as noise in a shared history. Anything worth keeping goes in a
+# commit message or in documentation for the code it describes.
+NEXT_SESSION*.md
+EPICS.md
+session-summaries/
+PROMPT_ANALYSIS*.md
+
+# GraphRAG copies the prompts it runs with into a prompts/ directory beside the
+# index. The tracked source of truth is assets/graphrag/.
+workflows/examples/code_understanding/prompts/
