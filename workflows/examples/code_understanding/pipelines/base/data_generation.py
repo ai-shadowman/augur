@@ -213,7 +213,16 @@ def get_parsed_code_metadata(df, language, config=False):
         # Per-request LLM timeout (seconds), LiteLLM retry count, and concurrent request limit
         llm_timeout = float(os.getenv("SDG_LLM_TIMEOUT", "600"))
         llm_num_retries = int(os.getenv("SDG_LLM_NUM_RETRIES", "10"))
-        llm_max_concurrency = int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10"))
+        default_sdg_concurrency = 10
+        if os.getenv("GUIDELLM_AUTO_TUNE", "true").lower() in ("true", "1", "yes"):
+            try:
+                from utils.benchmark_tracker import BenchmarkTracker
+                bt = BenchmarkTracker.get_instance()
+                if bt.profiles:
+                    default_sdg_concurrency = bt.get_recommended_sdg_concurrency(default=10)
+            except Exception:
+                pass
+        llm_max_concurrency = int(os.getenv("SDG_LLM_MAX_CONCURRENCY", str(default_sdg_concurrency)))
 
         logging.info(
             f"Parsing code metadata... (timeout={llm_timeout}s, num_retries={llm_num_retries}, "
@@ -559,6 +568,13 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            b_tr = BenchmarkTracker.get_instance()
+            if b_tr.profiles:
+                b_tr.save_to_file(os.path.join(target_path, "benchmarks.json"))
+        except Exception:
+            pass
 
         log_meta_cm = dur_tracker.measure(stage="Data Generation", step=f"Log Metadata Results ({step_label})") if dur_tracker else nullcontext()
         with log_meta_cm:
@@ -667,6 +683,29 @@ class DataGenerationPipeline:
             code_tracker = None
 
         try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            from utils.duration_tracker import find_all_telemetry_files
+            bench_tracker = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            candidate_dirs = [
+                target_path,
+                os.path.dirname(target_path) if target_path else "",
+                os.getenv("PARENT_TARGET_PATH", "target"),
+            ]
+            for bf in find_all_telemetry_files([d for d in candidate_dirs if d], "benchmarks.json"):
+                bench_tracker.load_and_merge(bf)
+            bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            if os.getenv("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes") and not bench_tracker.profiles:
+                cal_cm = dur_tracker.measure(stage="Data Generation", step="GuideLLM Calibration Sweep") if dur_tracker else nullcontext()
+                with cal_cm:
+                    bench_tracker.run_guidellm_profile(
+                        profile_name="sdg",
+                        max_seconds=int(os.getenv("GUIDELLM_MAX_SECONDS", "10")),
+                    )
+        except Exception as e:
+            logging.debug(f"BenchmarkTracker initialization in data generation: {e}")
+            bench_tracker = None
+
+        try:
             if dur_tracker:
                 try:
                     dur_tracker.record_pod_creation_overhead(stage="Data Generation")
@@ -683,6 +722,13 @@ class DataGenerationPipeline:
                         try:
                             with dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics"):
                                 code_tracker.measure_repository(source_path, languages=languages)
+                            if bench_tracker and bench_tracker.profiles and code_tracker.total_repo_files > 0:
+                                est = bench_tracker.estimate_pipeline_runtime(code_tracker.total_repo_files)
+                                logging.info(
+                                    f"GuideLLM Estimated Pipeline Wall-Clock for {code_tracker.total_repo_files} files: "
+                                    f"~{est['total_minutes']} min (Stage 1: {est['stage1_sdg_seconds']}s, "
+                                    f"Stage 2: {est['stage2_indexing_seconds']}s, Stage 3: {est['stage3_analysis_seconds']}s)"
+                                )
                         except Exception as e:
                             logging.debug(f"Code metrics measurement failed: {e}")
 
@@ -793,6 +839,16 @@ class DataGenerationPipeline:
                 logging.info("\n" + code_tr.format_summary())
             except Exception as e:
                 logging.debug("Code metrics handling in data generation: %s", e)
+
+            if bench_tracker and bench_tracker.profiles:
+                try:
+                    if target_path:
+                        bench_tracker.save_to_file(os.path.join(target_path, "benchmarks.json"))
+                    bench_tracker.log_to_mlflow()
+                    bench_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                    logging.info("\n" + bench_tracker.format_summary())
+                except Exception as e:
+                    logging.debug(f"BenchmarkTracker persistence in data generation: {e}")
 
         return result
 

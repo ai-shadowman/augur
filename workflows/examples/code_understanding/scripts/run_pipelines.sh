@@ -118,15 +118,31 @@ PYEOF
 }
 
 MODE="multi"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRECHECK_GUIDELLM="${GUIDELLM_PRECHECK_ENABLED:-true}"
+BENCHMARK_LLM="${GUIDELLM_CALIBRATE_PIPELINE:-true}"
 
 for arg in "$@"; do
     case "$arg" in
-        --single-repo) MODE="single" ;;
-        --multi-repo)  MODE="multi" ;;
-        -h|--help)     usage; exit 0 ;;
+        --single-repo)         MODE="single" ;;
+        --multi-repo)          MODE="multi" ;;
+        --with-guidellm-check) PRECHECK_GUIDELLM="true" ;;
+        --no-guidellm-check)   PRECHECK_GUIDELLM="false" ;;
+        --benchmark-llm)       BENCHMARK_LLM="true" ;;
+        --no-benchmark-llm)    BENCHMARK_LLM="false" ;;
+        -h|--help)             usage; exit 0 ;;
         *) echo "Error: Unknown argument: $arg" >&2; usage; exit 1 ;;
     esac
 done
+
+if [[ "${PRECHECK_GUIDELLM,,}" == "true" ]]; then
+    bash "$SCRIPT_DIR/pre_check_pipelines.sh" --guidellm-only
+fi
+
+BENCHMARK_BOOL="false"
+if [[ "${BENCHMARK_LLM,,}" == "true" ]]; then
+    BENCHMARK_BOOL="true"
+fi
 
 if [[ "$MODE" == "single" ]]; then
     if [[ -z "$GIT_REPO" ]]; then
@@ -134,10 +150,10 @@ if [[ "$MODE" == "single" ]]; then
         exit 1
     fi
     trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
-        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
+        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"benchmark_llm\": $BENCHMARK_BOOL}"
 else
     trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}" \
-        "{\"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
+        "{\"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\", \"benchmark_llm\": $BENCHMARK_BOOL}"
 fi
 
 echo "All done."

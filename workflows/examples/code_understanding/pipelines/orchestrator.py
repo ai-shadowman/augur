@@ -39,13 +39,20 @@ def single_repo_pipeline(
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
     multi_repo: bool = False,
+    benchmark_llm: bool = True,
 ):
     if uses_kfp():
+        cal = DataGenerationPipeline.calibrate(
+            git_repo=git_repo,
+            git_branch=git_branch,
+            multi_repo=multi_repo,
+            enabled=benchmark_llm,
+        )
         dg = DataGenerationPipeline.run(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
-        )
+        ).after(cal)
         idx = IndexingPipeline.run(
             codebase_dir=dg.output,
             git_repo=git_repo,
@@ -60,6 +67,9 @@ def single_repo_pipeline(
         )
     else:
         from pipelines.base.data_generation import generate_git_slug
+
+        if benchmark_llm:
+            os.environ["GUIDELLM_CALIBRATE_PIPELINE"] = "true"
 
         git_slug = generate_git_slug(git_repo, git_branch)
         source_path = f"{parent_source_path}/{git_slug}"
@@ -94,9 +104,14 @@ def single_repo_pipeline(
 def multi_repo_pipeline(
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
+    benchmark_llm: bool = True,
 ):
     if uses_kfp():
-        dg = DataGenerationPipeline.run_multi_repo()
+        cal = DataGenerationPipeline.calibrate(
+            multi_repo=True,
+            enabled=benchmark_llm,
+        )
+        dg = DataGenerationPipeline.run_multi_repo().after(cal)
         idx = IndexingPipeline.run_multi_repo(
             parent_target_path=parent_target_path,
         ).after(dg)
@@ -105,6 +120,9 @@ def multi_repo_pipeline(
         )
     else:
         from loaders.default_asset_loader import DefaultAssetLoader
+
+        if benchmark_llm:
+            os.environ["GUIDELLM_CALIBRATE_PIPELINE"] = "true"
 
         env_repos = os.getenv("GIT_REPO_LIST_CONTENTS")
         git_repos = json.loads(env_repos) if env_repos else (DefaultAssetLoader().download("repos/repo_list.json") or [])

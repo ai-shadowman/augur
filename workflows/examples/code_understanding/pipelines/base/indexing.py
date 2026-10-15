@@ -109,7 +109,17 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         except Exception as e:
             logging.debug("Code metrics handling in indexing: %s", e)
 
-        # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
+        bench_tracker = None
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            bench_tracker = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            for bench_file in find_all_telemetry_files(candidate_dirs, "benchmarks.json"):
+                bench_tracker.load_and_merge(bench_file)
+            bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+        except Exception as e:
+            logging.debug("BenchmarkTracker handling in indexing: %s", e)
+
+        # Immediately preserve prior durations.json, tokens.json, project_metrics.json, and benchmarks.json in graphrag_source_path
         if dur_tracker:
             for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
@@ -128,6 +138,12 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
                 except Exception:
                     pass
+        if bench_tracker and bench_tracker.profiles:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                try:
+                    bench_tracker.save_to_file(os.path.join(d, "benchmarks.json"))
+                except Exception:
+                    pass
 
         try:
             cm_settings = dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config") if dur_tracker else nullcontext()
@@ -143,7 +159,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in ["durations.json", "tokens.json", "project_metrics.json"]:
+                for fname in ["durations.json", "tokens.json", "project_metrics.json", "benchmarks.json"]:
                     fpath = os.path.join(f"{graphrag_source_path}/input", fname)
                     if os.path.exists(fpath):
                         try:
@@ -234,6 +250,18 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     logging.info("\n" + summary)
                 except Exception as e:
                     logging.debug(f"Failed to log code metrics summary: {e}")
+
+            if bench_tracker and bench_tracker.profiles:
+                for save_dir in [graphrag_source_path, f"{graphrag_source_path}/output"]:
+                    try:
+                        bench_tracker.save_to_file(os.path.join(save_dir, "benchmarks.json"))
+                    except Exception:
+                        pass
+                try:
+                    bench_tracker.log_to_mlflow()
+                    bench_tracker.upload_to_mlflow(git_slug=git_slug, stage="Indexing", multi_repo=multi_repo)
+                except Exception as e:
+                    logging.debug(f"Failed to upload benchmark metrics to MLflow in indexing: {e}")
 
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,

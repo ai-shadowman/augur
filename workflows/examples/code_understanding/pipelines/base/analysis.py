@@ -113,6 +113,16 @@ class AnalysisPipeline:
         except Exception as e:
             logging.debug(f"CodeMetricsTracker handling in analysis: {e}")
 
+        bench_tracker = None
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            bench_tracker = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            for bench_file in find_all_telemetry_files(candidate_dirs, "benchmarks.json"):
+                bench_tracker.load_and_merge(bench_file)
+            bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+        except Exception as e:
+            logging.debug(f"BenchmarkTracker handling in analysis: {e}")
+
         report = asyncio.run(analyzer.generate_migration_report())
 
         # Safeguard: ensure telemetry summaries are present in the final report
@@ -124,6 +134,9 @@ class AnalysisPipeline:
 
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
             report = _inject_section(report, dur_tracker.format_markdown_section())
+
+        if bench_tracker and bench_tracker.profiles and "### GuideLLM Serving Benchmark" not in report:
+            report = _inject_section(report, bench_tracker.format_markdown_section())
 
         try:
             analyzer.token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
@@ -144,6 +157,14 @@ class AnalysisPipeline:
                 logging.info("\n" + summary)
             except Exception as e:
                 logging.debug(f"Failed to upload/log code metrics in analysis: {e}")
+
+        if bench_tracker and bench_tracker.profiles:
+            try:
+                bench_tracker.log_to_mlflow()
+                bench_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)
+                logging.info("\n" + bench_tracker.format_summary())
+            except Exception as e:
+                logging.debug(f"Failed to upload/log benchmark metrics in analysis: {e}")
 
         result_file = f"migration_report_{git_slug}.md" if git_slug else "migration_report.md"
 

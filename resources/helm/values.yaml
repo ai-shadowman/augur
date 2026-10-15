@@ -70,6 +70,15 @@ runPipelines:
   targetPath: "target"
   graphragSourcePath: "graph_rag_app/source"
 
+guidellm:
+  run: false
+  args: "--upload-mlflow"
+  targetRole: "graphrag"
+  workload: "indexing"
+  profile: "concurrent"
+  concurrencyRates: "1,5,10,20,25"
+  maxSeconds: "30"
+
 otel:
   createBucket: false
   tempo:

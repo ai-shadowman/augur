@@ -13,12 +13,12 @@ models:
     model: ${GRAPHRAG_LLM_ID}
     model_provider: ${GRAPHRAG_LLM_PROVIDER_SETTINGS_XML}
     model_supports_json: true
-    concurrent_requests: 25           
+    concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}
     async_mode: threaded
     retry_strategy: native
     max_retries: 15                   # <-- Increased retry cushion for rate limits
-    tokens_per_minute: null           
-    requests_per_minute: null         # <-- Pace requests smoothly rather than in 25-request bursts if a number is set
+    tokens_per_minute: ${GRAPHRAG_TOKENS_PER_MINUTE}
+    requests_per_minute: ${GRAPHRAG_REQUESTS_PER_MINUTE}         # <-- Pace requests smoothly rather than in 25-request bursts if a number is set
     # encoding_name: o200k_harmony 
   default_embedding_model:
     type: embedding # or azure_openai_embedding

@@ -16,6 +16,7 @@ AUGUR automates the analysis of legacy repositories to produce actionable modern
 ### Comprehensive Observability & Telemetry
 AUGUR features end-to-end telemetry embedded directly into its execution reports and MLflow runs:
 - **Codebase Scope & Size Metrics**: Files, SLOC, comments, blanks, and config metrics tracked via [`CodeMetricsTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/code_metrics_tracker.py). See 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**.
+- **LLM Inference Benchmarking & Auto-Tuning (GuideLLM)**: TTFT, ITL, token throughput (`tok/s`), pre-flight SLO checks, and automatic concurrency/rate-limit calibration via [`BenchmarkTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/benchmark_tracker.py). See 👉 **[README_GUIDELLM.md](README_GUIDELLM.md)**.
 - **LLM Token Usage & Cost Governance**: Real-time prompt/completion token tracking and dollar cost estimation via [`TokenCostTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/token_tracker.py). See 👉 **[README_METRICS.md](README_METRICS.md)**.
 - **Pipeline Step Latency Profiling**: High-precision wall-clock latency profiling via [`DurationTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/duration_tracker.py). See 👉 **[README_METRICS.md](README_METRICS.md)**.
 - **Distributed Tracing**: OpenTelemetry SDK integration exporting traces to Red Hat OpenShift distributed tracing (Tempo).
@@ -38,10 +39,12 @@ AUGUR features end-to-end telemetry embedded directly into its execution reports
 
 In air-gapped or disconnected OpenShift clusters without public internet access, external runtime dependency downloads will fail. 
 
-### Tiktoken Tokenizer Cache
+### Tiktoken & GuideLLM Tokenizer Caches
 OpenAI's `tiktoken` library (used by GraphRAG for chunking, token counting, and prompt context budgeting) dynamically downloads its BPE vocabulary file from `https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken` on first use. In a disconnected environment, this causes container pods to hang or crash with `urllib.error.URLError`.
 
-To prevent external network access at runtime, the `cl100k_base.tiktoken` file is pre-downloaded and baked into each pipeline container image under `/opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` alongside the `TIKTOKEN_CACHE_DIR` environment variable.
+To prevent external network access at runtime:
+- The `cl100k_base.tiktoken` file is pre-downloaded and baked into each pipeline container image under `/opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` alongside the `TIKTOKEN_CACHE_DIR` environment variable.
+- The HuggingFace `gpt2` tokenizer required by GuideLLM is pre-cached in the `pipeline-tools` image under `/opt/app-root/src/.cache/huggingface/gpt2` (`GUIDELLM_DEFAULT_PROCESSOR`).
 
 For complete build instructions and hashing details, see:
 👉 **[resources/images/README.md](resources/images/README.md#offline--disconnected-support-tiktoken-cache)**
@@ -63,10 +66,32 @@ python workflows/examples/code_understanding/pipelines/orchestrator.py
 ```
 
 ### Running in OpenShift AI Pipelines (Kubeflow)
-Deploy Helm templates and compile pipelines to YAML:
-```bash
-make install
-```
+1. **Build and push container images**:
+   ```bash
+   make build-images
+   ```
+   *(Or build on-cluster via OpenShift BuildConfigs: `make oc-build-images`)*
+
+2. **Deploy Helm templates and upload Kubeflow Pipelines**:
+   ```bash
+   make install
+   ```
+   *(Or re-upload pipelines only: `make upload-pipelines`)*
+
+3. **Trigger AUGUR pipelines (with automatic GuideLLM pre-check + Stage 0 calibration)**:
+   ```bash
+   # Single-repository pipeline
+   make run-pipelines ARGS="--single-repo"
+
+   # Multi-repository pipeline
+   make run-pipelines ARGS="--multi-repo"
+   ```
+
+4. **Run a standalone GuideLLM benchmark Job on OpenShift (optional)**:
+   ```bash
+   make benchmark-llm
+   ```
+
 Or compile pipelines standalone:
 ```bash
 PIPELINE_COMPILE_ONLY=1 \
@@ -83,6 +108,7 @@ python -m unittest discover -s workflows/examples/code_understanding/tests
 
 ## Documentation & Guides
 - 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
+- 👉 **[README_GUIDELLM.md](README_GUIDELLM.md)**: Detailed guide for GuideLLM benchmarking, `BenchmarkTracker`, SLO pre-checks, and automatic concurrency calibration.
 - 👉 **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
 - 👉 **[resources/images/README.md](resources/images/README.md)**: Container image build process and disconnected/air-gapped registry mirroring.
 - 👉 **[resources/openshift/README.md](resources/openshift/README.md)**: OpenShift image build process

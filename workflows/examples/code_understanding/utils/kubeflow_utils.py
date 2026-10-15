@@ -57,6 +57,12 @@ ANALYSIS_BASE_IMAGE = (
     f":{os.getenv('KFP_ANALYSIS_BASE_IMAGE_TAG')}"
 )
 
+PIPELINE_TOOLS_BASE_IMAGE = (
+    f"{os.getenv('KFP_IMAGE_REGISTRY')}"
+    f"/{os.getenv('KFP_PIPELINE_TOOLS_IMAGE_NAME', 'pipeline-tools')}"
+    f":{os.getenv('KFP_PIPELINE_TOOLS_IMAGE_TAG', 'latest')}"
+)
+
 
 ##############################################################################
 # Git URL helper

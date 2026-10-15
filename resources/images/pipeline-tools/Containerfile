@@ -4,9 +4,14 @@ FROM ${BASE_IMAGE}
 USER 1001
 WORKDIR /opt/app-root/src
 
+ENV HF_HOME=/opt/app-root/src/hf_cache
+ENV GUIDELLM_DEFAULT_PROCESSOR=/opt/app-root/src/hf_cache/gpt2
+
 COPY --chown=1001:0 resources/images/pipeline-tools/requirements.txt ./requirements.txt
 COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
 
 RUN pip install --no-cache-dir --upgrade pip \
 	&& pip install --no-cache-dir -r requirements.txt \
-	&& pip install --no-cache-dir ./workflows/examples/code_understanding
+	&& pip install --no-cache-dir ./workflows/examples/code_understanding \
+	&& mkdir -p /opt/app-root/src/hf_cache/gpt2 \
+	&& python3 -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2').save_pretrained('/opt/app-root/src/hf_cache/gpt2')"

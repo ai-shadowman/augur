@@ -4,7 +4,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from kfp import dsl
 from kfp.dsl import Dataset, Input, Output
-from utils.kubeflow_utils import DATA_GENERATION_BASE_IMAGE, get_pip_installable_git_url, inject_secret_as_env
+from utils.kubeflow_utils import (
+    DATA_GENERATION_BASE_IMAGE,
+    PIPELINE_TOOLS_BASE_IMAGE,
+    get_pip_installable_git_url,
+    inject_secret_as_env,
+)
 
 _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
     git_username=os.getenv("AUGUR_GIT_REPO_USERNAME"),
@@ -17,6 +22,60 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 ##############################################################################
 # Components
 ##############################################################################
+
+@inject_secret_as_env(secret_name="code-understanding-env")
+@dsl.component(base_image=PIPELINE_TOOLS_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+def guidellm_calibration_op(
+    git_repo: str = "",
+    git_branch: str = "main",
+    multi_repo: bool = False,
+    enabled: bool = False,
+) -> int:
+    """Runs a GuideLLM concurrency calibration sweep before Stage 1 when enabled
+    and uploads benchmarks.json to MLflow for downstream auto-tuning."""
+    from pipelines.base.data_generation import generate_git_slug
+    from utils.kubeflow_utils import setup_logging
+    setup_logging()
+    import logging, os
+
+    git_repo = git_repo or os.getenv("GIT_REPO", "")
+    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
+    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+
+    should_run = enabled or os.getenv("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes")
+
+    try:
+        from utils.benchmark_tracker import BenchmarkTracker
+        bt = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+        bt.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+
+        if should_run:
+            profile_arg = os.getenv("GUIDELLM_PROFILE", "sdg")
+            max_sec = int(os.getenv("GUIDELLM_MAX_SECONDS", "15"))
+            rates_str = os.getenv("GUIDELLM_RATES", "1,4,8,16")
+            rates = [int(r.strip()) for r in rates_str.split(",") if r.strip().isdigit()] or [1, 4, 8, 16]
+
+            logging.info(
+                f"Running GuideLLM pre-stage calibration sweep (profile={profile_arg}, "
+                f"rates={rates}, max_seconds={max_sec})..."
+            )
+            profiles_to_run = ["sdg", "indexing"] if profile_arg == "all" else [profile_arg]
+            for prof in profiles_to_run:
+                bt.run_guidellm_profile(profile_name=prof, rates=rates, max_seconds=max_sec)
+
+            bt.log_to_mlflow()
+            bt.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+            logging.info("\n" + bt.format_summary())
+        else:
+            logging.info("GuideLLM calibration step skipped (enabled=False). Using existing MLflow benchmark data if present.")
+
+        rec = bt.get_recommended_sdg_concurrency(default=int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10")))
+        logging.info(f"GuideLLM recommended SDG_LLM_MAX_CONCURRENCY={rec}")
+        return int(rec)
+    except Exception as e:
+        logging.warning(f"GuideLLM calibration encountered an error (falling back to default concurrency): {e}")
+        return int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10"))
+
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
@@ -150,6 +209,24 @@ def generate_code_and_meta_op(
         except Exception as e:
             logging.debug(f"CodeMetricsTracker handling in generate_code_and_meta_op: {e}")
 
+        bench_tracker = None
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            bench_tracker = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            bench_file = os.path.join(tmp_source, "benchmarks.json")
+            if os.path.exists(bench_file):
+                bench_tracker.load_and_merge(bench_file)
+            if bench_tracker.profiles and code_tracker and code_tracker.total_repo_files > 0:
+                est = bench_tracker.estimate_pipeline_runtime(code_tracker.total_repo_files)
+                logging.info(
+                    f"GuideLLM Estimated Pipeline Wall-Clock for {code_tracker.total_repo_files} files: "
+                    f"~{est['total_minutes']} min (Stage 1: {est['stage1_sdg_seconds']}s, "
+                    f"Stage 2: {est['stage2_indexing_seconds']}s, Stage 3: {est['stage3_analysis_seconds']}s)"
+                )
+        except Exception as e:
+            logging.debug(f"BenchmarkTracker handling in generate_code_and_meta_op: {e}")
+
         try:
             from pipelines.base.data_generation import load_external_data
 
@@ -167,6 +244,11 @@ def generate_code_and_meta_op(
             if code_tracker:
                 try:
                     code_tracker.save_to_file(os.path.join(tmp_target, "project_metrics.json"))
+                except Exception:
+                    pass
+            if bench_tracker and bench_tracker.profiles:
+                try:
+                    bench_tracker.save_to_file(os.path.join(tmp_target, "benchmarks.json"))
                 except Exception:
                     pass
 
@@ -254,6 +336,15 @@ def generate_code_and_meta_op(
                 except Exception as e:
                     logging.debug(f"Failed to print code metrics summary in data generation pod: {e}")
 
+            if bench_tracker and bench_tracker.profiles:
+                try:
+                    bench_tracker.save_to_file(os.path.join(tmp_target, "benchmarks.json"))
+                    bench_tracker.log_to_mlflow()
+                    bench_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                    logging.info("\n" + bench_tracker.format_summary())
+                except Exception as e:
+                    logging.debug(f"Failed to persist benchmark metrics in generate_code_and_meta_op: {e}")
+
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
@@ -335,3 +426,4 @@ def _run_pipeline_multi_repo():
 class DataGenerationPipeline:
     run = staticmethod(_run_pipeline)
     run_multi_repo = staticmethod(_run_pipeline_multi_repo)
+    calibrate = staticmethod(guidellm_calibration_op)

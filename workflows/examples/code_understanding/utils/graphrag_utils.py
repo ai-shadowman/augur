@@ -552,6 +552,50 @@ class DependencyAnalyzer:
                 logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
                 env["EMBED_LLM_TOKEN"] = "EMPTY"
 
+            # Populate GraphRAG concurrency and rate limits (explicit env -> GuideLLM auto-tune -> defaults)
+            auto_tune = env.get("GUIDELLM_AUTO_TUNE", "true").lower() in ("true", "1", "yes")
+            if auto_tune and (
+                not env.get("GRAPHRAG_CONCURRENT_REQUESTS")
+                or not env.get("GRAPHRAG_REQUESTS_PER_MINUTE")
+                or not env.get("GRAPHRAG_TOKENS_PER_MINUTE")
+            ):
+                try:
+                    from utils.benchmark_tracker import BenchmarkTracker
+                    from utils.duration_tracker import find_all_telemetry_files
+
+                    bt = BenchmarkTracker.get_instance()
+                    if not bt.profiles:
+                        candidate_dirs = [
+                            output_dir,
+                            template_dir,
+                            os.path.dirname(output_dir),
+                            os.getenv("PARENT_TARGET_PATH", "target"),
+                        ]
+                        for bf in find_all_telemetry_files(candidate_dirs, "benchmarks.json"):
+                            bt.load_and_merge(bf)
+                    limits = bt.get_recommended_graphrag_limits(default_concurrency=25)
+                    if bt.profiles:
+                        env.setdefault("GRAPHRAG_CONCURRENT_REQUESTS", str(limits["concurrent_requests"]))
+                        env.setdefault(
+                            "GRAPHRAG_REQUESTS_PER_MINUTE",
+                            str(limits["requests_per_minute"]) if limits.get("requests_per_minute") else "null",
+                        )
+                        env.setdefault(
+                            "GRAPHRAG_TOKENS_PER_MINUTE",
+                            str(limits["tokens_per_minute"]) if limits.get("tokens_per_minute") else "null",
+                        )
+                        logging.info(
+                            f"GuideLLM Auto-Tuned GraphRAG settings: concurrent_requests={env['GRAPHRAG_CONCURRENT_REQUESTS']}, "
+                            f"requests_per_minute={env['GRAPHRAG_REQUESTS_PER_MINUTE']}, "
+                            f"tokens_per_minute={env['GRAPHRAG_TOKENS_PER_MINUTE']}"
+                        )
+                except Exception as bt_err:
+                    logging.debug(f"GuideLLM GraphRAG auto-tune skipped: {bt_err}")
+
+            env.setdefault("GRAPHRAG_CONCURRENT_REQUESTS", "25")
+            env.setdefault("GRAPHRAG_REQUESTS_PER_MINUTE", "null")
+            env.setdefault("GRAPHRAG_TOKENS_PER_MINUTE", "null")
+
             with open(template_path) as f:
                 content = string.Template(f.read())
 
@@ -674,6 +718,16 @@ class DependencyAnalyzer:
         except Exception as e:
             logging.debug(f"CodeMetricsTracker initialization in generate_migration_report: {e}")
 
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            from utils.duration_tracker import find_all_telemetry_files
+            bench_tracker = BenchmarkTracker.get_instance(git_slug=self.git_slug)
+            for bench_file in find_all_telemetry_files(candidate_dirs, "benchmarks.json"):
+                bench_tracker.load_and_merge(bench_file)
+            bench_tracker.download_from_mlflow(git_slug=self.git_slug, multi_repo=self.multi_repo)
+        except Exception as e:
+            logging.debug(f"BenchmarkTracker initialization in generate_migration_report: {e}")
+
         self._ensure_metrics_extracted(candidate_dirs, dur_tracker)
 
 
@@ -793,7 +847,18 @@ class DependencyAnalyzer:
         except Exception:
             duration_section = ""
 
-        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if isinstance(s, str) and s.strip()]
+        try:
+            from utils.benchmark_tracker import BenchmarkTracker
+            bs = BenchmarkTracker.get_instance(git_slug=self.git_slug).format_markdown_section()
+            benchmark_section = bs if isinstance(bs, str) else ""
+        except Exception:
+            benchmark_section = ""
+
+        sections = [
+            s.strip()
+            for s in [code_metrics_section, token_summary_section, duration_section, benchmark_section]
+            if isinstance(s, str) and s.strip()
+        ]
         metrics_section = "\n\n".join(sections)
 
         if not self.multi_repo:

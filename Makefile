@@ -264,6 +264,39 @@ run-pipelines:
 	echo "==> Streaming pipeline run results..." && \
 	oc logs -f job/run-pipelines -n $$KFP_NAMESPACE
 
+benchmark-llm:
+	@set -a && . $(ENV_FILE) && set +a && \
+	echo "==> Submitting run-guidellm benchmark job..." && \
+	oc delete job run-guidellm -n $$KFP_NAMESPACE --ignore-not-found=true && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
+		--set guidellm.run=true \
+		--set-string guidellm.args="$${GUIDELLM_ARGS:---upload-mlflow}" \
+		--set-string guidellm.targetRole="$${GUIDELLM_TARGET_ROLE:-graphrag}" \
+		--set-string guidellm.workload="$${GUIDELLM_WORKLOAD:-indexing}" \
+		--set-string guidellm.profile="$${GUIDELLM_PROFILE:-concurrent}" \
+		--set-string guidellm.concurrencyRates="$${GUIDELLM_CONCURRENCY_RATES:-1,5,10,20,25}" \
+		--set-string guidellm.maxSeconds="$${GUIDELLM_MAX_SECONDS:-30}" \
+		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
+		-s templates/run-guidellm-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	\
+	echo "==> Waiting for run-guidellm container to start..." && \
+	until oc logs job/run-guidellm -n $$KFP_NAMESPACE >/dev/null 2>&1; do sleep 2; done && \
+	\
+	echo "==> Streaming GuideLLM benchmark results..." && \
+	oc logs -f job/run-guidellm -n $$KFP_NAMESPACE
+
+benchmark-llm-local:
+	@set -a && . $(ENV_FILE) && set +a && \
+	bash workflows/examples/code_understanding/scripts/run_guidellm.sh $${GUIDELLM_ARGS:-}
+
 deploy-otel:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
