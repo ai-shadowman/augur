@@ -1,6 +1,22 @@
 ---
 title: "### Regression Risk Assessment"
-skip_prompt: "multi_repo"
 ---
-What areas of the codebase are most at risk of breaking during migration?
-For each risk area, describe what is likely to break, why, and what should be validated before and after migration.
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+--- BEGIN MODERNIZATION RECOMMENDATIONS ---
+{{answers[4]}}
+--- END MODERNIZATION RECOMMENDATIONS ---
+--- BEGIN COMPONENT MIGRATION PLAN ---
+{{answers[5]}}
+--- END COMPONENT MIGRATION PLAN ---
+--- BEGIN INTEGRATION FINDINGS ---
+{{answers[6]}}
+--- END INTEGRATION FINDINGS ---
+
+Assess regression risks for the proposed application migration in each repository.
+Tie every risk to a detected dependency, affected application component, or evidenced integration contract. Describe the potential failure, why the proposed change could trigger it, supporting evidence, and checks before and after migration.
+Distinguish documented incompatibilities from plausible risks requiring verification. Address missing versions and conflicting declarations as uncertainty, not proven breakage.
+Recommend characterization coverage, incremental validation, acceptance criteria, and rollback or data-restoration checks where appropriate to the detected application. Do not assume a language, testing framework, deployment platform, or database migration.

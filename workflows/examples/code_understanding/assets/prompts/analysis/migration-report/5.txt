@@ -1,10 +1,24 @@
 ---
 title: "### Detailed Migration Plan"
-skip_prompt: "multi_repo"
 ---
-Recommend a migration plan for the codebase.
-Rank components so that those with the fewest dependencies come first (leaf-first order) to minimize breaking changes.
-If runtime stack version information is available, factor it into complexity scoring — components that require a major runtime version upgrade (e.g., JDK 1.8 → 21, Node.js 14 → 22) should score higher.
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+--- BEGIN RECOMMENDED ORDER ---
+{{answers[2]}}
+--- END RECOMMENDED ORDER ---
+--- BEGIN SECURITY AND SUPPORT FINDINGS ---
+{{answers[3]}}
+--- END SECURITY AND SUPPORT FINDINGS ---
+--- BEGIN MODERNIZATION RECOMMENDATIONS ---
+{{answers[4]}}
+--- END MODERNIZATION RECOMMENDATIONS ---
+
+Recommend a component-level application migration plan for each repository using the detected dependencies and modernization recommendations above, together with retrieved application evidence.
+Rank changes by dependency and compatibility prerequisites, using leaf-first order where suitable. Group tightly coupled runtime/framework/library changes when necessary. Coordinate repositories only where an evidenced relationship warrants it.
+Include assessment and verification prerequisites where target versions or compatibility are unknown. Factor API changes, integration coupling, major runtime/framework changes, and missing evidence into complexity scoring. Avoid unnecessary work on retained components.
 Render the migration plan as a Markdown table titled "Migration Plan" with one row per component and the following columns:
 
 - **#**: migration order (1 = migrate first)
@@ -16,3 +30,6 @@ Render the migration plan as a Markdown table titled "Migration Plan" with one r
 - **Complexity Score**: 0–10
 - **Complexity Justification**: rationale for the complexity score
 - **Rank Justification**: rationale for the migration order
+- **Modernization Actions**: proposed library, framework, runtime, or build changes tied to this component; identify retained dependencies and unverified targets
+- **Prerequisites**: dependency changes, coordinated changes, or verification tasks required first
+- **Validation Steps**: build, behavior, and integration checks needed for this component
