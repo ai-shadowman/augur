@@ -81,6 +81,18 @@ CMD_ARGS=(
 [[ "${UPLOAD_MLFLOW,,}" =~ ^(true|1|yes)$ ]] && CMD_ARGS+=("--upload-mlflow")
 [[ "${ENFORCE_SLO,,}" =~ ^(true|1|yes)$ ]] && CMD_ARGS+=("--enforce-slo")
 
+PYTHON_BIN="python3"
+for candidate in \
+    "$CODE_UNDERSTANDING_DIR/.venv/bin/python" \
+    "$CODE_UNDERSTANDING_DIR/venv/bin/python" \
+    "$CODE_UNDERSTANDING_DIR/../../../.venv/bin/python" \
+    "$CODE_UNDERSTANDING_DIR/../../../venv/bin/python"; do
+    if [[ -x "$candidate" ]]; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+
 echo "==> Running AUGUR GuideLLM Benchmark (role=$ROLE, workload=$WORKLOAD)..."
 PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \
-    python3 -m utils.benchmark_tracker "${CMD_ARGS[@]}"
+    "$PYTHON_BIN" -m utils.benchmark_tracker "${CMD_ARGS[@]}"
