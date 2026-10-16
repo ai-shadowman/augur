@@ -57,6 +57,16 @@ def guidellm_calibration_op(
         bt.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
 
         if should_run:
+            from contextlib import nullcontext
+            dur_tracker = None
+            try:
+                from utils.duration_tracker import DurationTracker
+                DurationTracker.reset_instance()
+                dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+                dur_tracker.record_pod_creation_overhead(stage="Calibration")
+            except Exception as e:
+                logging.debug(f"DurationTracker initialization skipped in guidellm_calibration_op: {e}")
+
             profile_arg = _clean("GUIDELLM_PROFILE", "sdg").lower()
             max_sec = int(_clean("GUIDELLM_MAX_SECONDS", "15"))
             rates_str = _clean("GUIDELLM_RATES", _clean("GUIDELLM_CONCURRENCY_RATES", "1,4,8,16"))
@@ -66,15 +76,35 @@ def guidellm_calibration_op(
                 f"Running GuideLLM pre-stage calibration sweep (profile={profile_arg}, "
                 f"rates={rates}, max_seconds={max_sec})..."
             )
-            profiles_to_run = ["sdg", "indexing"] if profile_arg == "all" else [profile_arg]
-            for prof in profiles_to_run:
-                bt.run_guidellm_profile(profile_name=prof, rates=rates, max_seconds=max_sec)
+            cal_cm = (
+                dur_tracker.measure(stage="Calibration", step="guidellm-calibration-op")
+                if dur_tracker
+                else nullcontext()
+            )
+            with cal_cm:
+                profiles_to_run = ["sdg", "indexing"] if profile_arg == "all" else [profile_arg]
+                for prof in profiles_to_run:
+                    bt.run_guidellm_profile(profile_name=prof, rates=rates, max_seconds=max_sec)
 
-            bt.log_to_mlflow()
-            bt.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
-            logging.info("\n" + bt.format_summary())
+                bt.log_to_mlflow()
+                bt.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+                logging.info("\n" + bt.format_summary())
+
+            if dur_tracker:
+                try:
+                    dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Calibration", multi_repo=multi_repo)
+                    logging.info("\n" + dur_tracker.format_summary())
+                except Exception as e:
+                    logging.debug(f"Failed to upload Calibration durations to MLflow: {e}")
         else:
             logging.info("GuideLLM calibration step skipped (enabled=False). Using existing MLflow benchmark data if present.")
+            try:
+                from utils.duration_tracker import DurationTracker
+                DurationTracker.reset_instance().clear_mlflow_stage(
+                    git_slug=git_slug, stage="Calibration", multi_repo=multi_repo
+                )
+            except Exception as e:
+                logging.debug(f"Failed to clear Calibration stage durations in MLflow: {e}")
 
         rec = bt.get_recommended_sdg_concurrency(default=int(_clean("SDG_LLM_MAX_CONCURRENCY", "10")))
         logging.info(f"GuideLLM recommended SDG_LLM_MAX_CONCURRENCY={rec}")
@@ -104,7 +134,9 @@ def prepare_environment_op(git_repo: str,
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker
-            dur_tracker = DurationTracker.get_instance()
+            DurationTracker.reset_instance()
+            dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            dur_tracker.download_from_mlflow(git_slug=git_slug, current_stage="Data Generation")
         except Exception as e:
             logging.debug(f"DurationTracker initialization skipped in prepare_environment_op: {e}")
 

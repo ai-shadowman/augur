@@ -312,7 +312,7 @@ class DurationTracker:
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
         """Returns a mapping of stage names to total elapsed seconds in canonical stage order,
         avoiding double-counting parent/aggregate steps when sub-steps exist."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"calibration": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_recs = self.get_all_records(include_active=include_active)
         stages: Dict[str, List[Dict[str, Any]]] = {}
         for rec in all_recs:
@@ -353,12 +353,12 @@ class DurationTracker:
 
     def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"calibration": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
 
-        # Sort records into canonical stage order (Data Generation -> Indexing -> Analysis)
+        # Sort records into canonical stage order (Calibration -> Data Generation -> Indexing -> Evaluation -> Analysis)
         # while preserving step execution order within each stage.
         all_records = sorted(
             all_records,
@@ -422,7 +422,7 @@ class DurationTracker:
 
     def format_markdown_table(self, include_active: bool = False) -> str:
         """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"calibration": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         records = self.get_all_records(include_active=include_active)
         if not records:
             return ""
@@ -674,6 +674,57 @@ class DurationTracker:
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def clear_mlflow_stage(
+        self,
+        git_slug: Optional[str] = None,
+        stage: str = "Calibration",
+        multi_repo: bool = False,
+    ):
+        """Uploads an empty durations.json for the given stage to MLflow so skipped
+        stages (e.g. guidellm-calibration-op when disabled) do not merge stale records
+        from prior pipeline runs."""
+        if not git_slug and self.git_slug:
+            git_slug = self.git_slug
+        if not (git_slug or multi_repo):
+            return
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            temp_file = os.path.join(temp_dir, "durations.json")
+            empty_payload: Dict[str, Any] = {"records": [], "total_duration": 0.0}
+            if git_slug:
+                empty_payload["git_slug"] = git_slug
+            if self.git_repo:
+                empty_payload["git_repo"] = self.git_repo
+            content_str = json.dumps(empty_payload, indent=2)
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.write(content_str)
+
+            from loaders.default_asset_loader import DefaultAssetLoader
+            artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
+                git_slug=git_slug,
+                multi_repo=multi_repo,
+            )
+            tags = {
+                "git_slug": str(git_slug or "multi-repo"),
+                "category": "telemetry",
+                "type": "durations",
+                "multi_repo": str(multi_repo),
+                "stage": str(stage),
+            }
+            DefaultAssetLoader().log_results(
+                temp_file,
+                artifact_path=artifact_path,
+                tags=tags,
+                content=content_str,
+            )
+        except Exception as e:
+            logging.debug(f"Failed to clear durations.json for stage '{stage}' via DefaultAssetLoader: {e}")
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def download_from_mlflow(
         self,
         git_slug: Optional[str] = None,
@@ -727,11 +778,13 @@ class DurationTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
-                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+                upstream_targets = ["Calibration", "Data Generation", "Indexing", "Evaluation"]
             elif current_stage and current_stage.lower() == "evaluation":
-                upstream_targets = ["Data Generation", "Indexing"]
+                upstream_targets = ["Calibration", "Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
-                upstream_targets = ["Data Generation"]
+                upstream_targets = ["Calibration", "Data Generation"]
+            elif current_stage and current_stage.lower() == "data generation":
+                upstream_targets = ["Calibration"]
             else:
                 upstream_targets = [None]
 
@@ -761,7 +814,8 @@ class DurationTracker:
                         if isinstance(content, dict) and "records" in content:
                             other = DurationTracker.from_dict(content)
                             self.merge(other, current_stage=current_stage)
-                            merged_any = True
+                            if other.records:
+                                merged_any = True
                             loaded_from_content = True
                         elif isinstance(content, str):
                             try:
@@ -769,7 +823,8 @@ class DurationTracker:
                                 if isinstance(data, dict) and "records" in data:
                                     other = DurationTracker.from_dict(data)
                                     self.merge(other, current_stage=current_stage)
-                                    merged_any = True
+                                    if other.records:
+                                        merged_any = True
                                     loaded_from_content = True
                             except Exception:
                                 pass

@@ -695,7 +695,7 @@ class DataGenerationPipeline:
                 bench_tracker.load_and_merge(bf)
             bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
             if _clean_env("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes") and not bench_tracker.profiles:
-                cal_cm = dur_tracker.measure(stage="Data Generation", step="GuideLLM Calibration Sweep") if dur_tracker else nullcontext()
+                cal_cm = dur_tracker.measure(stage="Calibration", step="guidellm-calibration-op") if dur_tracker else nullcontext()
                 with cal_cm:
                     bench_tracker.run_guidellm_profile(
                         profile_name="sdg",

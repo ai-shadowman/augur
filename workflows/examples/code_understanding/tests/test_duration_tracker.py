@@ -1260,10 +1260,96 @@ class TestDurationTracker(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_calibration_stage_ordering_and_guidellm_calibration_op(self):
+        """Verify guidellm-calibration-op is tracked under Calibration stage and appears first in summary tables only when run."""
+        from unittest.mock import MagicMock, patch
+
+        # 1. Verify canonical stage ordering places Calibration before Data Generation, Indexing, Evaluation, Analysis
+        tracker = DurationTracker()
+        tracker.record_step("Analysis", "Prompt 1: Overview", 20.0)
+        tracker.record_step("Indexing", "GraphRAG: Extract Graph", 45.0)
+        tracker.record_step("Data Generation", "GitHub Checkout", 5.0)
+        tracker.record_step("Calibration", "guidellm-calibration-op", 18.5)
+
+        stages = list(tracker.get_stage_durations().keys())
+        self.assertEqual(stages, ["Calibration", "Data Generation", "Indexing", "Analysis"])
+
+        summary = tracker.format_summary()
+        self.assertIn("Calibration", summary)
+        self.assertIn("guidellm-calibration-op", summary)
+        self.assertTrue(
+            summary.index("guidellm-calibration-op")
+            < summary.index("GitHub Checkout")
+            < summary.index("GraphRAG: Extract Graph")
+            < summary.index("Prompt 1: Overview")
+        )
+
+        md_table = tracker.format_markdown_table()
+        self.assertIn("| **Calibration** | guidellm-calibration-op |", md_table)
+        self.assertTrue(
+            md_table.index("| **Calibration** |")
+            < md_table.index("| **Data Generation** |")
+            < md_table.index("| **Indexing** |")
+            < md_table.index("| **Analysis** |")
+        )
+
+        # 2. Verify guidellm_calibration_op records guidellm-calibration-op when enabled=True
+        #    and clears Calibration stage without recording when enabled=False
+        mock_kfp = MagicMock()
+        mock_dsl = MagicMock()
+        mock_dsl.component = lambda **kwargs: (lambda fn: fn)
+        mock_dsl.pipeline = lambda **kwargs: (lambda fn: fn)
+        mock_dsl.Input = MagicMock
+        mock_dsl.Output = MagicMock
+        mock_dsl.Dataset = MagicMock
+        mock_kfp.dsl = mock_dsl
+
+        mock_bt = MagicMock()
+        mock_bt.get_recommended_sdg_concurrency.return_value = 16
+        mock_bt.format_summary.return_value = "Benchmark summary"
+        mock_bt_cls = MagicMock()
+        mock_bt_cls.get_instance.return_value = mock_bt
+
+        mock_datagen = MagicMock()
+        mock_datagen.generate_git_slug.return_value = "test-repo-main"
+
+        mock_loader = MagicMock()
+
+        with patch.dict("sys.modules", {
+            "pipelines.base.data_generation": mock_datagen,
+            "kfp": mock_kfp,
+            "kfp.dsl": mock_dsl,
+        }), patch("utils.benchmark_tracker.BenchmarkTracker", mock_bt_cls), \
+             patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=mock_loader), \
+             patch.dict(os.environ, {"GUIDELLM_CALIBRATE_PIPELINE": "false"}, clear=False):
+            import importlib
+            import pipelines.kubeflow.data_generation as kfp_dg
+            importlib.reload(kfp_dg)
+
+            # Case A: enabled=True -> guidellm-calibration-op recorded in DurationTracker
+            rec = kfp_dg.guidellm_calibration_op(
+                git_repo="https://github.com/test/repo",
+                git_branch="main",
+                multi_repo=False,
+                enabled=True,
+            )
+            self.assertEqual(rec, 16)
+            active_tracker = DurationTracker.get_instance()
+            steps_run = [(r["stage"], r["step"]) for r in active_tracker.records]
+            self.assertIn(("Calibration", "guidellm-calibration-op"), steps_run)
+
+            # Case B: enabled=False -> guidellm-calibration-op NOT recorded in DurationTracker
+            rec_skipped = kfp_dg.guidellm_calibration_op(
+                git_repo="https://github.com/test/repo",
+                git_branch="main",
+                multi_repo=False,
+                enabled=False,
+            )
+            self.assertEqual(rec_skipped, 16)
+            skipped_tracker = DurationTracker.get_instance()
+            steps_skipped = [(r["stage"], r["step"]) for r in skipped_tracker.records]
+            self.assertNotIn(("Calibration", "guidellm-calibration-op"), steps_skipped)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-
