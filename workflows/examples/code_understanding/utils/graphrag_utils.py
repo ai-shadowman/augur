@@ -3,6 +3,7 @@ import re
 import ssl
 import math
 import time
+from utils.request_timing import timed, timing_span
 
 if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
     _orig_create_default_context = ssl.create_default_context
@@ -59,15 +60,20 @@ class DependencyAnalyzer:
 
     def _setup_search(self):
         """Initialize GraphRAG search"""
-        entity_df = pd.read_parquet(f"{self.root_dir}/output/entities.parquet")
+        with timing_span("index.read.entities", "io"):
+            entity_df = pd.read_parquet(f"{self.root_dir}/output/entities.parquet")
 
-        relationship_df = pd.read_parquet(f"{self.root_dir}/output/relationships.parquet")
+        with timing_span("index.read.relationships", "io"):
+            relationship_df = pd.read_parquet(f"{self.root_dir}/output/relationships.parquet")
 
-        text_unit_df = pd.read_parquet(f"{self.root_dir}/output/text_units.parquet")
+        with timing_span("index.read.text_units", "io"):
+            text_unit_df = pd.read_parquet(f"{self.root_dir}/output/text_units.parquet")
 
-        communities_df = pd.read_parquet(f"{self.root_dir}/output/communities.parquet")
+        with timing_span("index.read.communities", "io"):
+            communities_df = pd.read_parquet(f"{self.root_dir}/output/communities.parquet")
 
-        community_reports_df = pd.read_parquet(f"{self.root_dir}/output/community_reports.parquet")
+        with timing_span("index.read.community_reports", "io"):
+            community_reports_df = pd.read_parquet(f"{self.root_dir}/output/community_reports.parquet")
 
         self.entity_df = entity_df
 
@@ -322,6 +328,7 @@ class DependencyAnalyzer:
             'top_modules': [k for k, v in sorted_entities[-5:]]
         }
 
+    @timed("graphrag.query")
     async def query_with_llm(self,
                              question: str,
                              retry_count: int = 3,
@@ -366,7 +373,8 @@ class DependencyAnalyzer:
                     config=llm_config,
                 )
 
-                response = await chat_model.achat(question)
+                with timing_span("graphrag.direct_model", "provider"):
+                    response = await chat_model.achat(question)
 
                 result = response.output.content
 
@@ -388,16 +396,17 @@ class DependencyAnalyzer:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
 
-                    result, context_data = await api.global_search(
-                        config=config,
-                        entities=self.entity_df,
-                        communities=self.communities_df,
-                        community_reports=self.community_reports_df,
-                        community_level=self.community_level,
-                        response_type=response_type,
-                        query=question,
-                        dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
-                    )
+                    with timing_span("graphrag.global_search", "retrieval"):
+                        result, context_data = await api.global_search(
+                            config=config,
+                            entities=self.entity_df,
+                            communities=self.communities_df,
+                            community_reports=self.community_reports_df,
+                            community_level=self.community_level,
+                            response_type=response_type,
+                            query=question,
+                            dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
+                        )
 
                     p_tokens = None
                     o_tokens = None
@@ -428,18 +437,19 @@ class DependencyAnalyzer:
                         if "embed" in s.lower()
                     )
 
-                    result, context_data = await api.local_search(
-                        config=config,
-                        entities=self.entity_df,
-                        communities=self.communities_df,
-                        community_reports=self.community_reports_df,
-                        text_units=self.text_unit_df,
-                        relationships=self.relationship_df,
-                        covariates=None,
-                        community_level=self.community_level,
-                        response_type=response_type,
-                        query=question,
-                    )
+                    with timing_span("graphrag.local_search", "retrieval"):
+                        result, context_data = await api.local_search(
+                            config=config,
+                            entities=self.entity_df,
+                            communities=self.communities_df,
+                            community_reports=self.community_reports_df,
+                            text_units=self.text_unit_df,
+                            relationships=self.relationship_df,
+                            covariates=None,
+                            community_level=self.community_level,
+                            response_type=response_type,
+                            query=question,
+                        )
 
                     # Only manually track embedding if active callbacks didn't already intercept it
                     embed_count_after = sum(
@@ -472,7 +482,8 @@ class DependencyAnalyzer:
 
                 logging.info(f"Retrying query ({num_tries_left} tries left): {e}")
                 import asyncio
-                await asyncio.sleep(5) # Going to sleep for 5 secs to allow the backend server time to finish and release concurreny slots
+                with timing_span("graphrag.retry_backoff", "retry", attempts_remaining=num_tries_left):
+                    await asyncio.sleep(5) # Existing delay; retry policy unchanged.
                 return await self.query_with_llm(question,
                                                  retry_count=num_tries_left,
                                                  use_global=use_global,
@@ -597,6 +608,7 @@ class DependencyAnalyzer:
                 "text_units": self.text_unit_df
         }
 
+    @timed("analysis.report")
     async def generate_migration_report(self):
         """Generate a high-level migration report"""
 

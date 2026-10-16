@@ -28,6 +28,7 @@ def run_graphrag(root_dir: str) -> None:
     LiteLLM callbacks registered before this call (e.g. via
     DefaultCustomTelemetry().track()) will capture all LLM calls.
     """
+    from utils.request_timing import timing_span
     from graphrag.cli.initialize import initialize_project_at
     from graphrag.config.load_config import load_config
     import graphrag.api as graphrag_api
@@ -79,7 +80,7 @@ def run_graphrag(root_dir: str) -> None:
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
     cm_build = dur_tracker.measure(stage="Indexing", step="GraphRAG Indexing") if dur_tracker else nullcontext()
-    with cm_build:
+    with cm_build, timing_span("graphrag.build_index", "batch"):
         results = asyncio.run(graphrag_api.build_index(config=config, verbose=True))
 
     errors = [r for r in results if r.errors]
