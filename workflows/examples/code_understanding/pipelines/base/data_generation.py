@@ -199,6 +199,44 @@ def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_d
         logging.debug(f"Failed fallback token estimation in _ensure_data_generation_tokens: {e}")
 
 
+_UNSUPPORTED_CHAT_COMPLETION_PARAMS = ("best_of", "top_k")
+_BLOCK_CONFIG_ATTRS = ("block_config", "model_config", "llm_kwargs", "default_kwargs", "extra_body")
+
+
+def _sanitize_flow_config(flow_yaml_path: str, flow=None):
+    """Strips unsupported OpenAI Chat Completions parameters (e.g., best_of, top_k)
+    from downloaded flow.yaml files (in case MLflow static-assets serves a stale version)
+    and from instantiated Flow objects."""
+    if flow_yaml_path and os.path.isfile(flow_yaml_path):
+        try:
+            import re
+            with open(flow_yaml_path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+            pattern = r"(?m)^[ \t]*(?:" + "|".join(_UNSUPPORTED_CHAT_COMPLETION_PARAMS) + r")[ \t]*:.*(?:\r?\n)?"
+            sanitized_text = re.sub(pattern, "", raw_text)
+            if sanitized_text != raw_text:
+                with open(flow_yaml_path, "w", encoding="utf-8") as f:
+                    f.write(sanitized_text)
+        except Exception as e:
+            logging.debug(f"Could not sanitize flow yaml {flow_yaml_path}: {e}")
+
+    if flow is not None:
+        try:
+            if isinstance(getattr(flow, "parameters", None), dict):
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    flow.parameters.pop(key, None)
+            for block in getattr(flow, "blocks", None) or []:
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    if hasattr(block, key):
+                        setattr(block, key, None)
+                    for attr in _BLOCK_CONFIG_ATTRS:
+                        cfg = getattr(block, attr, None)
+                        if isinstance(cfg, dict):
+                            cfg.pop(key, None)
+        except Exception as e:
+            logging.debug(f"Could not sanitize instantiated flow object: {e}")
+
+
 def get_parsed_code_metadata(df, language, config=False):
     """Runs an SDG Hub flow over df and returns a DataFrame with extracted metadata."""
     from datasets import Dataset
@@ -221,16 +259,21 @@ def get_parsed_code_metadata(df, language, config=False):
         )
 
         try:
+            import litellm
+            litellm.drop_params = True
+        except ImportError:
+            pass
+
+        token_tracker = None
+        try:
             from utils.token_tracker import TokenCostTracker
+            category = f"Data Generation ({language})"
             token_tracker = TokenCostTracker.get_instance()
-            token_tracker.set_category(f"Data Generation ({language})")
-            token_tracker.enable_litellm_callbacks(category=f"Data Generation ({language})")
-            token_tracker.enable_openai_tracking(category=f"Data Generation ({language})")
-            calls_before = token_tracker.get_totals()["total_calls"]
+            token_tracker.set_category(category)
+            token_tracker.enable_litellm_callbacks(category=category)
+            token_tracker.enable_openai_tracking(category=category)
         except Exception as e:
             logging.debug(f"Failed to enable token tracking in get_parsed_code_metadata: {e}")
-            token_tracker = None
-            calls_before = 0
 
         dataset = Dataset.from_pandas(df)
 
@@ -239,7 +282,10 @@ def get_parsed_code_metadata(df, language, config=False):
         flows_dir = f"flows/{flow_dir}"
         DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_dir)
 
-        flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
+        flow_yaml_path = f"{flows_dir}/flow.yaml"
+        _sanitize_flow_config(flow_yaml_path)
+
+        flow = Flow.from_yaml(flow_yaml_path)
 
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",
@@ -249,10 +295,10 @@ def get_parsed_code_metadata(df, language, config=False):
             n=1,
             max_tokens=32_000,
             response_format={"type": "json_object"},
-            top_k=1,
             timeout=llm_timeout,
             num_retries=llm_num_retries,
         )
+        _sanitize_flow_config(flow_yaml_path, flow=flow)
 
         converted_df = None
         try:
@@ -260,7 +306,7 @@ def get_parsed_code_metadata(df, language, config=False):
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
-            if token_tracker and len(df) > 0:
+            if token_tracker and len(df) > 0 and converted_df is not None:
                 _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df)
 
         if converted_df is not None:
@@ -519,10 +565,12 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             result["status"] = "skipped"
             return
 
+        llm_extracted = False
         try:
             llm_cm = dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})") if dur_tracker else nullcontext()
             with llm_cm:
                 code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+                llm_extracted = code_and_metadata_df is not None
         except Exception as e:
             logging.warning(
                 f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
@@ -549,7 +597,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         try:
             from utils.token_tracker import TokenCostTracker, extract_data_generation_tokens
             t_tr = TokenCostTracker.get_instance()
-            extract_data_generation_tokens(target_path, t_tr)
+            if llm_extracted:
+                extract_data_generation_tokens(target_path, t_tr)
             t_tr.save_to_file(os.path.join(target_path, "tokens.json"))
         except Exception:
             pass

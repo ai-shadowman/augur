@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 import logging
 import os
 import tempfile
@@ -6,7 +7,7 @@ import tempfile
 import pandas as pd
 from litellm import completion
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, _get_token_tracker, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.json_utils import extract_json_from_string
 
@@ -45,6 +46,12 @@ Rate the actual answer on each dimension from 1 to 5:
 Respond ONLY with valid JSON in this exact format:
 {{"faithfulness": <score>, "answer_relevance": <score>, "answer_similarity": <score>, "answer_correctness": <score>, "reasoning": "<brief explanation>"}}"""
 
+    def __init__(self):
+        token_tracker = _get_token_tracker()
+        if token_tracker:
+            token_tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
+            token_tracker.enable_openai_tracking(category="Evaluation (Judge)")
+
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
         """Evaluates a GraphRAG response using LLM-as-judge with a generated reference answer.
@@ -63,70 +70,80 @@ Respond ONLY with valid JSON in this exact format:
             dict with keys: faithfulness, answer_relevance, answer_similarity, answer_correctness, reasoning,
             question, actual_answer, reference_answer.
         """
-        try:
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+        with eval_scope:
+            try:
 
-            actual_answer = asyncio.run(analyzer.query_with_llm(input))
+                analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-            repo_context = build_repo_context(graphrag_source_dir)
+                actual_answer = asyncio.run(analyzer.query_with_llm(input))
 
-            reference_response = completion(
-                **_llm_kwargs("GROUND_TRUTH"),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a senior software architect providing authoritative "
-                            "reference answers about code structure and dependencies."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": f"{repo_context}\n\n{input}" if repo_context else input,
-                    },
-                ],
-            )
+                repo_context = build_repo_context(graphrag_source_dir)
 
-            reference_answer = reference_response.choices[0].message.content
+                if token_tracker:
+                    token_tracker.set_category("Evaluation (Ground Truth)")
 
-            judge_response = completion(
-                **_llm_kwargs("JUDGE"),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": self._JUDGE_PROMPT.format(
-                            question=input,
-                            reference=reference_answer,
-                            actual=actual_answer,
-                        ),
-                    }
-                ],
-            )
+                reference_response = completion(
+                    **_llm_kwargs("GROUND_TRUTH"),
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior software architect providing authoritative "
+                                "reference answers about code structure and dependencies."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"{repo_context}\n\n{input}" if repo_context else input,
+                        },
+                    ],
+                )
 
-            metrics = extract_json_from_string(judge_response.choices[0].message.content)
-            if not isinstance(metrics, dict):
-                logging.error("Judge LLM returned no valid JSON object")
-                metrics = {}
+                reference_answer = reference_response.choices[0].message.content
 
-            metrics["question"] = input
-            metrics["actual_answer"] = actual_answer
-            metrics["reference_answer"] = reference_answer
+                if token_tracker:
+                    token_tracker.set_category("Evaluation (Judge)")
 
-            logging.info(
-                f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
-                f"answer_relevance={metrics.get('answer_relevance')}, "
-                f"answer_similarity={metrics.get('answer_similarity')}, "
-                f"answer_correctness={metrics.get('answer_correctness')}"
-            )
+                judge_response = completion(
+                    **_llm_kwargs("JUDGE"),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": self._JUDGE_PROMPT.format(
+                                question=input,
+                                reference=reference_answer,
+                                actual=actual_answer,
+                            ),
+                        }
+                    ],
+                )
 
-            return metrics
+                metrics = extract_json_from_string(judge_response.choices[0].message.content)
+                if not isinstance(metrics, dict):
+                    logging.error("Judge LLM returned no valid JSON object")
+                    metrics = {}
 
-        except Exception as e:
+                metrics["question"] = input
+                metrics["actual_answer"] = actual_answer
+                metrics["reference_answer"] = reference_answer
 
-            logging.error(f"Error during basic evaluation: {e}")
+                logging.info(
+                    f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
+                    f"answer_relevance={metrics.get('answer_relevance')}, "
+                    f"answer_similarity={metrics.get('answer_similarity')}, "
+                    f"answer_correctness={metrics.get('answer_correctness')}"
+                )
 
-            return {}
+                return metrics
+
+            except Exception as e:
+
+                logging.error(f"Error during basic evaluation: {e}")
+
+                return {}
 
     def evaluate_with_dataset(
         self,
@@ -158,112 +175,120 @@ Respond ONLY with valid JSON in this exact format:
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
-        df = pd.read_csv(eval_dataset_file)
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+        with eval_scope:
+            df = pd.read_csv(eval_dataset_file)
 
-        df["inputs"] = df.apply(
-            lambda row: (
-                f"{row['question']}\n\n**Example format:**\n{row['one_shot_example']}"
-                if pd.notna(row.get("one_shot_example")) and str(row.get("one_shot_example", "")).strip()
-                else str(row["question"])
-            ),
-            axis=1,
-        )
+            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-        repo_context = build_repo_context(graphrag_source_dir)
+            df["inputs"] = df.apply(
+                lambda row: (
+                    f"{row['question']}\n\n**Example format:**\n{row['one_shot_example']}"
+                    if pd.notna(row.get("one_shot_example")) and str(row.get("one_shot_example", "")).strip()
+                    else str(row["question"])
+                ),
+                axis=1,
+            )
 
-        def _ground_truth(input_text):
-            try:
-                return completion(
-                    **_llm_kwargs("GROUND_TRUTH"),
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a senior software architect providing authoritative "
-                                "reference answers about code structure and dependencies."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": f"{repo_context}\n\n{input_text}" if repo_context else input_text,
-                        },
-                    ],
-                ).choices[0].message.content
-            except Exception as e:
-                logging.error(f"Ground truth LLM failed: {e}")
-                return "Could not process query"
+            repo_context = build_repo_context(graphrag_source_dir)
 
-        df["targets"] = df["inputs"].apply(_ground_truth)
+            def _ground_truth(input_text):
+                try:
+                    if token_tracker:
+                        token_tracker.set_category("Evaluation (Ground Truth)")
+                    return completion(
+                        **_llm_kwargs("GROUND_TRUTH"),
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a senior software architect providing authoritative "
+                                    "reference answers about code structure and dependencies."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": f"{repo_context}\n\n{input_text}" if repo_context else input_text,
+                            },
+                        ],
+                    ).choices[0].message.content
+                except Exception as e:
+                    logging.error(f"Ground truth LLM failed: {e}")
+                    return "Could not process query"
 
-        def _query(row):
-            global_val = row.get("global_query", False)
-            use_global = bool(global_val) if pd.notna(global_val) else False
-            try:
-                return asyncio.run(analyzer.query_with_llm(row["inputs"], use_global=use_global))
-            except Exception as e:
-                logging.error(f"GraphRAG query failed: {e}")
-                return f"ERROR: {e}"
+            df["targets"] = df["inputs"].apply(_ground_truth)
 
-        df["predictions"] = df.apply(_query, axis=1)
+            def _query(row):
+                global_val = row.get("global_query", False)
+                use_global = bool(global_val) if pd.notna(global_val) else False
+                try:
+                    return asyncio.run(analyzer.query_with_llm(row["inputs"], use_global=use_global))
+                except Exception as e:
+                    logging.error(f"GraphRAG query failed: {e}")
+                    return f"ERROR: {e}"
 
-        _METRIC_KEYS = ["faithfulness", "answer_relevance", "answer_similarity", "answer_correctness", "reasoning"]
+            df["predictions"] = df.apply(_query, axis=1)
 
-        def _judge(row):
-            try:
-                response = completion(
-                    **_llm_kwargs("JUDGE"),
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": self._JUDGE_PROMPT.format(
-                                question=row["inputs"],
-                                reference=row["targets"],
-                                actual=row["predictions"],
-                            ),
-                        }
-                    ],
-                )
-                result = extract_json_from_string(response.choices[0].message.content)
-                if not isinstance(result, dict):
-                    logging.error("Judge LLM returned no valid JSON object")
-                return result if isinstance(result, dict) else {k: None for k in _METRIC_KEYS}
-            except Exception as e:
-                logging.error(f"Judge LLM failed: {e}")
-                return {k: None for k in _METRIC_KEYS}
+            _METRIC_KEYS = ["faithfulness", "answer_relevance", "answer_similarity", "answer_correctness", "reasoning"]
 
-        metrics_df = pd.DataFrame(df.apply(_judge, axis=1).tolist(), index=df.index)
-        for col in metrics_df.columns:
-            df[col] = metrics_df[col]
+            def _judge(row):
+                try:
+                    if token_tracker:
+                        token_tracker.set_category("Evaluation (Judge)")
+                    response = completion(
+                        **_llm_kwargs("JUDGE"),
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": self._JUDGE_PROMPT.format(
+                                    question=row["inputs"],
+                                    reference=row["targets"],
+                                    actual=row["predictions"],
+                                ),
+                            }
+                        ],
+                    )
+                    result = extract_json_from_string(response.choices[0].message.content)
+                    if not isinstance(result, dict):
+                        logging.error("Judge LLM returned no valid JSON object")
+                    return result if isinstance(result, dict) else {k: None for k in _METRIC_KEYS}
+                except Exception as e:
+                    logging.error(f"Judge LLM failed: {e}")
+                    return {k: None for k in _METRIC_KEYS}
 
-        df["answer"] = df["predictions"]
-        df = df.rename(columns={"targets": "reference"})
-        df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
+            metrics_df = pd.DataFrame(df.apply(_judge, axis=1).tolist(), index=df.index)
+            for col in metrics_df.columns:
+                df[col] = metrics_df[col]
 
-        from utils import code_utils
-        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+            df["answer"] = df["predictions"]
+            df = df.rename(columns={"targets": "reference"})
+            df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
 
-        artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+            from utils import code_utils
+            slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-            DefaultAssetLoader.RESULTS_PATH_PREFIX_EVAL,
+            artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
-            git_slug=slug,
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_EVAL,
 
-            multi_repo=multi_repo,
+                git_slug=slug,
 
-        )
+                multi_repo=multi_repo,
 
-        df["git_slug"] = slug
+            )
 
-        result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
+            df["git_slug"] = slug
 
-        df.to_csv(result_file, index=False)
+            result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
 
-        DefaultAssetLoader().log_results(
-            result_file,
-            artifact_path=artifact_path,
-            tags={"category": "evaluation", "git_slug": slug},
-        )
+            df.to_csv(result_file, index=False)
 
-        return df
+            DefaultAssetLoader().log_results(
+                result_file,
+                artifact_path=artifact_path,
+                tags={"category": "evaluation", "git_slug": slug},
+            )
+
+            return df

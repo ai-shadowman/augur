@@ -16,7 +16,48 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+for _pkg in ("pathspec", "dotenv"):
+    if _pkg not in sys.modules:
+        try:
+            importlib.import_module(_pkg)
+        except ModuleNotFoundError:
+            from unittest.mock import MagicMock
+            sys.modules[_pkg] = MagicMock()
+
 from pipelines.base.data_generation import get_parsed_code_metadata
+
+
+def _load_flow_yaml(text: str) -> dict:
+    try:
+        yaml = importlib.import_module("yaml")
+        if hasattr(yaml, "safe_load") and not hasattr(yaml.safe_load, "_mock_name"):
+            return yaml.safe_load(text)
+    except ModuleNotFoundError:
+        pass
+    # Minimal parser for flow.yaml blocks when PyYAML is not installed locally
+    blocks = []
+    current_block = None
+    in_block_config = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- block_type:"):
+            if current_block:
+                blocks.append(current_block)
+            btype = stripped.split(":", 1)[1].strip().strip('"\'')
+            current_block = {"block_type": btype, "block_config": {}}
+            in_block_config = False
+        elif current_block is not None and stripped.startswith("block_config:"):
+            in_block_config = True
+        elif current_block is not None and in_block_config:
+            indent = len(raw_line) - len(raw_line.lstrip(" "))
+            if indent >= 6 and ":" in stripped and not stripped.startswith("-"):
+                k, v = stripped.split(":", 1)
+                current_block["block_config"][k.strip()] = v.strip().strip('"\'')
+    if current_block:
+        blocks.append(current_block)
+    return {"blocks": blocks}
 
 
 class TestMetadataChatParameters(unittest.TestCase):
@@ -25,6 +66,7 @@ class TestMetadataChatParameters(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.enterContext(chdir(self.root))
+        self.inject_stale_params = False
 
         # Scope replacements so the container-dependency stubs in other tests
         # cannot mask parameter errors or contaminate subsequent tests.
@@ -32,11 +74,13 @@ class TestMetadataChatParameters(unittest.TestCase):
         for name in list(modules):
             if name == "yaml" or name.startswith("yaml."):
                 del modules[name]
-        yaml = importlib.import_module("yaml")
 
         class DataFrame:
             def __init__(self, records):
                 self.records = records
+
+            def __len__(self):
+                return len(self.records)
 
             def to_csv(self, filename):
                 with open(filename, "w", encoding="utf-8", newline="") as stream:
@@ -46,17 +90,18 @@ class TestMetadataChatParameters(unittest.TestCase):
 
         def chat_completion(**kwargs):
             # Reproduce the SDK rejection observed in the production logs.
-            if "best_of" in kwargs:
-                raise TypeError(
-                    "AsyncCompletions.create() got an unexpected keyword argument 'best_of'"
-                )
+            for unsupported in ("best_of", "top_k"):
+                if unsupported in kwargs:
+                    raise TypeError(
+                        f"AsyncCompletions.create() got an unexpected keyword argument '{unsupported}'"
+                    )
             return '{"purpose": "Manage train schedules", "classes": ["Train"]}'
 
         class Flow:
             @classmethod
             def from_yaml(cls, filename):
                 flow = cls()
-                blocks = yaml.safe_load(Path(filename).read_text())["blocks"]
+                blocks = _load_flow_yaml(Path(filename).read_text(encoding="utf-8"))["blocks"]
                 flow.parameters = next(
                     dict(block["block_config"]) for block in blocks
                     if block["block_type"] == "LLMChatBlock"
@@ -75,9 +120,19 @@ class TestMetadataChatParameters(unittest.TestCase):
                 ])
                 return types.SimpleNamespace(to_pandas=lambda: output)
 
+        test_case = self
+
         class AssetLoader:
             def download_dir(self, asset_dir, download_dir):
                 shutil.copytree(BASE_DIR / "assets" / asset_dir, download_dir)
+                if test_case.inject_stale_params:
+                    flow_file = Path(download_dir) / "flow.yaml"
+                    text = flow_file.read_text(encoding="utf-8")
+                    text = text.replace(
+                        "block_name: gen_code_metadata",
+                        "block_name: gen_code_metadata\n      best_of: 1\n      top_k: 1",
+                    )
+                    flow_file.write_text(text, encoding="utf-8")
 
         modules.update({
             "datasets": types.SimpleNamespace(Dataset=types.SimpleNamespace(
@@ -112,6 +167,10 @@ class TestMetadataChatParameters(unittest.TestCase):
 
     def test_java_config_metadata_reaches_chat_client_without_unsupported_parameter(self):
         self.assert_metadata_extracted(config=True)
+
+    def test_stale_flow_yaml_with_best_of_and_top_k_is_sanitized_before_chat_call(self):
+        self.inject_stale_params = True
+        self.assert_metadata_extracted(config=False)
 
 
 if __name__ == "__main__":

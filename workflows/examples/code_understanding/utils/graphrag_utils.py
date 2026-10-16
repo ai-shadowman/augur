@@ -366,7 +366,8 @@ class DependencyAnalyzer:
                     config=llm_config,
                 )
 
-                response = await chat_model.achat(question)
+                with self.token_tracker.suppress_callbacks():
+                    response = await chat_model.achat(question)
 
                 result = response.output.content
 
@@ -388,16 +389,17 @@ class DependencyAnalyzer:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
 
-                    result, context_data = await api.global_search(
-                        config=config,
-                        entities=self.entity_df,
-                        communities=self.communities_df,
-                        community_reports=self.community_reports_df,
-                        community_level=self.community_level,
-                        response_type=response_type,
-                        query=question,
-                        dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
-                    )
+                    with self.token_tracker.suppress_callbacks():
+                        result, context_data = await api.global_search(
+                            config=config,
+                            entities=self.entity_df,
+                            communities=self.communities_df,
+                            community_reports=self.community_reports_df,
+                            community_level=self.community_level,
+                            response_type=response_type,
+                            query=question,
+                            dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
+                        )
 
                     p_tokens = None
                     o_tokens = None
@@ -428,18 +430,19 @@ class DependencyAnalyzer:
                         if "embed" in s.lower()
                     )
 
-                    result, context_data = await api.local_search(
-                        config=config,
-                        entities=self.entity_df,
-                        communities=self.communities_df,
-                        community_reports=self.community_reports_df,
-                        text_units=self.text_unit_df,
-                        relationships=self.relationship_df,
-                        covariates=None,
-                        community_level=self.community_level,
-                        response_type=response_type,
-                        query=question,
-                    )
+                    with self.token_tracker.suppress_callbacks():
+                        result, context_data = await api.local_search(
+                            config=config,
+                            entities=self.entity_df,
+                            communities=self.communities_df,
+                            community_reports=self.community_reports_df,
+                            text_units=self.text_unit_df,
+                            relationships=self.relationship_df,
+                            covariates=None,
+                            community_level=self.community_level,
+                            response_type=response_type,
+                            query=question,
+                        )
 
                     # Only manually track embedding if active callbacks didn't already intercept it
                     embed_count_after = sum(
