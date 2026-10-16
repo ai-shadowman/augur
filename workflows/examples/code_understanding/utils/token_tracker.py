@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import inspect
 import os
 import re
@@ -15,6 +16,15 @@ try:
 except ImportError:
     litellm = None
     HAS_LITELLM = False
+
+
+def _matches_model(model_name: Optional[str], configured_model: Optional[str]) -> bool:
+    """Returns True if model_name matches configured_model directly or as a provider/model suffix."""
+    if not model_name or not configured_model:
+        return False
+    m = str(model_name).strip()
+    c = str(configured_model).strip()
+    return m == c or m.endswith(f"/{c}") or c.endswith(f"/{m}")
 
 
 class TokenCostTracker:
@@ -90,6 +100,14 @@ class TokenCostTracker:
         self._merged_upstream_sources: Set[str] = set()
         self._merged_files: Set[str] = set()
 
+        self._active_category: str = "LiteLLM"
+        self._litellm_category: str = "LiteLLM"
+        self._openai_category: str = "GraphRAG Indexing"
+        self._litellm_callback = None
+        self._openai_tracking_enabled: bool = False
+        self._suppress_callbacks: bool = False
+        self._in_evaluation: bool = False
+
         self._register_models_in_litellm()
 
     def _register_models_in_litellm(self):
@@ -147,18 +165,10 @@ class TokenCostTracker:
         return max(1, len(text) // 4)
 
     def _is_configured_chat_model(self, model_name: Optional[str]) -> bool:
-        if not model_name or not self.chat_model:
-            return False
-        m = str(model_name).strip()
-        c = str(self.chat_model).strip()
-        return m == c or m.endswith(f"/{c}") or c.endswith(f"/{m}")
+        return _matches_model(model_name, self.chat_model)
 
     def _is_configured_embed_model(self, model_name: Optional[str]) -> bool:
-        if not model_name or not self.embed_model:
-            return False
-        m = str(model_name).strip()
-        e = str(self.embed_model).strip()
-        return m == e or m.endswith(f"/{e}") or e.endswith(f"/{m}")
+        return _matches_model(model_name, self.embed_model)
 
     def calculate_cost(
         self, prompt_tokens: int, output_tokens: int = 0, model: Optional[str] = None
@@ -245,16 +255,18 @@ class TokenCostTracker:
             f"Total Tokens: {total_tokens:,} | Est. Cost: ${cost:.4f}"
         )
         logging.debug(console_msg)
-        if getattr(self, "print_to_console", True):
+        if self.print_to_console:
             print(console_msg, flush=True)
+
+    def _stage_prefix(self, base_label: str) -> str:
+        return f"Evaluation {base_label}" if self._in_evaluation else base_label
 
     def track_chat(
         self, prompt_tokens: int, output_tokens: int, calls: int = 1, model: Optional[str] = None
     ):
         """Records GraphRAG Direct Chat invocation."""
         target_model = model or self.chat_model
-        prefix = "Evaluation GraphRAG Chat" if getattr(self, "_in_evaluation", False) else "GraphRAG Chat"
-        source = f"{prefix} ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Chat')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -268,8 +280,7 @@ class TokenCostTracker:
     ):
         """Records GraphRAG Global Search invocation."""
         target_model = model or self.chat_model
-        prefix = "Evaluation GraphRAG Global Search" if getattr(self, "_in_evaluation", False) else "GraphRAG Global Search"
-        source = f"{prefix} ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Global Search')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -283,8 +294,7 @@ class TokenCostTracker:
     ):
         """Records GraphRAG Local Search invocation."""
         target_model = model or self.chat_model
-        prefix = "Evaluation GraphRAG Local Search" if getattr(self, "_in_evaluation", False) else "GraphRAG Local Search"
-        source = f"{prefix} ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Local Search')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -296,8 +306,7 @@ class TokenCostTracker:
     def track_embedding(self, prompt_tokens: int, calls: int = 1, model: Optional[str] = None):
         """Records embedding model invocation."""
         target_model = model or self.embed_model
-        prefix = "Evaluation GraphRAG Embeddings" if getattr(self, "_in_evaluation", False) else "GraphRAG Embeddings"
-        source = f"{prefix} ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Embeddings')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -564,10 +573,30 @@ class TokenCostTracker:
         self._litellm_category = category
         self._openai_category = category
 
+    @contextmanager
+    def suppress_callbacks(self):
+        """Temporarily suppresses LiteLLM and OpenAI callback tracking."""
+        prev = self._suppress_callbacks
+        self._suppress_callbacks = True
+        try:
+            yield
+        finally:
+            self._suppress_callbacks = prev
+
+    @contextmanager
+    def evaluation_scope(self):
+        """Marks tracked GraphRAG queries and embeddings as belonging to the Evaluation stage."""
+        prev = self._in_evaluation
+        self._in_evaluation = True
+        try:
+            yield
+        finally:
+            self._in_evaluation = prev
+
     def _is_called_from_litellm(self) -> bool:
         """Returns True if the current execution frame was invoked from inside litellm,
         so OpenAI SDK wrappers do not double-count calls already handled by LiteLLM callbacks."""
-        if getattr(self, "_litellm_callback", None) is None:
+        if self._litellm_callback is None:
             return False
         try:
             for frame_info in inspect.stack()[1:10]:
@@ -664,23 +693,26 @@ class TokenCostTracker:
             logging.debug("LiteLLM not available; skipping callback registration.")
             return
 
-        tracker_self = self
-
         def _litellm_success_handler(kwargs, completion_response, start_time, end_time):
             try:
-                if getattr(tracker_self, "_suppress_callbacks", False):
+                if self._suppress_callbacks:
                     return
                 if completion_response is None or isinstance(completion_response, BaseException):
                     return
                 if isinstance(kwargs, dict) and kwargs.get("exception") is not None:
                     return
 
-                cat = getattr(tracker_self, "_litellm_category", None) or getattr(tracker_self, "_active_category", None) or category
-                model = (kwargs.get("model") if isinstance(kwargs, dict) else None) or getattr(completion_response, "model", tracker_self.chat_model)
-                call_type = (kwargs.get("call_type", "") if isinstance(kwargs, dict) else "")
-                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (model == tracker_self.embed_model or "embed" in tracker_self.embed_model)
+                cat = self._litellm_category or self._active_category or category
+                model = (kwargs.get("model") if isinstance(kwargs, dict) else None) or getattr(completion_response, "model", self.chat_model)
+                call_type = kwargs.get("call_type", "") if isinstance(kwargs, dict) else ""
+                is_embed = (
+                    "embed" in str(call_type).lower()
+                    or "embed" in str(model).lower()
+                    or model == self.embed_model
+                    or "embed" in self.embed_model
+                )
 
-                p_tokens, o_tokens = tracker_self._extract_tokens(completion_response, kwargs=kwargs, is_embed=is_embed)
+                p_tokens, o_tokens = self._extract_tokens(completion_response, kwargs=kwargs, is_embed=is_embed)
 
                 response_cost = kwargs.get("response_cost") if isinstance(kwargs, dict) else None
                 if response_cost is None and completion_response is not None:
@@ -688,13 +720,9 @@ class TokenCostTracker:
                     if response_cost is None and isinstance(completion_response, dict):
                         response_cost = completion_response.get("_response_cost") or completion_response.get("response_cost")
 
-                if is_embed:
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                else:
-                    source = f"{cat} ({model})"
-                tracker_self.track(
-                    source=source,
+                prefix = (cat if "Embeddings" in cat else f"{cat} Embeddings") if is_embed else cat
+                self.track(
+                    source=f"{prefix} ({model})",
                     calls=1,
                     prompt_tokens=p_tokens,
                     output_tokens=o_tokens,
@@ -729,6 +757,26 @@ class TokenCostTracker:
                     cb_list.remove(cb)
         self._litellm_callback = None
 
+    def _record_openai_call(self, resp, kwargs: dict, default_category: str, is_embed: bool):
+        """Records token usage from a patched OpenAI SDK completion or embedding call."""
+        try:
+            if self._suppress_callbacks or self._is_called_from_litellm():
+                return
+            cat = self._openai_category or self._active_category or default_category
+            default_model = self.embed_model if is_embed else self.chat_model
+            model = kwargs.get("model") or getattr(resp, "model", default_model)
+            p_tokens, o_tokens = self._extract_tokens(resp, kwargs=kwargs, is_embed=is_embed)
+            prefix = (cat if "Embeddings" in cat else f"{cat} Embeddings") if is_embed else cat
+            self.track(
+                source=f"{prefix} ({model})",
+                calls=1,
+                prompt_tokens=p_tokens,
+                output_tokens=0 if is_embed else o_tokens,
+                model=model,
+            )
+        except Exception as e:
+            logging.debug(f"Error in openai tracking callback: {e}")
+
     def enable_openai_tracking(self, category: str = "GraphRAG Indexing"):
         """Intercepts OpenAI chat completions and embeddings calls when direct OpenAI client
         is used (e.g. by GraphRAG indexing) so token usage is captured."""
@@ -740,7 +788,7 @@ class TokenCostTracker:
             logging.debug("OpenAI package not available; skipping direct OpenAI tracking.")
             return
 
-        if getattr(self, "_openai_tracking_enabled", False):
+        if self._openai_tracking_enabled:
             return
 
         try:
@@ -750,32 +798,13 @@ class TokenCostTracker:
             logging.debug(f"Unable to access openai resource modules: {e}")
             return
 
-        tracker_self = self
-
         # 1. Patch AsyncCompletions.create
         if hasattr(chat_mod, "AsyncCompletions") and hasattr(chat_mod.AsyncCompletions, "create"):
             self._orig_async_chat = chat_mod.AsyncCompletions.create
 
             async def wrapped_async_chat(*args, **kwargs):
-                resp = await tracker_self._orig_async_chat(*args, **kwargs)
-                try:
-                    if getattr(tracker_self, "_suppress_callbacks", False):
-                        return resp
-                    if getattr(tracker_self, "_litellm_callback", None) is not None and tracker_self._is_called_from_litellm():
-                        return resp
-                    cat = getattr(tracker_self, "_openai_category", None) or getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
-                    source = f"{cat} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=o_tokens,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai tracking callback: {e}")
+                resp = await self._orig_async_chat(*args, **kwargs)
+                self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
             chat_mod.AsyncCompletions.create = wrapped_async_chat
@@ -785,25 +814,8 @@ class TokenCostTracker:
             self._orig_sync_chat = chat_mod.Completions.create
 
             def wrapped_sync_chat(*args, **kwargs):
-                resp = tracker_self._orig_sync_chat(*args, **kwargs)
-                try:
-                    if getattr(tracker_self, "_suppress_callbacks", False):
-                        return resp
-                    if getattr(tracker_self, "_litellm_callback", None) is not None and tracker_self._is_called_from_litellm():
-                        return resp
-                    cat = getattr(tracker_self, "_openai_category", None) or getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
-                    source = f"{cat} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=o_tokens,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai sync tracking callback: {e}")
+                resp = self._orig_sync_chat(*args, **kwargs)
+                self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
             chat_mod.Completions.create = wrapped_sync_chat
@@ -813,26 +825,8 @@ class TokenCostTracker:
             self._orig_async_embed = embed_mod.AsyncEmbeddings.create
 
             async def wrapped_async_embed(*args, **kwargs):
-                resp = await tracker_self._orig_async_embed(*args, **kwargs)
-                try:
-                    if getattr(tracker_self, "_suppress_callbacks", False):
-                        return resp
-                    if getattr(tracker_self, "_litellm_callback", None) is not None and tracker_self._is_called_from_litellm():
-                        return resp
-                    cat = getattr(tracker_self, "_openai_category", None) or getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=0,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai embed tracking callback: {e}")
+                resp = await self._orig_async_embed(*args, **kwargs)
+                self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
             embed_mod.AsyncEmbeddings.create = wrapped_async_embed
@@ -842,26 +836,8 @@ class TokenCostTracker:
             self._orig_sync_embed = embed_mod.Embeddings.create
 
             def wrapped_sync_embed(*args, **kwargs):
-                resp = tracker_self._orig_sync_embed(*args, **kwargs)
-                try:
-                    if getattr(tracker_self, "_suppress_callbacks", False):
-                        return resp
-                    if getattr(tracker_self, "_litellm_callback", None) is not None and tracker_self._is_called_from_litellm():
-                        return resp
-                    cat = getattr(tracker_self, "_openai_category", None) or getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=0,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai sync embed tracking callback: {e}")
+                resp = self._orig_sync_embed(*args, **kwargs)
+                self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
             embed_mod.Embeddings.create = wrapped_sync_embed

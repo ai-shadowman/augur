@@ -1,5 +1,7 @@
 import functools
 import os
+import shutil
+import tempfile
 from abc import ABC, abstractmethod
 
 _DEFAULT_EVAL_DATASET = os.path.normpath(
@@ -8,19 +10,24 @@ _DEFAULT_EVAL_DATASET = os.path.normpath(
         "..", "assets", "datasets", "eval", "code_understanding.csv",
     )
 )
+_DEFAULT_RO_TIKTOKEN_DIR = "/opt/app-root/src/tiktoken_cache"
+
+
+def _get_token_tracker():
+    """Returns the shared TokenCostTracker instance if available."""
+    try:
+        from utils.token_tracker import TokenCostTracker
+        return TokenCostTracker.get_instance()
+    except Exception:
+        return None
 
 
 def _ensure_writable_tiktoken_cache() -> str:
     """Ensures TIKTOKEN_CACHE_DIR points to a writable directory so gitingest/tiktoken
     does not fail with PermissionError in read-only container filesystems."""
-    import shutil
-    import tempfile
-
-    default_ro_dir = "/opt/app-root/src/tiktoken_cache"
     current_dir = os.environ.get("TIKTOKEN_CACHE_DIR") or (
-        default_ro_dir if os.path.isdir(default_ro_dir) else ""
+        _DEFAULT_RO_TIKTOKEN_DIR if os.path.isdir(_DEFAULT_RO_TIKTOKEN_DIR) else ""
     )
-
     if current_dir and os.path.isdir(current_dir) and os.access(current_dir, os.W_OK):
         os.environ["TIKTOKEN_CACHE_DIR"] = current_dir
         return current_dir
@@ -29,16 +36,13 @@ def _ensure_writable_tiktoken_cache() -> str:
     os.makedirs(writable_dir, exist_ok=True)
 
     if current_dir and os.path.isdir(current_dir):
-        try:
-            for entry in os.listdir(current_dir):
-                if entry.endswith(".tmp"):
-                    continue
-                src_path = os.path.join(current_dir, entry)
-                dst_path = os.path.join(writable_dir, entry)
-                if os.path.isfile(src_path) and not os.path.exists(dst_path):
-                    shutil.copy2(src_path, dst_path)
-        except Exception:
-            pass
+        for entry in os.listdir(current_dir):
+            if entry.endswith(".tmp"):
+                continue
+            src_path = os.path.join(current_dir, entry)
+            dst_path = os.path.join(writable_dir, entry)
+            if os.path.isfile(src_path) and not os.path.exists(dst_path):
+                shutil.copy2(src_path, dst_path)
 
     os.environ["TIKTOKEN_CACHE_DIR"] = writable_dir
     return writable_dir

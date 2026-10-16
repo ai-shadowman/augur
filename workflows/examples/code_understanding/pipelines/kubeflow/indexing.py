@@ -156,17 +156,13 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
 
         if token_tracker:
             try:
-                from utils.duration_tracker import find_all_telemetry_files
                 for tok_file in find_all_telemetry_files(candidate_dirs, "tokens.json"):
                     token_tracker.load_and_merge(tok_file, current_stage="Evaluation")
-            except Exception as e:
-                logging.debug(f"Failed to load prior tokens in graphrag_evaluation_op: {e}")
-            try:
                 token_tracker.download_from_mlflow(
                     git_slug=git_slug, multi_repo=multi_repo, current_stage="Evaluation", only_current_run=False
                 )
             except Exception as e:
-                logging.debug(f"Failed to download tokens from MLflow in evaluation: {e}")
+                logging.debug(f"Failed to load prior tokens in graphrag_evaluation_op: {e}")
 
         cm_eval = dur_tracker.measure(stage="Evaluation", step="GraphRAG Evaluation") if dur_tracker else nullcontext()
         with cm_eval:
@@ -184,43 +180,23 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
     if not os.path.splitext(eval_results.path)[1]:
         save_dirs.append(eval_results.path)
 
-    if dur_tracker:
+    for tracker, filename in ((dur_tracker, "durations.json"), (token_tracker, "tokens.json")):
+        if not tracker:
+            continue
         for sdir in save_dirs:
             try:
                 os.makedirs(sdir, exist_ok=True)
-                dur_tracker.save_to_file(os.path.join(sdir, "durations.json"))
+                tracker.save_to_file(os.path.join(sdir, filename))
             except Exception as e:
-                logging.debug(f"Failed to persist durations.json to {sdir}: {e}")
-
+                logging.debug(f"Failed to persist {filename} to {sdir}: {e}")
         try:
-            dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
+            tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
         except Exception as e:
-            logging.debug(f"Failed to upload durations to MLflow in evaluation: {e}")
-
+            logging.debug(f"Failed to upload {filename} to MLflow in evaluation: {e}")
         try:
-            summary = dur_tracker.format_summary()
-            logging.info("\n" + summary)
+            logging.info("\n" + tracker.format_summary())
         except Exception as e:
-            logging.debug(f"Failed to print duration summary in evaluation pod: {e}")
-
-    if token_tracker:
-        for sdir in save_dirs:
-            try:
-                os.makedirs(sdir, exist_ok=True)
-                token_tracker.save_to_file(os.path.join(sdir, "tokens.json"))
-            except Exception as e:
-                logging.debug(f"Failed to persist tokens.json to {sdir}: {e}")
-
-        try:
-            token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Evaluation", multi_repo=multi_repo)
-        except Exception as e:
-            logging.debug(f"Failed to upload tokens to MLflow in evaluation: {e}")
-
-        try:
-            summary = token_tracker.format_summary()
-            logging.info("\n" + summary)
-        except Exception as e:
-            logging.debug(f"Failed to print token summary in evaluation pod: {e}")
+            logging.debug(f"Failed to print {filename} summary in evaluation pod: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

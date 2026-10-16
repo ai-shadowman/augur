@@ -200,6 +200,7 @@ def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_d
 
 
 _UNSUPPORTED_CHAT_COMPLETION_PARAMS = ("best_of", "top_k")
+_BLOCK_CONFIG_ATTRS = ("block_config", "model_config", "llm_kwargs", "default_kwargs", "extra_body")
 
 
 def _sanitize_flow_config(flow_yaml_path: str, flow=None):
@@ -211,11 +212,7 @@ def _sanitize_flow_config(flow_yaml_path: str, flow=None):
             import re
             with open(flow_yaml_path, "r", encoding="utf-8") as f:
                 raw_text = f.read()
-            pattern = (
-                r"(?m)^[ \t]*(?:"
-                + "|".join(_UNSUPPORTED_CHAT_COMPLETION_PARAMS)
-                + r")[ \t]*:.*(?:\r?\n)?"
-            )
+            pattern = r"(?m)^[ \t]*(?:" + "|".join(_UNSUPPORTED_CHAT_COMPLETION_PARAMS) + r")[ \t]*:.*(?:\r?\n)?"
             sanitized_text = re.sub(pattern, "", raw_text)
             if sanitized_text != raw_text:
                 with open(flow_yaml_path, "w", encoding="utf-8") as f:
@@ -226,19 +223,16 @@ def _sanitize_flow_config(flow_yaml_path: str, flow=None):
     if flow is not None:
         try:
             if isinstance(getattr(flow, "parameters", None), dict):
-                for bad_key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
-                    flow.parameters.pop(bad_key, None)
-            for block in getattr(flow, "blocks", []) or []:
-                for bad_key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
-                    if hasattr(block, bad_key):
-                        try:
-                            setattr(block, bad_key, None)
-                        except Exception:
-                            pass
-                    for dict_attr in ("block_config", "model_config", "llm_kwargs", "default_kwargs", " extra_body"):
-                        cfg = getattr(block, dict_attr.strip(), None)
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    flow.parameters.pop(key, None)
+            for block in getattr(flow, "blocks", None) or []:
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    if hasattr(block, key):
+                        setattr(block, key, None)
+                    for attr in _BLOCK_CONFIG_ATTRS:
+                        cfg = getattr(block, attr, None)
                         if isinstance(cfg, dict):
-                            cfg.pop(bad_key, None)
+                            cfg.pop(key, None)
         except Exception as e:
             logging.debug(f"Could not sanitize instantiated flow object: {e}")
 
@@ -267,20 +261,19 @@ def get_parsed_code_metadata(df, language, config=False):
         try:
             import litellm
             litellm.drop_params = True
-        except Exception:
+        except ImportError:
             pass
 
+        token_tracker = None
         try:
             from utils.token_tracker import TokenCostTracker
+            category = f"Data Generation ({language})"
             token_tracker = TokenCostTracker.get_instance()
-            token_tracker.set_category(f"Data Generation ({language})")
-            token_tracker.enable_litellm_callbacks(category=f"Data Generation ({language})")
-            token_tracker.enable_openai_tracking(category=f"Data Generation ({language})")
-            calls_before = token_tracker.get_totals()["total_calls"]
+            token_tracker.set_category(category)
+            token_tracker.enable_litellm_callbacks(category=category)
+            token_tracker.enable_openai_tracking(category=category)
         except Exception as e:
             logging.debug(f"Failed to enable token tracking in get_parsed_code_metadata: {e}")
-            token_tracker = None
-            calls_before = 0
 
         dataset = Dataset.from_pandas(df)
 

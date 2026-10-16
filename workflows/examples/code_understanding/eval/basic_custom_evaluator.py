@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 import logging
 import os
 import tempfile
@@ -6,7 +7,7 @@ import tempfile
 import pandas as pd
 from litellm import completion
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, _get_token_tracker, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.json_utils import extract_json_from_string
 
@@ -46,13 +47,10 @@ Respond ONLY with valid JSON in this exact format:
 {{"faithfulness": <score>, "answer_relevance": <score>, "answer_similarity": <score>, "answer_correctness": <score>, "reasoning": "<brief explanation>"}}"""
 
     def __init__(self):
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
+        token_tracker = _get_token_tracker()
+        if token_tracker:
             token_tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
             token_tracker.enable_openai_tracking(category="Evaluation (Judge)")
-        except Exception as e:
-            logging.debug(f"Failed to enable token tracking in BasicCustomEvaluator: {e}")
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
@@ -72,87 +70,80 @@ Respond ONLY with valid JSON in this exact format:
             dict with keys: faithfulness, answer_relevance, answer_similarity, answer_correctness, reasoning,
             question, actual_answer, reference_answer.
         """
-        token_tracker = None
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
-            token_tracker._in_evaluation = True
-        except Exception:
-            pass
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        try:
+        with eval_scope:
+            try:
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+                analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-            actual_answer = asyncio.run(analyzer.query_with_llm(input))
+                actual_answer = asyncio.run(analyzer.query_with_llm(input))
 
-            repo_context = build_repo_context(graphrag_source_dir)
+                repo_context = build_repo_context(graphrag_source_dir)
 
-            if token_tracker is not None:
-                token_tracker.set_category("Evaluation (Ground Truth)")
+                if token_tracker:
+                    token_tracker.set_category("Evaluation (Ground Truth)")
 
-            reference_response = completion(
-                **_llm_kwargs("GROUND_TRUTH"),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a senior software architect providing authoritative "
-                            "reference answers about code structure and dependencies."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": f"{repo_context}\n\n{input}" if repo_context else input,
-                    },
-                ],
-            )
+                reference_response = completion(
+                    **_llm_kwargs("GROUND_TRUTH"),
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a senior software architect providing authoritative "
+                                "reference answers about code structure and dependencies."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"{repo_context}\n\n{input}" if repo_context else input,
+                        },
+                    ],
+                )
 
-            reference_answer = reference_response.choices[0].message.content
+                reference_answer = reference_response.choices[0].message.content
 
-            if token_tracker is not None:
-                token_tracker.set_category("Evaluation (Judge)")
+                if token_tracker:
+                    token_tracker.set_category("Evaluation (Judge)")
 
-            judge_response = completion(
-                **_llm_kwargs("JUDGE"),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": self._JUDGE_PROMPT.format(
-                            question=input,
-                            reference=reference_answer,
-                            actual=actual_answer,
-                        ),
-                    }
-                ],
-            )
+                judge_response = completion(
+                    **_llm_kwargs("JUDGE"),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": self._JUDGE_PROMPT.format(
+                                question=input,
+                                reference=reference_answer,
+                                actual=actual_answer,
+                            ),
+                        }
+                    ],
+                )
 
-            metrics = extract_json_from_string(judge_response.choices[0].message.content)
-            if not isinstance(metrics, dict):
-                logging.error("Judge LLM returned no valid JSON object")
-                metrics = {}
+                metrics = extract_json_from_string(judge_response.choices[0].message.content)
+                if not isinstance(metrics, dict):
+                    logging.error("Judge LLM returned no valid JSON object")
+                    metrics = {}
 
-            metrics["question"] = input
-            metrics["actual_answer"] = actual_answer
-            metrics["reference_answer"] = reference_answer
+                metrics["question"] = input
+                metrics["actual_answer"] = actual_answer
+                metrics["reference_answer"] = reference_answer
 
-            logging.info(
-                f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
-                f"answer_relevance={metrics.get('answer_relevance')}, "
-                f"answer_similarity={metrics.get('answer_similarity')}, "
-                f"answer_correctness={metrics.get('answer_correctness')}"
-            )
+                logging.info(
+                    f"Evaluation complete: faithfulness={metrics.get('faithfulness')}, "
+                    f"answer_relevance={metrics.get('answer_relevance')}, "
+                    f"answer_similarity={metrics.get('answer_similarity')}, "
+                    f"answer_correctness={metrics.get('answer_correctness')}"
+                )
 
-            return metrics
+                return metrics
 
-        except Exception as e:
+            except Exception as e:
 
-            logging.error(f"Error during basic evaluation: {e}")
+                logging.error(f"Error during basic evaluation: {e}")
 
-            return {}
-        finally:
-            if token_tracker is not None:
-                token_tracker._in_evaluation = False
+                return {}
 
     def evaluate_with_dataset(
         self,
@@ -184,15 +175,10 @@ Respond ONLY with valid JSON in this exact format:
         """
         from loaders.default_asset_loader import DefaultAssetLoader
 
-        token_tracker = None
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
-            token_tracker._in_evaluation = True
-        except Exception:
-            pass
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        try:
+        with eval_scope:
             df = pd.read_csv(eval_dataset_file)
 
             analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
@@ -210,7 +196,7 @@ Respond ONLY with valid JSON in this exact format:
 
             def _ground_truth(input_text):
                 try:
-                    if token_tracker is not None:
+                    if token_tracker:
                         token_tracker.set_category("Evaluation (Ground Truth)")
                     return completion(
                         **_llm_kwargs("GROUND_TRUTH"),
@@ -249,7 +235,7 @@ Respond ONLY with valid JSON in this exact format:
 
             def _judge(row):
                 try:
-                    if token_tracker is not None:
+                    if token_tracker:
                         token_tracker.set_category("Evaluation (Judge)")
                     response = completion(
                         **_llm_kwargs("JUDGE"),
@@ -306,6 +292,3 @@ Respond ONLY with valid JSON in this exact format:
             )
 
             return df
-        finally:
-            if token_tracker is not None:
-                token_tracker._in_evaluation = False

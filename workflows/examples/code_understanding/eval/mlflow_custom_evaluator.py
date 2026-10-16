@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 import logging
 import os
 import tempfile
@@ -8,7 +9,7 @@ import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity, answer_correctness
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, _get_token_tracker, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
 
@@ -58,13 +59,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         if os.environ.get("MLFLOW_TRACKING_TOKEN"):
             _patch_session_forwarded_token()
 
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
+        token_tracker = _get_token_tracker()
+        if token_tracker:
             token_tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
             token_tracker.enable_openai_tracking(category="Evaluation (Judge)")
-        except Exception as e:
-            logging.debug(f"Failed to enable token tracking in MlFlowCustomEvaluator: {e}")
 
     def _judge_model_uri(self) -> str:
         """Returns the MLflow judge model URI, using an OpenAI-compatible endpoint."""
@@ -90,12 +88,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         repo_context = build_repo_context(graphrag_source_dir)
 
         try:
-            try:
-                from utils.token_tracker import TokenCostTracker
-                token_tracker = TokenCostTracker.get_instance()
+            token_tracker = _get_token_tracker()
+            if token_tracker:
                 token_tracker._litellm_category = "Evaluation (Ground Truth)"
-            except Exception:
-                pass
             response = completion(
                 model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
                 api_base=os.getenv("GROUND_TRUTH_LLM_API_BASE"),
@@ -133,84 +128,77 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         Returns:
             dict of MLflow evaluation metric scores for the single sample.
         """
-        token_tracker = None
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
-            token_tracker._in_evaluation = True
-        except Exception:
-            pass
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        try:
+        with eval_scope:
+            try:
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+                analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-            actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
+                actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
 
-            context_str = DependencyAnalyzer.extract_context_content(context_data)
+                context_str = DependencyAnalyzer.extract_context_content(context_data)
 
-            reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
+                reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
 
-            judge_model = self._judge_model_uri()
+                judge_model = self._judge_model_uri()
 
-            eval_data = pd.DataFrame({
-                "inputs": [input],
-                "targets": [reference_answer],
-                "predictions": [actual_answer],
-                "context": [context_str],
-            })
+                eval_data = pd.DataFrame({
+                    "inputs": [input],
+                    "targets": [reference_answer],
+                    "predictions": [actual_answer],
+                    "context": [context_str],
+                })
 
-            from mlflow.tracking import MlflowClient
+                from mlflow.tracking import MlflowClient
 
-            client = MlflowClient()
+                client = MlflowClient()
 
-            experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
+                experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
 
-            if not experiment:
+                if not experiment:
 
-                experiment = client.get_experiment(
-                    client.create_experiment(name=self._EXPERIMENT_NAME)
-                )
+                    experiment = client.get_experiment(
+                        client.create_experiment(name=self._EXPERIMENT_NAME)
+                    )
 
-            if mlflow.active_run():
-                mlflow.end_run()
+                if mlflow.active_run():
+                    mlflow.end_run()
 
-            if token_tracker is not None:
-                token_tracker._openai_category = "Evaluation (Judge)"
+                if token_tracker:
+                    token_tracker._openai_category = "Evaluation (Judge)"
 
-            with mlflow.start_run(
-                experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
-            ):
+                with mlflow.start_run(
+                    experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
+                ):
 
-                results = mlflow.evaluate(
-                    data=eval_data,
-                    predictions="predictions",
-                    targets="targets",
-                    extra_metrics=[
-                        faithfulness(model=judge_model),
-                        answer_relevance(model=judge_model),
-                        answer_similarity(model=judge_model),
-                    ],
-                )
+                    results = mlflow.evaluate(
+                        data=eval_data,
+                        predictions="predictions",
+                        targets="targets",
+                        extra_metrics=[
+                            faithfulness(model=judge_model),
+                            answer_relevance(model=judge_model),
+                            answer_similarity(model=judge_model),
+                        ],
+                    )
 
-            metrics = results.metrics
+                metrics = results.metrics
 
-            metrics["question"] = input
-            metrics["actual_answer"] = actual_answer
-            metrics["reference_answer"] = reference_answer
+                metrics["question"] = input
+                metrics["actual_answer"] = actual_answer
+                metrics["reference_answer"] = reference_answer
 
-            logging.info(f"MLflow evaluation complete: {results.metrics}")
+                logging.info(f"MLflow evaluation complete: {results.metrics}")
 
-            return metrics
+                return metrics
 
-        except Exception as e:
+            except Exception as e:
 
-            logging.error(f"Error during MLflow evaluation: {e}")
+                logging.error(f"Error during MLflow evaluation: {e}")
 
-            raise e
-        finally:
-            if token_tracker is not None:
-                token_tracker._in_evaluation = False
+                raise e
 
     def evaluate_with_dataset(
         self,
@@ -242,15 +230,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         from utils import code_utils
 
-        token_tracker = None
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
-            token_tracker._in_evaluation = True
-        except Exception:
-            pass
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        try:
+        with eval_scope:
             df = pd.read_csv(eval_dataset_file)
 
             analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
@@ -293,7 +276,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             eval_data = df[["inputs", "targets", "predictions", "context"]]
 
             judge_model = self._judge_model_uri()
-            if token_tracker is not None:
+            if token_tracker:
                 token_tracker._openai_category = "Evaluation (Judge)"
 
             client = MlflowClient()
@@ -372,6 +355,3 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             )
 
             return df
-        finally:
-            if token_tracker is not None:
-                token_tracker._in_evaluation = False

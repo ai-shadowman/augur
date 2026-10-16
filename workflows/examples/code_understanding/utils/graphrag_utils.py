@@ -366,12 +366,8 @@ class DependencyAnalyzer:
                     config=llm_config,
                 )
 
-                _prev_suppress = getattr(self.token_tracker, "_suppress_callbacks", False)
-                self.token_tracker._suppress_callbacks = True
-                try:
+                with self.token_tracker.suppress_callbacks():
                     response = await chat_model.achat(question)
-                finally:
-                    self.token_tracker._suppress_callbacks = _prev_suppress
 
                 result = response.output.content
 
@@ -393,9 +389,7 @@ class DependencyAnalyzer:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
 
-                    _prev_suppress = getattr(self.token_tracker, "_suppress_callbacks", False)
-                    self.token_tracker._suppress_callbacks = True
-                    try:
+                    with self.token_tracker.suppress_callbacks():
                         result, context_data = await api.global_search(
                             config=config,
                             entities=self.entity_df,
@@ -406,8 +400,6 @@ class DependencyAnalyzer:
                             query=question,
                             dynamic_community_selection=False if self.multi_repo else len(self.communities_df) > _community_threshold,
                         )
-                    finally:
-                        self.token_tracker._suppress_callbacks = _prev_suppress
 
                     p_tokens = None
                     o_tokens = None
@@ -438,9 +430,7 @@ class DependencyAnalyzer:
                         if "embed" in s.lower()
                     )
 
-                    _prev_suppress = getattr(self.token_tracker, "_suppress_callbacks", False)
-                    self.token_tracker._suppress_callbacks = True
-                    try:
+                    with self.token_tracker.suppress_callbacks():
                         result, context_data = await api.local_search(
                             config=config,
                             entities=self.entity_df,
@@ -453,8 +443,6 @@ class DependencyAnalyzer:
                             response_type=response_type,
                             query=question,
                         )
-                    finally:
-                        self.token_tracker._suppress_callbacks = _prev_suppress
 
                     # Only manually track embedding if active callbacks didn't already intercept it
                     embed_count_after = sum(
