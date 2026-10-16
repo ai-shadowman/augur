@@ -119,8 +119,16 @@ PYEOF
 
 MODE="multi"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PRECHECK_GUIDELLM="${GUIDELLM_PRECHECK_ENABLED:-true}"
-BENCHMARK_LLM="${GUIDELLM_CALIBRATE_PIPELINE:-true}"
+
+clean_val() {
+    local v="${1%%#*}"
+    v="${v//$'\r'/}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    echo "${v%"${v##*[![:space:]]}"}"
+}
+
+PRECHECK_GUIDELLM="$(clean_val "${GUIDELLM_PRECHECK_ENABLED:-true}")"
+BENCHMARK_LLM="$(clean_val "${GUIDELLM_CALIBRATE_PIPELINE:-true}")"
 
 for arg in "$@"; do
     case "$arg" in
@@ -135,12 +143,12 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "${PRECHECK_GUIDELLM,,}" == "true" ]]; then
+if [[ "${PRECHECK_GUIDELLM,,}" =~ ^(true|1|yes)$ ]]; then
     bash "$SCRIPT_DIR/pre_check_pipelines.sh" --guidellm-only
 fi
 
 BENCHMARK_BOOL="false"
-if [[ "${BENCHMARK_LLM,,}" == "true" ]]; then
+if [[ "${BENCHMARK_LLM,,}" =~ ^(true|1|yes)$ ]]; then
     BENCHMARK_BOOL="true"
 fi
 

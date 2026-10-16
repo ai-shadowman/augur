@@ -4,7 +4,15 @@
 # runs a fast GuideLLM concurrent readiness & SLO probe against the configured LLM endpoint.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN_GUIDELLM="${GUIDELLM_PRECHECK_ENABLED:-false}"
+
+clean_val() {
+    local v="${1%%#*}"
+    v="${v//$'\r'/}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    echo "${v%"${v##*[![:space:]]}"}"
+}
+
+RUN_GUIDELLM="$(clean_val "${GUIDELLM_PRECHECK_ENABLED:-false}")"
 GUIDELLM_ONLY="false"
 
 for arg in "$@"; do
@@ -14,13 +22,13 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "${RUN_GUIDELLM,,}" == "true" ]]; then
+if [[ "${RUN_GUIDELLM,,}" =~ ^(true|1|yes)$ ]]; then
     echo "==> Running Fast GuideLLM Pre-Flight Probe..."
     bash "$SCRIPT_DIR/run_guidellm.sh" \
-        --role "${GUIDELLM_TARGET_ROLE:-graphrag}" \
+        --role "$(clean_val "${GUIDELLM_TARGET_ROLE:-graphrag}")" \
         --workload "precheck" \
-        --rates "${GUIDELLM_PRECHECK_CONCURRENCY:-5}" \
-        --max-seconds "${GUIDELLM_PRECHECK_SECONDS:-15}" \
+        --rates "$(clean_val "${GUIDELLM_PRECHECK_CONCURRENCY:-5}")" \
+        --max-seconds "$(clean_val "${GUIDELLM_PRECHECK_SECONDS:-15}")" \
         --env-export "/tmp/guidellm_autotune.env" \
         --enforce-slo
     PROBE_RC=$?

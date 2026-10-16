@@ -22,15 +22,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_UNDERSTANDING_DIR="$(dirname "$SCRIPT_DIR")"
 
-ROLE="${GUIDELLM_TARGET_ROLE:-graphrag}"
-WORKLOAD="${GUIDELLM_WORKLOAD:-indexing}"
-PROFILE="${GUIDELLM_PROFILE:-}"
-RATES="${GUIDELLM_CONCURRENCY_RATES:-}"
-MAX_SECONDS="${GUIDELLM_MAX_SECONDS:-0}"
-OUTPUT_FILE="${GUIDELLM_OUTPUT_FILE:-/tmp/augur_guidellm_benchmarks.json}"
-ENV_EXPORT_FILE="${GUIDELLM_ENV_EXPORT_FILE:-}"
-UPLOAD_MLFLOW="${GUIDELLM_UPLOAD_MLFLOW:-true}"
-ENFORCE_SLO="${GUIDELLM_ENFORCE_SLO:-false}"
+clean_val() {
+    local v="${1%%#*}"
+    v="${v//$'\r'/}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    echo "${v%"${v##*[![:space:]]}"}"
+}
+
+ROLE="$(clean_val "${GUIDELLM_TARGET_ROLE:-graphrag}")"
+WORKLOAD="$(clean_val "${GUIDELLM_WORKLOAD:-indexing}")"
+PROFILE="$(clean_val "${GUIDELLM_PROFILE:-}")"
+# If GUIDELLM_PROFILE is set to an AUGUR workload name (e.g., all, sdg, indexing, analysis, precheck),
+# use it as the default WORKLOAD (unless overridden via --workload) and clear PROFILE.
+if [[ "$PROFILE" =~ ^(precheck|sdg|indexing|analysis|all)$ ]]; then
+    if [[ -z "${GUIDELLM_WORKLOAD:-}" ]]; then
+        WORKLOAD="$PROFILE"
+    fi
+    PROFILE=""
+fi
+RATES="$(clean_val "${GUIDELLM_CONCURRENCY_RATES:-${GUIDELLM_RATES:-}}")"
+MAX_SECONDS="$(clean_val "${GUIDELLM_MAX_SECONDS:-0}")"
+OUTPUT_FILE="$(clean_val "${GUIDELLM_OUTPUT_FILE:-/tmp/augur_guidellm_benchmarks.json}")"
+ENV_EXPORT_FILE="$(clean_val "${GUIDELLM_ENV_EXPORT_FILE:-}")"
+UPLOAD_MLFLOW="$(clean_val "${GUIDELLM_UPLOAD_MLFLOW:-true}")"
+ENFORCE_SLO="$(clean_val "${GUIDELLM_ENFORCE_SLO:-false}")"
 
 usage() {
     sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -63,8 +78,8 @@ CMD_ARGS=(
 [[ -n "$RATES" ]] && CMD_ARGS+=("--rates" "$RATES")
 [[ "$MAX_SECONDS" -gt 0 ]] 2>/dev/null && CMD_ARGS+=("--max-seconds" "$MAX_SECONDS")
 [[ -n "$ENV_EXPORT_FILE" ]] && CMD_ARGS+=("--env-export-file" "$ENV_EXPORT_FILE")
-[[ "${UPLOAD_MLFLOW,,}" == "true" ]] && CMD_ARGS+=("--upload-mlflow")
-[[ "${ENFORCE_SLO,,}" == "true" ]] && CMD_ARGS+=("--enforce-slo")
+[[ "${UPLOAD_MLFLOW,,}" =~ ^(true|1|yes)$ ]] && CMD_ARGS+=("--upload-mlflow")
+[[ "${ENFORCE_SLO,,}" =~ ^(true|1|yes)$ ]] && CMD_ARGS+=("--enforce-slo")
 
 echo "==> Running AUGUR GuideLLM Benchmark (role=$ROLE, workload=$WORKLOAD)..."
 PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \

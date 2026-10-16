@@ -159,7 +159,9 @@ upload-pipelines:
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
-		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
+		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	echo "==> Waiting for upload-kubeflow-pipelines job to complete..." && \
+	oc wait job/upload-kubeflow-pipelines -n $$KFP_NAMESPACE --for=condition=complete --timeout=300s
 
 upload-mlflow-assets:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -279,7 +281,7 @@ benchmark-llm:
 		--set-string guidellm.targetRole="$${GUIDELLM_TARGET_ROLE:-graphrag}" \
 		--set-string guidellm.workload="$${GUIDELLM_WORKLOAD:-indexing}" \
 		--set-string guidellm.profile="$${GUIDELLM_PROFILE:-concurrent}" \
-		--set-string guidellm.concurrencyRates="$${GUIDELLM_CONCURRENCY_RATES:-1,5,10,20,25}" \
+		--set-string guidellm.concurrencyRates="$${GUIDELLM_CONCURRENCY_RATES:-$${GUIDELLM_RATES:-1,5,10,20,25}}" \
 		--set-string guidellm.maxSeconds="$${GUIDELLM_MAX_SECONDS:-30}" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \

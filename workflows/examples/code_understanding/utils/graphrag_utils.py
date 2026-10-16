@@ -553,6 +553,10 @@ class DependencyAnalyzer:
                 env["EMBED_LLM_TOKEN"] = "EMPTY"
 
             # Populate GraphRAG concurrency and rate limits (explicit env -> GuideLLM auto-tune -> defaults)
+            for k in ("GUIDELLM_AUTO_TUNE", "GRAPHRAG_CONCURRENT_REQUESTS", "GRAPHRAG_REQUESTS_PER_MINUTE", "GRAPHRAG_TOKENS_PER_MINUTE"):
+                if k in env and isinstance(env[k], str):
+                    env[k] = env[k].split("#", 1)[0].strip()
+
             auto_tune = env.get("GUIDELLM_AUTO_TUNE", "true").lower() in ("true", "1", "yes")
             if auto_tune and (
                 not env.get("GRAPHRAG_CONCURRENT_REQUESTS")
@@ -575,15 +579,16 @@ class DependencyAnalyzer:
                             bt.load_and_merge(bf)
                     limits = bt.get_recommended_graphrag_limits(default_concurrency=25)
                     if bt.profiles:
-                        env.setdefault("GRAPHRAG_CONCURRENT_REQUESTS", str(limits["concurrent_requests"]))
-                        env.setdefault(
-                            "GRAPHRAG_REQUESTS_PER_MINUTE",
-                            str(limits["requests_per_minute"]) if limits.get("requests_per_minute") else "null",
-                        )
-                        env.setdefault(
-                            "GRAPHRAG_TOKENS_PER_MINUTE",
-                            str(limits["tokens_per_minute"]) if limits.get("tokens_per_minute") else "null",
-                        )
+                        if not env.get("GRAPHRAG_CONCURRENT_REQUESTS"):
+                            env["GRAPHRAG_CONCURRENT_REQUESTS"] = str(limits["concurrent_requests"])
+                        if not env.get("GRAPHRAG_REQUESTS_PER_MINUTE"):
+                            env["GRAPHRAG_REQUESTS_PER_MINUTE"] = (
+                                str(limits["requests_per_minute"]) if limits.get("requests_per_minute") else "null"
+                            )
+                        if not env.get("GRAPHRAG_TOKENS_PER_MINUTE"):
+                            env["GRAPHRAG_TOKENS_PER_MINUTE"] = (
+                                str(limits["tokens_per_minute"]) if limits.get("tokens_per_minute") else "null"
+                            )
                         logging.info(
                             f"GuideLLM Auto-Tuned GraphRAG settings: concurrent_requests={env['GRAPHRAG_CONCURRENT_REQUESTS']}, "
                             f"requests_per_minute={env['GRAPHRAG_REQUESTS_PER_MINUTE']}, "
@@ -592,9 +597,12 @@ class DependencyAnalyzer:
                 except Exception as bt_err:
                     logging.debug(f"GuideLLM GraphRAG auto-tune skipped: {bt_err}")
 
-            env.setdefault("GRAPHRAG_CONCURRENT_REQUESTS", "25")
-            env.setdefault("GRAPHRAG_REQUESTS_PER_MINUTE", "null")
-            env.setdefault("GRAPHRAG_TOKENS_PER_MINUTE", "null")
+            if not env.get("GRAPHRAG_CONCURRENT_REQUESTS"):
+                env["GRAPHRAG_CONCURRENT_REQUESTS"] = "25"
+            if not env.get("GRAPHRAG_REQUESTS_PER_MINUTE"):
+                env["GRAPHRAG_REQUESTS_PER_MINUTE"] = "null"
+            if not env.get("GRAPHRAG_TOKENS_PER_MINUTE"):
+                env["GRAPHRAG_TOKENS_PER_MINUTE"] = "null"
 
             with open(template_path) as f:
                 content = string.Template(f.read())

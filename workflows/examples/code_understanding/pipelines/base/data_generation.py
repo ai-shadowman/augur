@@ -683,7 +683,7 @@ class DataGenerationPipeline:
             code_tracker = None
 
         try:
-            from utils.benchmark_tracker import BenchmarkTracker
+            from utils.benchmark_tracker import BenchmarkTracker, _clean_env
             from utils.duration_tracker import find_all_telemetry_files
             bench_tracker = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
             candidate_dirs = [
@@ -694,12 +694,12 @@ class DataGenerationPipeline:
             for bf in find_all_telemetry_files([d for d in candidate_dirs if d], "benchmarks.json"):
                 bench_tracker.load_and_merge(bf)
             bench_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
-            if os.getenv("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes") and not bench_tracker.profiles:
+            if _clean_env("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes") and not bench_tracker.profiles:
                 cal_cm = dur_tracker.measure(stage="Data Generation", step="GuideLLM Calibration Sweep") if dur_tracker else nullcontext()
                 with cal_cm:
                     bench_tracker.run_guidellm_profile(
                         profile_name="sdg",
-                        max_seconds=int(os.getenv("GUIDELLM_MAX_SECONDS", "10")),
+                        max_seconds=int(_clean_env("GUIDELLM_MAX_SECONDS", "10")),
                     )
         except Exception as e:
             logging.debug(f"BenchmarkTracker initialization in data generation: {e}")

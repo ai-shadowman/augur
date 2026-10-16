@@ -38,11 +38,18 @@ def guidellm_calibration_op(
     setup_logging()
     import logging, os
 
-    git_repo = git_repo or os.getenv("GIT_REPO", "")
-    git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
+    def _clean(name: str, default: str = "") -> str:
+        val = os.getenv(name)
+        if val is None:
+            return default
+        cleaned = val.split("#", 1)[0].strip()
+        return cleaned if cleaned else default
+
+    git_repo = git_repo or _clean("GIT_REPO", "")
+    git_branch = git_branch or _clean("GIT_BRANCH", "main")
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-    should_run = enabled or os.getenv("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes")
+    should_run = enabled or _clean("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes")
 
     try:
         from utils.benchmark_tracker import BenchmarkTracker
@@ -50,9 +57,9 @@ def guidellm_calibration_op(
         bt.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
 
         if should_run:
-            profile_arg = os.getenv("GUIDELLM_PROFILE", "sdg")
-            max_sec = int(os.getenv("GUIDELLM_MAX_SECONDS", "15"))
-            rates_str = os.getenv("GUIDELLM_RATES", "1,4,8,16")
+            profile_arg = _clean("GUIDELLM_PROFILE", "sdg").lower()
+            max_sec = int(_clean("GUIDELLM_MAX_SECONDS", "15"))
+            rates_str = _clean("GUIDELLM_RATES", _clean("GUIDELLM_CONCURRENCY_RATES", "1,4,8,16"))
             rates = [int(r.strip()) for r in rates_str.split(",") if r.strip().isdigit()] or [1, 4, 8, 16]
 
             logging.info(
@@ -69,12 +76,12 @@ def guidellm_calibration_op(
         else:
             logging.info("GuideLLM calibration step skipped (enabled=False). Using existing MLflow benchmark data if present.")
 
-        rec = bt.get_recommended_sdg_concurrency(default=int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10")))
+        rec = bt.get_recommended_sdg_concurrency(default=int(_clean("SDG_LLM_MAX_CONCURRENCY", "10")))
         logging.info(f"GuideLLM recommended SDG_LLM_MAX_CONCURRENCY={rec}")
         return int(rec)
     except Exception as e:
         logging.warning(f"GuideLLM calibration encountered an error (falling back to default concurrency): {e}")
-        return int(os.getenv("SDG_LLM_MAX_CONCURRENCY", "10"))
+        return int(_clean("SDG_LLM_MAX_CONCURRENCY", "10"))
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

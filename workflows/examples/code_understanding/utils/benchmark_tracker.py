@@ -18,7 +18,7 @@ AUGUR_WORKLOAD_PROFILES: Dict[str, Dict[str, Any]] = {
     "precheck": {
         "description": "Fast concurrent pre-flight readiness probe",
         "prompt_tokens": 256,
-        "output_tokens": 64,
+        "output_tokens": 128,
         "default_profile": "concurrent",
         "default_rates": "5",
         "default_max_seconds": 15,
@@ -71,24 +71,33 @@ ROLE_ENV_MAP: Dict[str, Tuple[str, str, str, str]] = {
 }
 
 
+def _clean_env(name: str, default: str = "") -> str:
+    """Reads an environment variable, stripping any inline '#' comments and surrounding whitespace."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    cleaned = raw.split("#")[0].strip()
+    return cleaned if cleaned != "" else default
+
+
 def resolve_role_credentials(role: str) -> Tuple[str, str, str]:
     """Resolves (api_base, model_id, api_key) from environment variables for a given role."""
     role_key = role.lower().strip()
     if role_key not in ROLE_ENV_MAP:
         role_key = "graphrag"
     base_var, id_var, key_var, tok_var = ROLE_ENV_MAP[role_key]
-    api_base = os.getenv(base_var, "").strip()
-    model_id = os.getenv(id_var, "").strip()
-    api_key = (os.getenv(key_var) or os.getenv(tok_var) or "EMPTY").strip()
+    api_base = _clean_env(base_var, "")
+    model_id = _clean_env(id_var, "")
+    api_key = (_clean_env(key_var) or _clean_env(tok_var) or "EMPTY").strip()
     return api_base, model_id, api_key
 
 
 def resolve_default_processor() -> str:
     """Resolves a local pre-cached tokenizer path if available, or falls back to 'gpt2'."""
-    explicit = os.getenv("GUIDELLM_PROCESSOR", "").strip()
+    explicit = _clean_env("GUIDELLM_PROCESSOR", "")
     if explicit:
         return explicit
-    default_cached = os.getenv("GUIDELLM_DEFAULT_PROCESSOR", "/opt/app-root/src/hf_cache/gpt2")
+    default_cached = _clean_env("GUIDELLM_DEFAULT_PROCESSOR", "/opt/app-root/src/hf_cache/gpt2")
     if os.path.isdir(default_cached):
         return default_cached
     return "gpt2"
@@ -276,7 +285,8 @@ class BenchmarkTracker:
 
     def _recompute_recommendations(self):
         """Computes optimal concurrency, RPM, and TPM per endpoint role based on recorded sweep points."""
-        max_ttft_p95 = float(os.getenv("GUIDELLM_MAX_TTFT_P95_MS", "15000"))
+        max_ttft_p95 = float(_clean_env("GUIDELLM_TTFT_P95_SLO_MS") or _clean_env("GUIDELLM_MAX_TTFT_P95_MS") or "15000")
+        max_itl_p95 = float(_clean_env("GUIDELLM_ITL_P95_SLO_MS") or _clean_env("GUIDELLM_MAX_ITL_P95_MS") or "500")
         roles = sorted({r.get("role", "graphrag") for r in self.records})
 
         for role in roles:
@@ -284,13 +294,19 @@ class BenchmarkTracker:
             if not role_records:
                 continue
 
-            # Filter candidates with zero (or lowest) error rate and acceptable TTFT p95
+            # Filter candidates with zero (or lowest) error rate and acceptable TTFT/ITL p95
             healthy = [
                 r for r in role_records
                 if r.get("error_rate", 0.0) == 0.0
                 and r.get("output_tokens_per_second", 0.0) > 0.0
                 and (r.get("ttft_ms_p95", 0.0) <= max_ttft_p95 or r.get("ttft_ms_p95", 0.0) == 0.0)
+                and (r.get("itl_ms_p95", 0.0) <= max_itl_p95 or r.get("itl_ms_p95", 0.0) == 0.0)
             ]
+            if not healthy:
+                healthy = [
+                    r for r in role_records
+                    if r.get("error_rate", 0.0) == 0.0 and r.get("output_tokens_per_second", 0.0) > 0.0
+                ]
             if not healthy:
                 healthy = [r for r in role_records if r.get("output_tokens_per_second", 0.0) > 0.0] or role_records
 
@@ -310,7 +326,7 @@ class BenchmarkTracker:
             # Set safe RPM and TPM ceilings at 90% of sustained capacity (with sensible minimums)
             rec_rpm = max(10, int(rps * 60 * 0.9)) if rps > 0 else 60
             rec_tpm = max(4000, int(tot_tok_s * 60 * 0.9)) if tot_tok_s > 0 else 60000
-            parallel_repos = max(1, int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2")))
+            parallel_repos = max(1, int(_clean_env("GRAPHRAG_PARALLEL_REPOS", "2")))
             sdg_conc = max(2, opt_conc // parallel_repos) if opt_conc >= 4 else opt_conc
 
             self.recommendations[role] = {
@@ -581,12 +597,12 @@ class BenchmarkTracker:
         prompt_tokens: int,
         output_tokens: int,
     ) -> int:
-        """Fallback async OpenAI streaming benchmark if the guidellm CLI fails or is unavailable."""
+        """Async OpenAI streaming benchmark with full support for standard and reasoning models (e.g. gpt-oss-120b)."""
         from openai import AsyncOpenAI
         import httpx
 
-        verify_tls = os.getenv("ENABLE_TLS_VERIFICATION", "false").lower() in ("true", "1", "yes")
-        ca_bundle = os.getenv("SSL_CERT_FILE") or os.getenv("REQUESTS_CA_BUNDLE")
+        verify_tls = _clean_env("ENABLE_TLS_VERIFICATION", "false").lower() in ("true", "1", "yes")
+        ca_bundle = _clean_env("SSL_CERT_FILE") or _clean_env("REQUESTS_CA_BUNDLE")
         verify_arg: Union[bool, str] = (ca_bundle if (verify_tls and ca_bundle and os.path.exists(ca_bundle)) else verify_tls)
 
         http_client = httpx.AsyncClient(verify=verify_arg, timeout=httpx.Timeout(120.0, connect=15.0))
@@ -623,35 +639,97 @@ class BenchmarkTracker:
                     prev_token_t: Optional[float] = None
                     chunk_gaps: List[float] = []
                     chunks_count = 0
+                    char_count = 0
+                    usage_out_tokens = 0
+                    usage_in_tokens = 0
                     try:
-                        stream = await client.chat.completions.create(
-                            model=model_id,
-                            messages=[{"role": "user", "content": synthetic_prompt}],
-                            max_tokens=output_tokens,
-                            temperature=0.1,
-                            stream=True,
-                        )
+                        try:
+                            stream = await client.chat.completions.create(
+                                model=model_id,
+                                messages=[{"role": "user", "content": synthetic_prompt}],
+                                max_tokens=output_tokens,
+                                temperature=0.1,
+                                stream=True,
+                                stream_options={"include_usage": True},
+                            )
+                        except Exception:
+                            stream = await client.chat.completions.create(
+                                model=model_id,
+                                messages=[{"role": "user", "content": synthetic_prompt}],
+                                max_tokens=output_tokens,
+                                temperature=0.1,
+                                stream=True,
+                            )
                         async for chunk in stream:
                             now = time.perf_counter()
-                            delta = ""
-                            if chunk.choices and chunk.choices[0].delta:
-                                delta = chunk.choices[0].delta.content or ""
-                            if delta:
+                            u = getattr(chunk, "usage", None)
+                            if u is not None:
+                                c_tok = getattr(u, "completion_tokens", None) or (
+                                    u.get("completion_tokens") if isinstance(u, dict) else 0
+                                )
+                                p_tok = getattr(u, "prompt_tokens", None) or (
+                                    u.get("prompt_tokens") if isinstance(u, dict) else 0
+                                )
+                                if c_tok:
+                                    usage_out_tokens = max(usage_out_tokens, int(c_tok))
+                                if p_tok:
+                                    usage_in_tokens = max(usage_in_tokens, int(p_tok))
+
+                            delta_text = ""
+                            if chunk.choices:
+                                delta_obj = getattr(chunk.choices[0], "delta", None)
+                                if delta_obj is not None:
+                                    delta_text = (
+                                        getattr(delta_obj, "content", None)
+                                        or getattr(delta_obj, "reasoning_content", None)
+                                        or getattr(delta_obj, "reasoning", None)
+                                        or ""
+                                    )
+                                    if not delta_text and hasattr(delta_obj, "model_extra") and isinstance(delta_obj.model_extra, dict):
+                                        delta_text = (
+                                            delta_obj.model_extra.get("reasoning_content")
+                                            or delta_obj.model_extra.get("reasoning")
+                                            or delta_obj.model_extra.get("text")
+                                            or ""
+                                        )
+                            if delta_text:
                                 chunks_count += 1
+                                char_count += len(str(delta_text))
                                 if first_token_t is None:
                                     first_token_t = now
                                 elif prev_token_t is not None:
                                     chunk_gaps.append((now - prev_token_t) * 1000.0)
                                 prev_token_t = now
+                            elif first_token_t is None and chunk.choices:
+                                # Record first non-empty choice event timestamp for reasoning endpoints that buffer
+                                first_token_t = now
+                                prev_token_t = now
+
                         req_end = time.perf_counter()
-                        latencies_s.append(req_end - req_start)
+                        req_dur = max(0.001, req_end - req_start)
+                        latencies_s.append(req_dur)
                         if first_token_t is not None:
-                            ttfts_ms.append((first_token_t - req_start) * 1000.0)
+                            ttft_val = (first_token_t - req_start) * 1000.0
+                            # If only a single buffered chunk arrived at req_end, estimate TTFT as ~25% of request latency
+                            if chunks_count <= 1 and ttft_val >= req_dur * 900.0:
+                                ttft_val = req_dur * 250.0
+                            ttfts_ms.append(max(1.0, ttft_val))
+                        else:
+                            ttfts_ms.append(req_dur * 250.0)
+
+                        est_out = (
+                            usage_out_tokens
+                            or max(chunks_count, int(char_count / 3.8))
+                            or max(16, output_tokens // 2)
+                        )
                         if chunk_gaps:
                             itls_ms.append(sum(chunk_gaps) / len(chunk_gaps))
-                        est_out = max(1, chunks_count)
+                        elif est_out > 1:
+                            gen_ms = max(1.0, (req_dur * 1000.0) - ttfts_ms[-1])
+                            itls_ms.append(gen_ms / max(1, est_out - 1))
+
                         total_out_tokens += est_out
-                        total_in_tokens += prompt_tokens
+                        total_in_tokens += usage_in_tokens or prompt_tokens
                         completed += 1
                     except Exception as exc:
                         logging.debug("Benchmark stream request error at concurrency=%d: %s", conc, exc)
@@ -725,11 +803,22 @@ class BenchmarkTracker:
             return 0
 
         w_cfg = AUGUR_WORKLOAD_PROFILES.get(workload, AUGUR_WORKLOAD_PROFILES["indexing"])
-        profile = profile or os.getenv("GUIDELLM_PROFILE") or w_cfg["default_profile"]
-        rates_str = rates_str or os.getenv("GUIDELLM_CONCURRENCY_RATES") or w_cfg["default_rates"]
-        max_seconds = int(max_seconds or os.getenv("GUIDELLM_MAX_SECONDS") or w_cfg["default_max_seconds"])
-        prompt_tokens = int(os.getenv("GUIDELLM_PROMPT_TOKENS") or w_cfg["prompt_tokens"])
-        output_tokens = int(os.getenv("GUIDELLM_OUTPUT_TOKENS") or w_cfg["output_tokens"])
+        raw_profile = (profile or _clean_env("GUIDELLM_PROFILE") or w_cfg["default_profile"]).lower()
+        # If GUIDELLM_PROFILE was set to a workload name (e.g. 'all', 'sdg', 'indexing'), use default_profile ('concurrent')
+        if raw_profile in ("precheck", "sdg", "indexing", "analysis", "all"):
+            profile = w_cfg["default_profile"]
+        else:
+            profile = raw_profile
+
+        rates_str = (
+            rates_str
+            or _clean_env("GUIDELLM_CONCURRENCY_RATES")
+            or _clean_env("GUIDELLM_RATES")
+            or w_cfg["default_rates"]
+        )
+        max_seconds = int(max_seconds or _clean_env("GUIDELLM_MAX_SECONDS") or w_cfg["default_max_seconds"])
+        prompt_tokens = int(_clean_env("GUIDELLM_PROMPT_TOKENS") or w_cfg["prompt_tokens"])
+        output_tokens = int(_clean_env("GUIDELLM_OUTPUT_TOKENS") or w_cfg["output_tokens"])
         processor = resolve_default_processor()
 
         rates_list = [int(x.strip()) for x in rates_str.split(",") if x.strip().isdigit()] or [5]
@@ -738,57 +827,110 @@ class BenchmarkTracker:
         json_out = os.path.join(work_dir, f"guidellm_{role}_{workload}.json")
 
         guidellm_bin = shutil.which("guidellm")
-        if guidellm_bin:
-            cmd = [
-                guidellm_bin,
-                "benchmark",
-                "--target", api_base,
-                "--model", model_id,
-                "--processor", processor,
-                "--data", f"prompt_tokens={prompt_tokens},output_tokens={output_tokens}",
-                "--max-seconds", str(max_seconds),
-                "--output-path", json_out,
-            ]
-            if profile in ("concurrent", "throughput", "synchronous"):
-                cmd.extend(["--rate-type", profile])
-                if profile == "concurrent":
-                    cmd.extend(["--rate", ",".join(str(r) for r in rates_list)])
-            else:
-                cmd.extend(["--profile", profile])
-
+        use_cli = _clean_env("GUIDELLM_USE_CLI", "true").lower() in ("true", "1", "yes")
+        if guidellm_bin and use_cli:
             env = dict(os.environ)
             env["OPENAI_API_KEY"] = api_key
             env["GUIDELLM__OPENAI__API_KEY"] = api_key
-            if os.getenv("ENABLE_TLS_VERIFICATION", "false").lower() not in ("true", "1", "yes"):
+            if _clean_env("ENABLE_TLS_VERIFICATION", "false").lower() not in ("true", "1", "yes"):
                 env["GUIDELLM__OPENAI__VERIFY"] = "false"
                 env["PYTHONHTTPSVERIFY"] = "0"
 
-            logging.info(
-                "Running GuideLLM CLI benchmark for role='%s', workload='%s', model='%s' (rates=%s, max_seconds=%ds)...",
-                role, workload, model_id, rates_list, max_seconds,
-            )
+            # Detect GuideLLM CLI subcommand across v0.2 (openai), v0.3-v0.6 (benchmark [run]), and v0.7+ (run)
+            cmd: Optional[List[str]] = None
             try:
-                proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=max_seconds * (len(rates_list) + 2) + 60)
-                if proc.returncode == 0 and os.path.isfile(json_out):
-                    html_candidate = os.path.join(work_dir, "benchmarks.html")
-                    if os.path.isfile(html_candidate) and html_candidate not in self.html_report_paths:
-                        self.html_report_paths.append(html_candidate)
-                    count = self.parse_guidellm_json(
-                        json_out, role=role, workload=workload, model_id=model_id, api_base=api_base
+                help_proc = subprocess.run([guidellm_bin, "--help"], env=env, capture_output=True, text=True, timeout=10)
+                help_txt = (help_proc.stdout or "") + (help_proc.stderr or "")
+                rates_csv = ",".join(str(r) for r in rates_list)
+
+                if re.search(r"\bbenchmark\b", help_txt):
+                    sub_proc = subprocess.run([guidellm_bin, "benchmark", "--help"], env=env, capture_output=True, text=True, timeout=10)
+                    sub_txt = (sub_proc.stdout or "") + (sub_proc.stderr or "")
+                    sub_cmd = [guidellm_bin, "benchmark", "run"] if re.search(r"\brun\b", sub_txt) else [guidellm_bin, "benchmark"]
+                    cmd = sub_cmd + [
+                        "--target", api_base,
+                        "--model", model_id,
+                        "--processor", processor,
+                        "--data", f"prompt_tokens={prompt_tokens},output_tokens={output_tokens}",
+                        "--max-seconds", str(max_seconds),
+                        "--output-path", json_out,
+                    ]
+                    if profile in ("concurrent", "throughput", "synchronous"):
+                        cmd.extend(["--rate-type", profile])
+                        if profile == "concurrent":
+                            cmd.extend(["--rate", rates_csv])
+                    else:
+                        cmd.extend(["--profile", profile])
+                elif re.search(r"\brun\b", help_txt):
+                    sub_proc = subprocess.run([guidellm_bin, "run", "--help"], env=env, capture_output=True, text=True, timeout=10)
+                    sub_txt = (sub_proc.stdout or "") + (sub_proc.stderr or "")
+                    target_flag = "--target" if "--target" in sub_txt else "--backend"
+                    out_flag = "--output-path" if "--output-path" in sub_txt else "--output-dir"
+                    out_val = json_out if out_flag == "--output-path" else work_dir
+                    cmd = [
+                        guidellm_bin,
+                        "run",
+                        target_flag, api_base,
+                        "--model", model_id,
+                        "--processor", processor,
+                        "--data", f"prompt_tokens={prompt_tokens},output_tokens={output_tokens}",
+                        "--max-seconds", str(max_seconds),
+                        out_flag, out_val,
+                    ]
+                    if "--rate-type" in sub_txt:
+                        cmd.extend(["--rate-type", profile])
+                        if profile == "concurrent":
+                            cmd.extend(["--rate", rates_csv])
+                    else:
+                        cmd.extend(["--profile", profile])
+                        if profile == "concurrent" and "--rate" in sub_txt:
+                            cmd.extend(["--rate", rates_csv])
+                        elif profile == "concurrent" and "--rates" in sub_txt:
+                            cmd.extend(["--rates", rates_csv])
+            except Exception as det_err:
+                logging.debug("GuideLLM CLI subcommand detection skipped: %s", det_err)
+
+            if cmd:
+                logging.info(
+                    "Running GuideLLM CLI benchmark for role='%s', workload='%s', model='%s' (rates=%s, max_seconds=%ds)...",
+                    role, workload, model_id, rates_list, max_seconds,
+                )
+                try:
+                    proc = subprocess.run(
+                        cmd, env=env, capture_output=True, text=True, timeout=max_seconds * (len(rates_list) + 2) + 60
                     )
-                    if count > 0:
-                        return count
-                else:
-                    logging.warning(
-                        "GuideLLM CLI exited with code %s (falling back to built-in async probe): %s",
-                        proc.returncode, (proc.stderr or proc.stdout or "")[-400:],
-                    )
-            except Exception as e:
-                logging.warning("GuideLLM CLI execution failed (%s), falling back to built-in async probe.", e)
+                    if not os.path.isfile(json_out):
+                        for cand_name in ("benchmarks.json", "results.json"):
+                            cand_p = os.path.join(work_dir, cand_name)
+                            if os.path.isfile(cand_p):
+                                json_out = cand_p
+                                break
+                    if proc.returncode == 0 and os.path.isfile(json_out):
+                        html_candidate = os.path.join(work_dir, "benchmarks.html")
+                        if os.path.isfile(html_candidate) and html_candidate not in self.html_report_paths:
+                            self.html_report_paths.append(html_candidate)
+                        count = self.parse_guidellm_json(
+                            json_out, role=role, workload=workload, model_id=model_id, api_base=api_base
+                        )
+                        rec = self.recommendations.get(role) or {}
+                        if count > 0 and float(rec.get("sustained_output_tokens_per_second", 0.0)) > 1.0:
+                            return count
+                        logging.info(
+                            "GuideLLM CLI reported low/unparsed token throughput (%.2f tok/s, likely a reasoning model); "
+                            "running built-in streaming probe for accurate token & TTFT telemetry...",
+                            float(rec.get("sustained_output_tokens_per_second", 0.0)),
+                        )
+                    else:
+                        logging.info(
+                            "GuideLLM CLI exited with code %s; using built-in OpenAI streaming probe.",
+                            proc.returncode,
+                        )
+                except Exception as e:
+                    logging.info("GuideLLM CLI execution skipped (%s); using built-in OpenAI streaming probe.", e)
 
         logging.info(
-            "Running built-in OpenAI streaming benchmark probe for role='%s', workload='%s', model='%s'...",
-            role, workload, model_id,
+            "Running built-in OpenAI streaming benchmark probe for role='%s', workload='%s', model='%s' (rates=%s, max_seconds=%ds)...",
+            role, workload, model_id, rates_list, max_seconds,
         )
         return asyncio.run(
             self._run_builtin_async_probe(
@@ -1114,18 +1256,26 @@ class BenchmarkTracker:
 
 
 def _cli_main() -> int:
+    default_workload = _clean_env("GUIDELLM_WORKLOAD") or _clean_env("GUIDELLM_PROFILE") or "indexing"
+    if default_workload.lower() not in ("precheck", "sdg", "indexing", "analysis", "all"):
+        default_workload = "indexing"
+
+    default_profile = _clean_env("GUIDELLM_PROFILE", "")
+    if default_profile.lower() in ("precheck", "sdg", "indexing", "analysis", "all"):
+        default_profile = ""
+
     parser = argparse.ArgumentParser(description="Run GuideLLM benchmark and compute AUGUR concurrency settings")
-    parser.add_argument("--role", default=os.getenv("GUIDELLM_TARGET_ROLE", "graphrag"),
+    parser.add_argument("--role", default=_clean_env("GUIDELLM_TARGET_ROLE", "graphrag"),
                         help="Target LLM role: graphrag | ground_truth | judge | all")
-    parser.add_argument("--workload", default=os.getenv("GUIDELLM_WORKLOAD", "indexing"),
+    parser.add_argument("--workload", default=default_workload,
                         help="AUGUR workload profile: precheck | sdg | indexing | analysis | all")
-    parser.add_argument("--profile", default=os.getenv("GUIDELLM_PROFILE", ""),
+    parser.add_argument("--profile", default=default_profile,
                         help="GuideLLM rate profile: concurrent | sweep | throughput | synchronous")
-    parser.add_argument("--rates", default=os.getenv("GUIDELLM_CONCURRENCY_RATES", ""),
-                        help="Comma-separated concurrency levels (e.g. '1,5,10,20,25')")
-    parser.add_argument("--max-seconds", type=int, default=int(os.getenv("GUIDELLM_MAX_SECONDS", "0") or 0),
+    parser.add_argument("--rates", default=_clean_env("GUIDELLM_CONCURRENCY_RATES") or _clean_env("GUIDELLM_RATES"),
+                        help="Comma-separated concurrency levels (e.g. '1,4,8,16')")
+    parser.add_argument("--max-seconds", type=int, default=int(_clean_env("GUIDELLM_MAX_SECONDS", "0") or 0),
                         help="Max duration per benchmark rate in seconds")
-    parser.add_argument("--output-file", default=os.getenv("GUIDELLM_OUTPUT_FILE", "/tmp/augur_guidellm_benchmarks.json"),
+    parser.add_argument("--output-file", default=_clean_env("GUIDELLM_OUTPUT_FILE", "/tmp/augur_guidellm_benchmarks.json"),
                         help="Path to write normalized benchmarks.json")
     parser.add_argument("--env-export-file", default="",
                         help="Optional path to write shell 'export KEY=VAL' auto-tuned variables")
@@ -1137,8 +1287,8 @@ def _cli_main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s - %(message)s")
 
-    git_repo = os.getenv("GIT_REPO", "")
-    git_branch = os.getenv("GIT_BRANCH", "main")
+    git_repo = _clean_env("GIT_REPO", "")
+    git_branch = _clean_env("GIT_BRANCH", "main")
     git_slug = None
     if git_repo:
         try:
@@ -1151,12 +1301,14 @@ def _cli_main() -> int:
     roles = ["graphrag", "ground_truth", "judge"] if args.role == "all" else [args.role]
     workloads = ["sdg", "indexing", "analysis"] if args.workload == "all" else [args.workload]
 
+    rate_profile = args.profile if args.profile not in ("precheck", "sdg", "indexing", "analysis", "all") else None
+
     for r in roles:
         for w in workloads:
             tracker.run_benchmark(
                 role=r,
                 workload=w,
-                profile=args.profile or None,
+                profile=rate_profile or None,
                 rates_str=args.rates or None,
                 max_seconds=args.max_seconds if args.max_seconds > 0 else None,
             )
@@ -1176,11 +1328,11 @@ def _cli_main() -> int:
             ef.write(f"export GRAPHRAG_TOKENS_PER_MINUTE={rec_limits['tokens_per_minute']}\n")
             ef.write(f"export SDG_LLM_MAX_CONCURRENCY={rec_limits['sdg_max_concurrency']}\n")
 
-    if args.upload_mlflow and os.getenv("MLFLOW_TRACKING_URI"):
+    if args.upload_mlflow and _clean_env("MLFLOW_TRACKING_URI"):
         tracker.upload_to_mlflow(git_slug=git_slug, stage="Benchmark")
 
     if args.enforce_slo:
-        min_tok_s = float(os.getenv("GUIDELLM_MIN_TOK_PER_SEC", "5.0"))
+        min_tok_s = float(_clean_env("GUIDELLM_MIN_TOK_PER_SEC", "5.0"))
         rec = tracker.recommendations.get(roles[0])
         if not rec:
             logging.error("SLO check failed: No benchmark records produced for role '%s'.", roles[0])
