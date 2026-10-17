@@ -50,6 +50,16 @@ Normal logs report whether the root file was found, its active-pattern count,
 the active patterns in file order, and aggregate excluded file and directory
 counts. Individual excluded paths are logged only at debug level.
 
+Migration reports include an **Ignored symlink locations** section beside the
+codebase scope summary. It lists repository-relative paths and reasons for
+symlinks encountered and skipped during ingestion, grouped by repository.
+Unsafe targets, directory links that are not traversed, and links excluded by
+ignore rules are recorded; safe internal file links can still be analyzed.
+Links beneath excluded directories are not inventoried. The inventory travels
+in `project_metrics.json` and informs report prompts about coverage gaps and
+build validation needs. Older artifacts without an inventory are reported as
+“not recorded,” rather than implying no symlinks were skipped.
+
 ```gitignore
 # Generated fixtures
 tests/fixtures/generated/

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import logging
 import os
 import re
@@ -8,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-from utils.repository_ignore import skip_unsafe_symlink
+from utils.repository_ignore import RepositoryIgnorePolicy, skip_unsafe_symlink
 
 # Extension and file classification maps
 EXT_TO_LANGUAGE: Dict[str, str] = {
@@ -247,6 +248,7 @@ class CodeMetricsTracker:
         self.total_repo_lines: int = 0
         self.languages: Dict[str, Dict[str, int]] = {}
         self.skipped_large_files: List[str] = []
+        self.symlink_inventories: Dict[str, Dict[str, Any]] = {}
         self._scanned_files: Set[str] = set()
         self._merged_files: Set[str] = set()
         self._merged_runs: Set[str] = set()
@@ -257,6 +259,7 @@ class CodeMetricsTracker:
         self.total_repo_lines = 0
         self.languages.clear()
         self.skipped_large_files.clear()
+        self.symlink_inventories.clear()
         self._scanned_files.clear()
         self._merged_files.clear()
         self._merged_runs.clear()
@@ -613,6 +616,14 @@ class CodeMetricsTracker:
 
         self._recalculate_totals()
 
+    def record_ignored_symlinks(self, policy: RepositoryIgnorePolicy) -> None:
+        """Snapshot ingestion exclusions separately from repository size measurement."""
+        key = self.git_slug or self.git_repo or "repository"
+        self.symlink_inventories[key] = {
+            "git_repo": self.git_repo,
+            "locations": policy.ignored_symlinks,
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         """Serializes code metrics to a dictionary."""
         d = {
@@ -623,6 +634,7 @@ class CodeMetricsTracker:
             "total_blank_lines": sum(l.get("blank_lines", 0) for l in self.languages.values()),
             "languages": self.languages,
             "skipped_large_files": self.skipped_large_files,
+            "symlink_inventories": self.symlink_inventories,
         }
         for attr in ("git_slug", "git_repo", "run_id"):
             val = getattr(self, attr)
@@ -642,23 +654,27 @@ class CodeMetricsTracker:
         tracker.total_repo_lines = data.get("total_repo_lines", 0)
         tracker.languages = data.get("languages", {})
         tracker.skipped_large_files = data.get("skipped_large_files", [])
+        tracker.symlink_inventories = data.get("symlink_inventories", {
+            tracker.git_slug or tracker.git_repo or "repository": {
+                "git_repo": tracker.git_repo, "locations": None,
+            },
+        })
         return tracker
 
     def save_to_file(self, filepath: str):
         """Serializes and writes code metrics to a JSON file."""
         if not filepath:
             return
+        payload = self.to_dict()
         if self.total_repo_files == 0 and os.path.isfile(filepath):
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    if json.load(f).get("total_repo_files", 0) > 0:
-                        return
-            except Exception:
-                pass
+            existing = self.load_from_file(filepath)
+            if existing and existing.total_repo_files > 0:
+                existing._merge_symlink_inventories(self.symlink_inventories)
+                payload = existing.to_dict()
 
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+            json.dump(payload, f, indent=2)
 
     @classmethod
     def load_from_file(cls, filepath: str) -> Optional["CodeMetricsTracker"]:
@@ -699,7 +715,30 @@ class CodeMetricsTracker:
             if sf not in self.skipped_large_files:
                 self.skipped_large_files.append(sf)
 
+        self._merge_symlink_inventories(other.symlink_inventories)
         self._merged_files.add(norm_path)
+
+    def _merge_symlink_inventories(self, inventories: Dict[str, Dict[str, Any]]) -> None:
+        reason_priority = {
+            "directory symlink was not traversed": 0,
+            "excluded by built-in rules": 1,
+            "excluded by .augurignore": 2,
+        }
+        for key, inventory in inventories.items():
+            current = self.symlink_inventories.get(key)
+            if current is None or current["locations"] is None:
+                self.symlink_inventories[key] = inventory
+            elif inventory["locations"] is not None:
+                # Earlier language passes may have a less specific reason for the same link.
+                locations = {}
+                for entry in current["locations"] + inventory["locations"]:
+                    previous = locations.get(entry["path"])
+                    priority = (reason_priority.get(entry["reason"], 3), entry["reason"])
+                    if previous is None or priority > (
+                        reason_priority.get(previous["reason"], 3), previous["reason"]
+                    ):
+                        locations[entry["path"]] = entry
+                current["locations"] = [locations[path] for path in sorted(locations)]
 
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs file counts and line metrics to MLflow."""
@@ -911,6 +950,38 @@ class CodeMetricsTracker:
         return "\n".join(lines)
 
     def format_markdown_section(self) -> str:
+        """Report measured scope alongside ingestion's symlink coverage gaps."""
+        return self._format_scope_summary() + self.format_ignored_symlinks_section()
+
+    def format_ignored_symlinks_section(self) -> str:
+        """Render recorded exclusions without asking an LLM to reproduce paths."""
+        def escape(value: str) -> str:
+            return (html.escape(value).replace("|", "&#124;").replace("`", "&#96;")
+                    .replace("\r", "&#13;").replace("\n", "&#10;"))
+
+        lines = ["\n### Ignored symlink locations\n"]
+        if not self.symlink_inventories:
+            lines.append("Symlink inventory was not recorded for this analysis.")
+        for key, inventory in sorted(self.symlink_inventories.items()):
+            label = inventory.get("git_repo") or key
+            lines.append(f"\n**Repository: {escape(label)}** ({escape(key)})\n")
+            locations = inventory["locations"]
+            if locations is None:
+                lines.append("Symlink inventory was not recorded for this repository.")
+            elif not locations:
+                lines.append("None encountered during ingestion. Excluded directories were not searched.")
+            else:
+                lines.extend(["| Ignored location | Reason |", "| --- | --- |"])
+                for entry in sorted(locations, key=lambda item: (item["path"], item["reason"])):
+                    lines.append(f"| {escape(entry['path'])} | {escape(entry['reason'])} |")
+        lines.append(
+            "\nThese are analysis coverage gaps. Symlinks inside excluded directories were not inventoried. "
+            "Safe internal file symlinks may be analyzed. Check whether builds depend on skipped locations "
+            "and validate their targets separately; a symlink alone does not establish a build defect."
+        )
+        return "\n".join(lines) + "\n"
+
+    def _format_scope_summary(self) -> str:
         """Returns a Markdown section containing the scope text and formatted ASCII table."""
         if not self.languages:
             if self.total_repo_files > 0:

@@ -24,6 +24,9 @@ class _DataFrame:
     def __getitem__(self, key):
         return _Column(record[key] for record in self.records)
 
+    def iterrows(self):
+        return enumerate(self.records)
+
 
 if "pygments" not in sys.modules:
     pygments = types.ModuleType("pygments")
@@ -122,6 +125,40 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
             self.assertEqual(lexer.call_args_list[0].args[0], "visible.py")
             self.assertEqual(lexer.call_count, 1)
 
+    def test_uploaded_metadata_contains_inventory_before_pipeline_finalization(self):
+        from loaders.default_asset_loader import DefaultAssetLoader
+        from utils.code_metrics_tracker import CodeMetricsTracker
+
+        root = self.repository()
+        target = self.repository()
+        (root / "visible.py").write_text("print('visible')\n", encoding="utf-8")
+        (root / "broken.py").symlink_to("missing.py")
+        CodeMetricsTracker.reset_instance(git_slug="org-repo-main", git_repo="org/repo")
+        self.addCleanup(CodeMetricsTracker.reset_instance)
+        uploaded = []
+
+        def upload(path, **kwargs):
+            if path == str(target):
+                uploaded.append(json.loads((target / "project_metrics.json").read_text()))
+
+        modules = {
+            "utils.duration_tracker": types.SimpleNamespace(DurationTracker=types.SimpleNamespace(get_instance=lambda: None)),
+            "utils.token_tracker": types.SimpleNamespace(TokenCostTracker=types.SimpleNamespace(get_instance=lambda: None)),
+        }
+        with patch.dict(sys.modules, modules), patch("pandas.DataFrame", _DataFrame), patch(
+            "pipelines.base.data_generation.get_parsed_code_metadata", side_effect=lambda df, **kwargs: df
+        ), patch("utils.json_utils.flatten_code_metadata", return_value="language: python"), patch.object(
+            DefaultAssetLoader, "RESULTS_PATH_PREFIX_METADATA", "results/metadata", create=True
+        ), patch.object(DefaultAssetLoader, "log_results", side_effect=upload):
+            data_generation.generate_code_and_meta(
+                "org/repo", "main", "python", str(root), str(target), multi_repo=True,
+            )
+
+        self.assertEqual(len(uploaded), 1)
+        restored = CodeMetricsTracker.from_dict(uploaded[0])
+        self.assertIn("broken.py", restored.format_markdown_section())
+        self.assertIn("symlink target does not exist", restored.format_markdown_section())
+
     def test_raw_dataset_never_stats_or_opens_ignored_files(self):
         root = self.repository("hidden.py\n")
         (root / "hidden.py").write_text("secret", encoding="utf-8")
@@ -213,6 +250,9 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
         self.assertEqual(policy.stats.ignored_directories, 0)
 
     def test_local_and_kubeflow_pipelines_continue_after_external_link(self):
+        from utils.code_metrics_tracker import CodeMetricsTracker
+        import utils.code_metrics_tracker as metrics_module
+
         # Execute the actual component body without installing KFP or contacting services.
         component_path = Path(data_generation.__file__).parents[1] / "kubeflow" / "data_generation.py"
         tree = ast.parse(component_path.read_text(encoding="utf-8"))
@@ -248,7 +288,7 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
                 modules = {
                     "utils.duration_tracker": types.SimpleNamespace(DurationTracker=types.SimpleNamespace(get_instance=lambda: duration)),
                     "utils.token_tracker": types.SimpleNamespace(TokenCostTracker=types.SimpleNamespace(reset_instance=lambda: None, get_instance=lambda: None)),
-                    "utils.code_metrics_tracker": types.SimpleNamespace(CodeMetricsTracker=types.SimpleNamespace(reset_instance=lambda: None, get_instance=lambda **kwargs: None)),
+                    "utils.code_metrics_tracker": metrics_module,
                 }
                 with patch.dict(sys.modules, modules), patch(
                     "pipelines.base.data_generation.prepare_environment"
@@ -258,7 +298,9 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
                     "pipelines.base.data_generation.generate_code_and_meta", side_effect=generate
                 ), patch("utils.kubeflow_utils.read_from_input_artifact", return_value=nullcontext(str(root))), patch(
                     "utils.kubeflow_utils.write_to_output_artifact", return_value=nullcontext(str(target))
-                ), self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+                ), patch.object(CodeMetricsTracker, "download_from_mlflow"), patch.object(
+                    CodeMetricsTracker, "upload_to_mlflow"
+                ), patch.object(CodeMetricsTracker, "log_to_mlflow"), self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
                     lexer.return_value.name = "Python"
                     if mode == "kubeflow":
                         namespace["generate_code_and_meta_op"]("org/repo", "main", object(), object(), multi_repo=True)
@@ -268,7 +310,13 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
 
                 self.assertEqual([record["file_path"] for record in records], ["visible.py"])
                 self.assertEqual((target / "visible.txt").read_text(encoding="utf-8"), "visible")
-                self.assertEqual(len(logs.output), 1)
+                self.assertEqual(len(logs.output), 2)  # Ingestion and size measurement each scan once.
+                restored = CodeMetricsTracker.load_from_file(str(target / "project_metrics.json"))
+                self.assertIsNotNone(restored)
+                report = restored.format_markdown_section()
+                self.assertIn("external.py", report)
+                self.assertIn("symlink target is outside repository root", report)
+                self.assertIn("org/repo", report)
 
     def test_external_metadata_skips_ignored_json_and_prunes_ignored_directories(self):
         root = self.repository(".code_metadata/private/\n.code_metadata/hidden.json\n")
