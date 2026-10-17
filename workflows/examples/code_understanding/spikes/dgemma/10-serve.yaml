@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dgemma
+  namespace: dgemma-spike
+spec:
+  replicas: 1
+  # One GPU on the cluster, so a rolling update deadlocks: the new pod waits
+  # for a card the old pod will not release until the new one is ready.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: dgemma}
+  template:
+    metadata:
+      labels: {app: dgemma}
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-L40S
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: vllm
+          # v0.31.0 registers DiffusionGemmaForBlockDiffusion and ships
+          # vllm/config/diffusion.py, so the nightly the Red Hat article pins
+          # is not needed. That nightly tag is gone from Docker Hub anyway,
+          # and /v1/systemone was never in its api_server: the article says
+          # outright that the decision endpoint is an example server rather
+          # than a vLLM API. Single-token answers with logprobs over the
+          # standard completions route carry the same information.
+          image: vllm/vllm-openai:v0.31.0
+          args:
+            - --model=/models/dgemma-fp8
+            - --served-model-name=dgemma
+            - --diffusion-config={"canvas_length":64}
+            - --max-logprobs=32
+            # Decisions are short. The Gemma4 default window would reserve KV
+            # cache we do not have left after 25.4 GiB of weights, and even S4's
+            # chunk-level judging only needs a 1200-token chunk plus the prompt.
+            - --max-model-len=8192
+            - --port=8000
+            # 25.3 GiB of weights on a 46068 MiB card. 0.90 leaves about
+            # 15 GiB, and the decision state buffers scale with
+            # batch x canvas x vocab, which at canvas 64 and a 262K
+            # vocabulary is roughly 34 MiB per sequence.
+            - --gpu-memory-utilization=0.90
+          env:
+            - name: HF_HOME
+              value: /models/.hf
+            # Ada is sm_89: no FlashAttention 4, which wants Hopper or newer.
+            - name: VLLM_ATTENTION_BACKEND
+              value: TRITON_ATTN
+            # OpenShift runs this as an arbitrary UID with no passwd entry, so
+            # HOME resolves to / and every cache vLLM opens underneath it is
+            # unwritable. Without these the engine core dies on
+            # PermissionError: '/.config' before it finishes loading weights.
+            - name: HOME
+              value: /cache
+            - name: XDG_CACHE_HOME
+              value: /cache
+            - name: XDG_CONFIG_HOME
+              value: /cache/config
+            - name: TRITON_CACHE_DIR
+              value: /cache/triton
+            # On the PVC rather than the emptyDir: torch.compile artifacts
+            # survive a restart, and recompiling costs minutes of load time
+            # that S0 is trying to measure.
+            - name: VLLM_CACHE_ROOT
+              value: /models/.vllm-cache
+          ports:
+            - {containerPort: 8000, name: http}
+          volumeMounts:
+            - {name: models, mountPath: /models}
+            - {name: shm, mountPath: /dev/shm}
+            - {name: cache, mountPath: /cache}
+          resources:
+            requests: {cpu: "6", memory: 32Gi, nvidia.com/gpu: "1"}
+            limits: {cpu: "12", memory: 64Gi, nvidia.com/gpu: "1"}
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 20
+            failureThreshold: 90   # 30 minutes to load and capture graphs
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 15
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: dgemma-models
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 8Gi}
+        - name: cache
+          emptyDir: {sizeLimit: 8Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dgemma
+  namespace: dgemma-spike
+spec:
+  selector: {app: dgemma}
+  ports:
+    - {port: 8000, targetPort: 8000, name: http}
