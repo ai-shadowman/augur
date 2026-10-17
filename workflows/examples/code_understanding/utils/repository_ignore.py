@@ -15,6 +15,37 @@ AUGURIGNORE_FILENAME = ".augurignore"
 _LOG = logging.getLogger(__name__)
 
 
+def skip_unsafe_symlink(
+    path: str | os.PathLike[str],
+    repository_root: Path,
+    warned_paths: set[str],
+) -> bool:
+    """Skip unsafe content links, warning once per lexical path for this scan."""
+    candidate = Path(path)
+    if not candidate.is_symlink():
+        return False
+
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError:
+        reason = "symlink target does not exist"
+    except (OSError, RuntimeError):
+        reason = "symlink target cannot be resolved"
+    else:
+        try:
+            resolved.relative_to(repository_root.resolve())
+        except ValueError:
+            reason = "symlink target is outside repository root"
+        else:
+            return False
+
+    relative_path = Path(os.path.relpath(candidate, repository_root)).as_posix()
+    if relative_path not in warned_paths:
+        warned_paths.add(relative_path)
+        _LOG.warning("Skipping %s: %s", relative_path, reason)
+    return True
+
+
 class RepositoryIgnoreError(ValueError):
     """A repository's root .augurignore could not be safely applied."""
 
@@ -37,6 +68,7 @@ class RepositoryIgnorePolicy:
         self._ignored_files: set[str] = set()
         self._custom_ignored_directories: set[str] = set()
         self._custom_ignored_files: set[str] = set()
+        self._warned_symlinks: set[str] = set()
 
     @classmethod
     def from_repository(
@@ -154,16 +186,23 @@ class RepositoryIgnorePolicy:
         built_in_names: Collection[str],
     ) -> list[str]:
         kept = []
-        parent = Path(str(parent_dir).replace("\\", "/"))
+        parent = Path(parent_dir)
         for name in names:
             candidate = parent / name
-            custom_excluded = self.is_ignored(candidate, is_directory=is_directory)
-            excluded = name in built_in_names or custom_excluded
+            relative_path = self._relative_path(candidate, is_directory=is_directory)
+            unsafe_symlink = skip_unsafe_symlink(
+                candidate,
+                self._repository_root,
+                self._warned_symlinks,
+            )
+            custom_excluded = not unsafe_symlink and self.is_ignored(
+                candidate, is_directory=is_directory
+            )
+            excluded = unsafe_symlink or name in built_in_names or custom_excluded
             if not excluded:
                 kept.append(name)
                 continue
 
-            relative_path = self._relative_path(candidate, is_directory=is_directory)
             relative_path = relative_path.rstrip("/")
             if is_directory:
                 self._ignored_directories.add(relative_path)
