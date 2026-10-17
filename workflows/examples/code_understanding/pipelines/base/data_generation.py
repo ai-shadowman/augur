@@ -65,7 +65,17 @@ def prepare_environment(source_path: str,
 
     try:
         from utils.duration_tracker import DurationTracker
-        dur_tracker = DurationTracker.get_instance()
+        git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+        dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+        if git_slug and not any(r.get("stage") == "Calibration" for r in dur_tracker.records):
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, current_stage="Data Generation")
+            except Exception as e:
+                logging.debug(f"Failed downloading upstream Calibration durations in prepare_environment: {e}")
+        try:
+            dur_tracker.record_pod_creation_overhead(stage="Data Generation")
+        except Exception as e:
+            logging.debug(f"Failed recording pod creation overhead in prepare_environment: {e}")
     except Exception:
         dur_tracker = None
 
@@ -218,6 +228,12 @@ def get_parsed_code_metadata(df, language, config=False):
             try:
                 from utils.benchmark_tracker import BenchmarkTracker
                 bt = BenchmarkTracker.get_instance()
+                if not bt.profiles:
+                    slug_hint = bt.git_slug
+                    if not slug_hint and df is not None and "git_slug" in df.columns and not df.empty:
+                        slug_hint = str(df["git_slug"].iloc[0] or "")
+                    if slug_hint:
+                        bt.download_from_mlflow(git_slug=slug_hint)
                 if bt.profiles:
                     default_sdg_concurrency = bt.get_recommended_sdg_concurrency(default=10)
             except Exception:

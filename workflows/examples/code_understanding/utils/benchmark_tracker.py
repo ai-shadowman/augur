@@ -201,6 +201,8 @@ class BenchmarkTracker:
         self.html_report_paths: List[str] = []
         self._merged_files: Set[str] = set()
         self._merged_runs: Set[str] = set()
+        self._profile_sweeps_run: bool = False
+        self._calibration_stage_cleared: bool = False
 
     def reset(self):
         self.records.clear()
@@ -208,6 +210,8 @@ class BenchmarkTracker:
         self.html_report_paths.clear()
         self._merged_files.clear()
         self._merged_runs.clear()
+        self._profile_sweeps_run = False
+        self._calibration_stage_cleared = False
 
     def add_record(
         self,
@@ -358,6 +362,21 @@ class BenchmarkTracker:
 
     def get_recommended_sdg_concurrency(self, default: int = 10, role: str = "graphrag") -> int:
         """Returns recommended SDG_LLM_MAX_CONCURRENCY from GuideLLM calibration or default."""
+        if (
+            not self._profile_sweeps_run
+            and not self._calibration_stage_cleared
+            and self.git_slug
+            and _clean_env("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() not in ("true", "1", "yes")
+        ):
+            try:
+                from utils.duration_tracker import DurationTracker
+                dur_tracker = DurationTracker.get_instance(git_slug=self.git_slug, git_repo=self.git_repo)
+                if not dur_tracker.records:
+                    dur_tracker.clear_mlflow_stage(git_slug=self.git_slug, stage="Calibration")
+                    self._calibration_stage_cleared = True
+            except Exception as e:
+                logging.debug("Failed clearing Calibration stage in get_recommended_sdg_concurrency: %s", e)
+
         rec = self.recommendations.get(role) or self.recommendations.get("graphrag")
         if not rec:
             return default
@@ -393,14 +412,61 @@ class BenchmarkTracker:
         output_dir: Optional[str] = None,
     ) -> int:
         """Convenience wrapper around run_benchmark for pipeline stage calibration."""
+        self._profile_sweeps_run = True
         rates_str = ",".join(str(r) for r in rates) if rates else None
-        return self.run_benchmark(
-            role=role,
-            workload=profile_name,
-            rates_str=rates_str,
-            max_seconds=max_seconds,
-            output_dir=output_dir,
-        )
+
+        dur_tracker = None
+        outer_active = False
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tracker = DurationTracker.get_instance(git_slug=self.git_slug, git_repo=self.git_repo)
+            dur_tracker.record_pod_creation_overhead(stage="Calibration")
+            outer_active = any(
+                a.get("stage") == "Calibration" and a.get("step") == "guidellm-calibration-op"
+                for a in getattr(dur_tracker, "_active_measurements", [])
+            )
+        except Exception as e:
+            logging.debug("Failed to initialize Calibration DurationTracker in run_guidellm_profile: %s", e)
+
+        t0 = time.perf_counter()
+        start_wall = time.time()
+        status = "success"
+        try:
+            return self.run_benchmark(
+                role=role,
+                workload=profile_name,
+                rates_str=rates_str,
+                max_seconds=max_seconds,
+                output_dir=output_dir,
+            )
+        except Exception:
+            status = "failed"
+            raise
+        finally:
+            if dur_tracker is not None and not outer_active:
+                try:
+                    elapsed = max(0.0, time.perf_counter() - t0)
+                    end_wall = time.time()
+                    existing = next(
+                        (
+                            r for r in dur_tracker.records
+                            if r.get("stage") == "Calibration" and r.get("step") == "guidellm-calibration-op"
+                        ),
+                        None,
+                    )
+                    prev_dur = float(existing.get("duration", 0.0)) if existing else 0.0
+                    first_start = float(existing.get("start_time", start_wall)) if existing else start_wall
+                    dur_tracker.record_step(
+                        stage="Calibration",
+                        step="guidellm-calibration-op",
+                        duration=prev_dur + elapsed,
+                        start_time=first_start,
+                        end_time=end_wall,
+                        status=status,
+                        metadata={"profile": profile_name, "rates": rates or []},
+                    )
+                except Exception as e:
+                    logging.debug("Failed recording Calibration step duration: %s", e)
 
     def estimate_pipeline_runtime(self, total_files: int, total_lines: int = 0) -> Optional[Dict[str, Any]]:
         """Estimates Stage 1 (SDG) + Stage 2 (Indexing) + Stage 3 (Analysis) runtime using GuideLLM tok/s."""
@@ -1290,9 +1356,36 @@ class BenchmarkTracker:
                     git_slug=slug,
                     multi_repo=multi_repo,
                 )
-                DefaultAssetLoader().log_results(tmp_file, artifact_path=artifact_path, tags=tags)
+                content_str = None
+                try:
+                    with open(tmp_file, "r", encoding="utf-8") as f:
+                        content_str = f.read()
+                except Exception:
+                    pass
+                DefaultAssetLoader().log_results(
+                    tmp_file,
+                    artifact_path=artifact_path,
+                    tags=tags,
+                    content=content_str,
+                )
             except Exception as e:
                 logging.debug("Asset loader upload failed for benchmarks.json: %s", e)
+
+        if self._profile_sweeps_run or stage in (None, "Data Generation", "Calibration"):
+            try:
+                from utils.duration_tracker import DurationTracker
+                dur_tracker = DurationTracker.get_instance(git_slug=slug, git_repo=self.git_repo)
+                has_cal = any(r.get("stage") == "Calibration" for r in dur_tracker.records)
+                if self._profile_sweeps_run or has_cal:
+                    dur_tracker.upload_to_mlflow(
+                        git_slug=slug,
+                        stage="Calibration",
+                        multi_repo=multi_repo,
+                        run_id=run_id,
+                    )
+                    self._profile_sweeps_run = False
+            except Exception as e:
+                logging.debug("Failed uploading Calibration durations from BenchmarkTracker: %s", e)
 
     def download_from_mlflow(
         self,
@@ -1331,14 +1424,57 @@ class BenchmarkTracker:
         if slug or multi_repo:
             try:
                 from loaders.default_asset_loader import DefaultAssetLoader
+                from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
                 artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
                     DefaultAssetLoader.RESULTS_PATH_PREFIX_TELEMETRY,
                     git_slug=slug,
                     multi_repo=multi_repo,
                 )
+                asset_file = f"{artifact_path}/benchmarks.json"
+                asset_tags = {
+                    "git_slug": str(slug or "multi-repo"),
+                    "type": "guidellm_benchmarks",
+                }
+                loader = DefaultAssetLoader()
                 with tempfile.TemporaryDirectory() as tmp_dir:
-                    if DefaultAssetLoader().download_dir(artifact_path, tmp_dir):
+                    loaded = False
+                    try:
+                        content = loader.download(
+                            asset_file,
+                            download_dir=tmp_dir,
+                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                            asset_tags=asset_tags,
+                        )
+                        if isinstance(content, dict) and ("records" in content or "recommendations" in content):
+                            cand = os.path.join(tmp_dir, "benchmarks.json")
+                            if not os.path.isfile(cand):
+                                with open(cand, "w", encoding="utf-8") as f:
+                                    json.dump(content, f)
+                            self.load_and_merge(cand, current_stage=current_stage)
+                            loaded = True
+                        elif isinstance(content, str) and content.strip():
+                            cand = os.path.join(tmp_dir, "benchmarks.json")
+                            if not os.path.isfile(cand):
+                                with open(cand, "w", encoding="utf-8") as f:
+                                    f.write(content)
+                            self.load_and_merge(cand, current_stage=current_stage)
+                            loaded = True
+                    except Exception as e:
+                        logging.debug("DefaultAssetLoader.download failed for benchmarks.json: %s", e)
+
+                    if not loaded:
                         cand = os.path.join(tmp_dir, "benchmarks.json")
+                        if not os.path.isfile(cand) and hasattr(loader, "download_dir"):
+                            try:
+                                loader.download_dir(
+                                    artifact_path,
+                                    tmp_dir,
+                                    experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                                    asset_tags=asset_tags,
+                                )
+                            except TypeError:
+                                loader.download_dir(artifact_path, tmp_dir)
                         if os.path.isfile(cand):
                             self.load_and_merge(cand, current_stage=current_stage)
             except Exception as e:

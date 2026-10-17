@@ -672,6 +672,7 @@ class DependencyAnalyzer:
                 extract_graphrag_indexing_durations,
             )
             dur_tracker = DurationTracker.get_instance()
+            import tempfile
             parent_dir = os.path.dirname(self.graphrag_dir)
             candidate_dirs = [
                 self.graphrag_dir,
@@ -680,14 +681,19 @@ class DependencyAnalyzer:
                 os.getenv("PARENT_TARGET_PATH", "target"),
                 os.getenv("PARENT_SOURCE_PATH", "source"),
             ]
-            if parent_dir and os.path.abspath(parent_dir) != os.path.abspath("."):
+            if (
+                parent_dir
+                and os.path.abspath(parent_dir) != os.path.abspath(".")
+                and os.path.abspath(parent_dir) != os.path.abspath(tempfile.gettempdir())
+            ):
                 candidate_dirs.append(parent_dir)
             if self.git_slug:
                 candidate_dirs.extend([
                     os.path.join(os.getenv("PARENT_TARGET_PATH", "target"), self.git_slug),
                     os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), self.git_slug),
-                    os.path.join(parent_dir or ".", self.git_slug),
                 ])
+                if parent_dir and os.path.abspath(parent_dir) != os.path.abspath(tempfile.gettempdir()):
+                    candidate_dirs.append(os.path.join(parent_dir, self.git_slug))
             for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
                 if not self.git_slug and dur_tracker.git_slug:

@@ -31,9 +31,9 @@ class DurationTracker:
         return cls._global_instance
 
     @classmethod
-    def reset_instance(cls) -> "DurationTracker":
+    def reset_instance(cls, git_slug: Optional[str] = None, git_repo: Optional[str] = None, **kwargs) -> "DurationTracker":
         """Resets and returns the global singleton instance."""
-        cls._global_instance = cls()
+        cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, **kwargs)
         return cls._global_instance
 
     def __init__(self, git_slug: Optional[str] = None, git_repo: Optional[str] = None, run_id: Optional[str] = None, **kwargs):
@@ -967,6 +967,12 @@ def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Di
     return decorator
 
 
+_WALK_EXCLUDED_DIRS = {
+    ".git", ".cache", "node_modules", "__pycache__", ".venv", "venv", "env",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+}
+
+
 def find_all_telemetry_files(base_paths: List[str], filename: str) -> List[str]:
     """Searches given base paths and their subdirectories recursively for filename.
     Returns a deduplicated list of all existing file paths found."""
@@ -982,7 +988,11 @@ def find_all_telemetry_files(base_paths: List[str], filename: str) -> List[str]:
                 seen.add(norm)
                 found_files.append(direct)
         try:
-            for root, _dirs, files in os.walk(base):
+            for root, dirs, files in os.walk(base):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in _WALK_EXCLUDED_DIRS and not d.startswith(".")
+                ]
                 if filename in files:
                     found = os.path.join(root, filename)
                     if os.path.isfile(found):
@@ -1141,7 +1151,11 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
             if sp.endswith("_metadata.txt") or sp.endswith(".txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json"):
                 found_files.append(sp)
         elif os.path.isdir(sp):
-            for root, _, files in os.walk(sp):
+            for root, dirs, files in os.walk(sp):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in _WALK_EXCLUDED_DIRS and not d.startswith(".")
+                ]
                 for f in files:
                     if f.endswith("_metadata.txt") or (f.endswith(".txt") and not f.startswith(".")) or f in ("code-metadata.json", "metadata.json"):
                         found_files.append(os.path.join(root, f))

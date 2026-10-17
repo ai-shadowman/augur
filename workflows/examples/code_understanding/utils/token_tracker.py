@@ -1273,6 +1273,11 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
 
     model_name = os.getenv("METADATA_LLM_ID") or os.getenv("GRAPHRAG_LLM_ID") or "gpt-oss-120b"
 
+    _walk_excluded = {
+        ".git", ".cache", "node_modules", "__pycache__", ".venv", "venv", "env",
+        ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+    }
+
     # Find metadata files (*_metadata.txt) or parsed code files
     metadata_files = []
     for sp in search_paths:
@@ -1282,7 +1287,11 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
             if sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json"):
                 metadata_files.append(sp)
         elif os.path.isdir(sp):
-            for root, _, files in os.walk(sp):
+            for root, dirs, files in os.walk(sp):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in _walk_excluded and not d.startswith(".")
+                ]
                 for f in files:
                     if f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json"):
                         metadata_files.append(os.path.join(root, f))
@@ -1296,7 +1305,11 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
             cand_dirs = [sp, os.path.join(sp, "input")] if os.path.isdir(sp) else [sp]
             for cd in cand_dirs:
                 if os.path.isdir(cd):
-                    for root, _, files in os.walk(cd):
+                    for root, dirs, files in os.walk(cd):
+                        dirs[:] = [
+                            d for d in dirs
+                            if d not in _walk_excluded and not d.startswith(".")
+                        ]
                         for f in files:
                             if f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
                                 txt_files.append(os.path.join(root, f))

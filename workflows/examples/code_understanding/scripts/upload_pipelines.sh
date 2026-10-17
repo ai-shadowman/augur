@@ -40,6 +40,30 @@ repo_root() {
 
 REPO_ROOT="$(repo_root)"
 
+# If running inside a cluster job with AUGUR_GIT_REPO_URL set, sync the latest
+# pipeline definitions from GitHub so compiled KFP YAML templates match the branch.
+if [[ -n "${AUGUR_GIT_REPO_URL:-}" && -d "/var/run/secrets/kubernetes.io/serviceaccount" ]]; then
+    SYNC_DIR="$(mktemp -d)"
+     CLONE_URL="$AUGUR_GIT_REPO_URL"
+    if [[ -n "${AUGUR_GIT_REPO_TOKEN:-}" && "$CLONE_URL" == https://* ]]; then
+        if [[ -n "${AUGUR_GIT_REPO_USERNAME:-}" ]]; then
+            CLONE_URL="https://${AUGUR_GIT_REPO_USERNAME}:${AUGUR_GIT_REPO_TOKEN}@${CLONE_URL#https://}"
+        else
+            CLONE_URL="https://${AUGUR_GIT_REPO_TOKEN}@${CLONE_URL#https://}"
+        fi
+    fi
+    BRANCH="${AUGUR_GIT_REPO_BRANCH:-main}"
+    echo "Syncing pipeline definitions from ${AUGUR_GIT_REPO_URL} (branch: ${BRANCH})..."
+    if git clone --depth 1 --branch "$BRANCH" "$CLONE_URL" "$SYNC_DIR" 2>/dev/null; then
+        if [[ -d "$SYNC_DIR/workflows/examples/code_understanding" ]]; then
+            CODE_UNDERSTANDING_DIR="$SYNC_DIR/workflows/examples/code_understanding"
+            echo "  Using synced pipeline definitions from $CODE_UNDERSTANDING_DIR"
+        fi
+    else
+        echo "  Warning: git clone failed; falling back to local $CODE_UNDERSTANDING_DIR"
+    fi
+fi
+
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 YAML_DIR="$REPO_ROOT/compiled_pipelines/${TIMESTAMP}_yamls"
 

@@ -18,7 +18,7 @@ for pkg_name in [
     "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
     "pandas", "yaml", "mlflow", "mlflow.tracking", "requests", "deepeval",
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
-    "pygments", "pygments.lexers", "pygments.util"
+    "pygments", "pygments.lexers", "pygments.util", "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
@@ -47,6 +47,21 @@ from utils.duration_tracker import (
     find_all_telemetry_files,
     find_telemetry_file,
 )
+
+
+def _run_coro(coro):
+    """Lightweight coroutine runner for unit tests that avoids Windows socketpair overhead when coroutines only await mocks."""
+    try:
+        while True:
+            yielded = coro.send(None)
+            if hasattr(yielded, "__await__"):
+                sub = yielded.__await__()
+                try:
+                    sub.send(None)
+                except StopIteration as sub_stop:
+                    coro.send(sub_stop.value)
+    except StopIteration as stop:
+        return stop.value
 
 
 class TestDurationTracker(unittest.TestCase):
@@ -213,7 +228,6 @@ class TestDurationTracker(unittest.TestCase):
 
     def test_migration_report_contains_duration_table_next_to_token_table(self):
         """Verify that DependencyAnalyzer embeds the duration table right next to the token table."""
-        import asyncio
         from utils.graphrag_utils import DependencyAnalyzer
         from utils.token_tracker import TokenCostTracker
 
@@ -223,13 +237,14 @@ class TestDurationTracker(unittest.TestCase):
         self.tracker.record_step("Data Generation", "Clone and Parse", 12.3)
         self.tracker.record_step("Indexing", "Build GraphRAG", 145.0)
 
-        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             patch.object(DependencyAnalyzer, '_setup_configuration'), \
              patch.object(DependencyAnalyzer, '_setup_search'), \
              patch.object(DependencyAnalyzer, '_setup_prompts'), \
              patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
              patch('utils.visualization_utils.log_interactive_dependency_graph'):
 
-            analyzer = DependencyAnalyzer(token_tracker=custom_tokens)
+            analyzer = DependencyAnalyzer(root_dir=tmp_dir, token_tracker=custom_tokens)
 
             mock_loader = MagicMock()
             mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
@@ -241,7 +256,7 @@ class TestDurationTracker(unittest.TestCase):
             with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
                  patch.object(analyzer, 'query_with_llm', side_effect=["Overview content", '{"plan": []}']):
 
-                report = asyncio.run(analyzer.generate_migration_report())
+                report = _run_coro(analyzer.generate_migration_report())
 
                 self.assertIn("### LLM Token Usage & Cost Summary", report)
                 self.assertIn("### Pipeline Execution Duration Summary", report)
@@ -263,7 +278,6 @@ class TestDurationTracker(unittest.TestCase):
 
     def test_multi_repo_migration_report_contains_duration_table(self):
         """Verify that multi-repo report places token and duration tables at the end."""
-        import asyncio
         from utils.graphrag_utils import DependencyAnalyzer
         from utils.token_tracker import TokenCostTracker
 
@@ -272,13 +286,14 @@ class TestDurationTracker(unittest.TestCase):
 
         self.tracker.record_step("Analysis", "Dependency Graph", 34.0)
 
-        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             patch.object(DependencyAnalyzer, '_setup_configuration'), \
              patch.object(DependencyAnalyzer, '_setup_search'), \
              patch.object(DependencyAnalyzer, '_setup_prompts'), \
              patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
              patch('utils.visualization_utils.log_interactive_dependency_graph'):
 
-            analyzer = DependencyAnalyzer(token_tracker=custom_tokens, multi_repo=True)
+            analyzer = DependencyAnalyzer(root_dir=tmp_dir, token_tracker=custom_tokens, multi_repo=True)
 
             mock_loader = MagicMock()
             mock_loader.num_prompts.return_value = 1
@@ -287,7 +302,8 @@ class TestDurationTracker(unittest.TestCase):
             with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
                  patch.object(analyzer, 'query_with_llm', return_value="Multi repo overview"):
 
-                report = asyncio.run(analyzer.generate_migration_report())
+                report = _run_coro(analyzer.generate_migration_report())
+                self.assertIn("### Pipeline Execution Duration Summary", report)
 
     def test_load_and_merge_from_file(self):
         """Verify load_and_merge reads from file and avoids duplicating steps."""
@@ -318,7 +334,6 @@ class TestDurationTracker(unittest.TestCase):
 
     def test_generate_migration_report_auto_populates_duration_table_even_if_no_prior_steps(self):
         """Verify that generate_migration_report populates duration summary even with 0 prior steps."""
-        import asyncio
         from utils.graphrag_utils import DependencyAnalyzer
         from utils.token_tracker import TokenCostTracker
 
@@ -329,13 +344,14 @@ class TestDurationTracker(unittest.TestCase):
         custom_tokens = TokenCostTracker.reset_instance()
         custom_tokens.track_chat(prompt_tokens=100, output_tokens=50)
 
-        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             patch.object(DependencyAnalyzer, '_setup_configuration'), \
              patch.object(DependencyAnalyzer, '_setup_search'), \
              patch.object(DependencyAnalyzer, '_setup_prompts'), \
              patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
              patch('utils.visualization_utils.log_interactive_dependency_graph'):
 
-            analyzer = DependencyAnalyzer(token_tracker=custom_tokens)
+            analyzer = DependencyAnalyzer(root_dir=tmp_dir, token_tracker=custom_tokens)
 
             mock_loader = MagicMock()
             mock_loader.num_prompts.side_effect = lambda path: 1 if "enhanced" in path else 1
@@ -347,7 +363,7 @@ class TestDurationTracker(unittest.TestCase):
             with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
                  patch.object(analyzer, 'query_with_llm', side_effect=["Overview content", '{"plan": []}']):
 
-                report = asyncio.run(analyzer.generate_migration_report())
+                report = _run_coro(analyzer.generate_migration_report())
 
                 # Duration table MUST be present even though tracker had 0 prior records
                 self.assertIn("### Pipeline Execution Duration Summary", report)
@@ -576,7 +592,7 @@ class TestDurationTracker(unittest.TestCase):
                 analyzer = DependencyAnalyzer(root_dir=temp_graphrag_dir, token_tracker=analyzer_tok)
 
                 with patch.object(analyzer, 'query_with_llm', side_effect=["Overview body", "### Code Migration Plan (JSON)\n[]"]):
-                    report = asyncio.run(analyzer.generate_migration_report())
+                    report = _run_coro(analyzer.generate_migration_report())
 
                     # Check that Data Generation metrics from input/ were loaded and displayed
                     self.assertIn("Reset Environment", report)
@@ -998,7 +1014,7 @@ class TestDurationTracker(unittest.TestCase):
                      "PARENT_TARGET_PATH": os.path.join(tmp_dir, "target"),
                      "PARENT_SOURCE_PATH": os.path.join(tmp_dir, "source"),
                  }):
-                report = asyncio.run(analyzer.generate_migration_report())
+                report = _run_coro(analyzer.generate_migration_report())
 
             self.assertIn("### Pipeline Execution Duration Summary", report)
             self.assertIn("Data Generation", report)
@@ -1349,6 +1365,97 @@ class TestDurationTracker(unittest.TestCase):
             skipped_tracker = DurationTracker.get_instance()
             steps_skipped = [(r["stage"], r["step"]) for r in skipped_tracker.records]
             self.assertNotIn(("Calibration", "guidellm-calibration-op"), steps_skipped)
+
+    def test_benchmark_tracker_auto_records_calibration_duration_and_downloads_mlflow(self):
+        """Verify BenchmarkTracker.run_guidellm_profile + upload_to_mlflow automatically record and upload
+        Calibration durations even when called from an older compiled KFP ephemeral_component.py, and
+        BenchmarkTracker.download_from_mlflow queries RESULT_ASSET_EXPERIMENT with guidellm_benchmarks tags."""
+        from utils.benchmark_tracker import BenchmarkTracker
+
+        DurationTracker.reset_instance(git_slug="test-slug", git_repo="https://github.com/test/repo")
+        bt = BenchmarkTracker.reset_instance(git_slug="test-slug", git_repo="https://github.com/test/repo")
+
+        def fake_run_benchmark(role="graphrag", workload="sdg", rates_str=None, max_seconds=15, output_dir=None):
+            bt.add_record(
+                role=role,
+                workload=workload,
+                model_id="openai/gpt-oss-120b",
+                api_base="http://vllm:8000/v1",
+                concurrency=16,
+                requests_per_second=0.95,
+                output_tokens_per_second=542.6,
+                total_tokens_per_second=1200.0,
+                ttft_ms_mean=620.0,
+                ttft_ms_p50=619.0,
+                ttft_ms_p95=620.0,
+                ttft_ms_p99=625.0,
+                itl_ms_mean=51.9,
+                itl_ms_p50=51.9,
+                itl_ms_p95=52.1,
+                itl_ms_p99=53.0,
+                request_latency_sec_mean=15.0,
+                request_latency_sec_p95=16.5,
+                completed_requests=19,
+                errored_requests=0,
+            )
+            return 0
+
+        mock_loader = MagicMock()
+        with patch.object(bt, "run_benchmark", side_effect=fake_run_benchmark), \
+             patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=mock_loader):
+            bt.run_guidellm_profile(profile_name="sdg", rates=[1, 4, 8, 16], max_seconds=20)
+            bt.run_guidellm_profile(profile_name="indexing", rates=[1, 4, 8, 16], max_seconds=20)
+
+            dur_tr = DurationTracker.get_instance()
+            cal_recs = [
+                r for r in dur_tr.records
+                if r.get("stage") == "Calibration" and r.get("step") == "guidellm-calibration-op"
+            ]
+            self.assertEqual(len(cal_recs), 1)
+            self.assertGreaterEqual(cal_recs[0]["duration"], 0.0)
+
+            # Calling bt.upload_to_mlflow(stage="Data Generation") (as in older ephemeral_component.py)
+            # must also upload Calibration durations to DefaultAssetLoader with stage="Calibration"
+            bt.upload_to_mlflow(git_slug="test-slug", stage="Data Generation", multi_repo=False)
+
+            logged_tag_calls = [
+                call.kwargs.get("tags", {})
+                for call in mock_loader.log_results.call_args_list
+            ]
+            self.assertTrue(
+                any(t.get("type") == "guidellm_benchmarks" for t in logged_tag_calls),
+                f"Expected guidellm_benchmarks upload in {logged_tag_calls}",
+            )
+            self.assertTrue(
+                any(t.get("type") == "durations" and t.get("stage") == "Calibration" for t in logged_tag_calls),
+                f"Expected Calibration durations upload in {logged_tag_calls}",
+            )
+
+        # Verify BenchmarkTracker.download_from_mlflow queries RESULT_ASSET_EXPERIMENT with guidellm_benchmarks tags
+        bt_downstream = BenchmarkTracker.reset_instance(git_slug="test-slug", git_repo="https://github.com/test/repo")
+        saved_payload = bt.to_dict()
+        mock_loader_dl = MagicMock()
+        mock_loader_dl.download.return_value = saved_payload
+
+        mock_mlflow_loader_cls = MagicMock()
+        mock_mlflow_loader_cls.RESULT_ASSET_EXPERIMENT = "result-assets"
+
+        with patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=mock_loader_dl), \
+             patch.dict("sys.modules", {
+                 "loaders.mlflow_asset_loader": MagicMock(MlFlowAssetLoader=mock_mlflow_loader_cls),
+             }), \
+             patch.dict(os.environ, {"GRAPHRAG_PARALLEL_REPOS": "1"}, clear=False):
+            bt_downstream.download_from_mlflow(git_slug="test-slug", multi_repo=False)
+
+        self.assertEqual(len(bt_downstream.records), 2)
+        self.assertEqual(bt_downstream.get_recommended_sdg_concurrency(default=10), 16)
+        mock_loader_dl.download.assert_called_once()
+        dl_kwargs = mock_loader_dl.download.call_args.kwargs
+        self.assertEqual(dl_kwargs.get("experiment_name"), "result-assets")
+        self.assertEqual(
+            dl_kwargs.get("asset_tags"),
+            {"git_slug": "test-slug", "type": "guidellm_benchmarks"},
+        )
 
 
 if __name__ == "__main__":
