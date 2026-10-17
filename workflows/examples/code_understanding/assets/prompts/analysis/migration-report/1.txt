@@ -15,3 +15,6 @@ Provide a brief high-level summary of the codebase covering its purpose, archite
 If runtime stack version information is available (languages, frameworks, databases, middleware), include a brief "Runtime Stack" section. Omit if not available.
 {% endif %}
 
+Use the supplied ignored symlink inventory to qualify analysis coverage where relevant.
+Do not claim that skipped targets were analyzed or infer their contents.
+
