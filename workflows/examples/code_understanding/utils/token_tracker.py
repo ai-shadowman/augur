@@ -7,6 +7,7 @@ import re
 import json
 import logging
 import tempfile
+from utils.request_timing import timing_span, response_usage, record_callback_timing
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 
@@ -704,6 +705,7 @@ class TokenCostTracker:
 
                 cat = self._litellm_category or self._active_category or category
                 model = (kwargs.get("model") if isinstance(kwargs, dict) else None) or getattr(completion_response, "model", self.chat_model)
+                record_callback_timing(start_time, end_time, model=model)
                 call_type = kwargs.get("call_type", "") if isinstance(kwargs, dict) else ""
                 is_embed = (
                     "embed" in str(call_type).lower()
@@ -734,6 +736,19 @@ class TokenCostTracker:
 
         self._litellm_callback = _litellm_success_handler
 
+        def _litellm_failure_handler(kwargs, completion_response, start_time, end_time):
+            record_callback_timing(start_time, end_time, model=kwargs.get("model"),
+                                   error=kwargs.get("exception") or RuntimeError())
+
+        self._litellm_failure_callback = _litellm_failure_handler
+        for name in ("failure_callback", "_async_failure_callback"):
+            callbacks = getattr(litellm, name, None)
+            if callbacks is None:
+                callbacks = []
+                setattr(litellm, name, callbacks)
+            if isinstance(callbacks, list) and _litellm_failure_handler not in callbacks:
+                callbacks.append(_litellm_failure_handler)
+
         # Register only on success_callback and _async_success_callback to avoid duplicate invocations
         # from registering the same function in both litellm.success_callback and litellm.callbacks.
         if not hasattr(litellm, "success_callback") or not isinstance(litellm.success_callback, list):
@@ -750,6 +765,11 @@ class TokenCostTracker:
         if not HAS_LITELLM or litellm is None or not hasattr(self, "_litellm_callback"):
             return
         cb = self._litellm_callback
+        failure_cb = getattr(self, "_litellm_failure_callback", None)
+        for name in ("failure_callback", "_async_failure_callback"):
+            callbacks = getattr(litellm, name, None)
+            if isinstance(callbacks, list) and failure_cb in callbacks:
+                callbacks.remove(failure_cb)
         for cb_list_name in ["success_callback", "_async_success_callback", "callbacks"]:
             if hasattr(litellm, cb_list_name) and isinstance(getattr(litellm, cb_list_name), list):
                 cb_list = getattr(litellm, cb_list_name)
@@ -803,7 +823,10 @@ class TokenCostTracker:
             self._orig_async_chat = chat_mod.AsyncCompletions.create
 
             async def wrapped_async_chat(*args, **kwargs):
-                resp = await self._orig_async_chat(*args, **kwargs)
+                with timing_span("openai.chat", "sdk", model=kwargs.get("model"),
+                                 stream_requested=bool(kwargs.get("stream", False))) as event:
+                    resp = await self._orig_async_chat(*args, **kwargs)
+                    event.update(response_usage(resp))
                 self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
@@ -814,7 +837,10 @@ class TokenCostTracker:
             self._orig_sync_chat = chat_mod.Completions.create
 
             def wrapped_sync_chat(*args, **kwargs):
-                resp = self._orig_sync_chat(*args, **kwargs)
+                with timing_span("openai.chat", "sdk", model=kwargs.get("model"),
+                                 stream_requested=bool(kwargs.get("stream", False))) as event:
+                    resp = self._orig_sync_chat(*args, **kwargs)
+                    event.update(response_usage(resp))
                 self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
@@ -825,7 +851,10 @@ class TokenCostTracker:
             self._orig_async_embed = embed_mod.AsyncEmbeddings.create
 
             async def wrapped_async_embed(*args, **kwargs):
-                resp = await self._orig_async_embed(*args, **kwargs)
+                with timing_span("openai.embeddings", "sdk", model=kwargs.get("model"),
+                                 stream_requested=bool(kwargs.get("stream", False))) as event:
+                    resp = await self._orig_async_embed(*args, **kwargs)
+                    event.update(response_usage(resp))
                 self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
@@ -836,7 +865,10 @@ class TokenCostTracker:
             self._orig_sync_embed = embed_mod.Embeddings.create
 
             def wrapped_sync_embed(*args, **kwargs):
-                resp = self._orig_sync_embed(*args, **kwargs)
+                with timing_span("openai.embeddings", "sdk", model=kwargs.get("model"),
+                                 stream_requested=bool(kwargs.get("stream", False))) as event:
+                    resp = self._orig_sync_embed(*args, **kwargs)
+                    event.update(response_usage(resp))
                 self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
@@ -1462,6 +1494,4 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
         extracted_any = True
 
     return extracted_any
-
-
 

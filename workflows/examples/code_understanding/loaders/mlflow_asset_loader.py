@@ -1,5 +1,6 @@
 import json
 import os
+import posixpath
 import mlflow
 import requests
 from mlflow.tracking import MlflowClient
@@ -7,6 +8,8 @@ import logging
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 from .asset_loader import AssetLoader
+from utils.request_timing import timing_span, timed, timing_enabled
+from utils.artifact_measurement import measure_payload, upload_identity
 
 _SESSION_PATCHED = False
 
@@ -50,6 +53,7 @@ class MlFlowAssetLoader(AssetLoader):
         if os.environ.get("MLFLOW_TRACKING_TOKEN"):
             _patch_session_forwarded_token()
 
+    @timed("mlflow.artifact_uri_lookup", "mlflow")
     def _get_absolute_artifact_uri(self,
                                    asset_file_path: str,
                                    experiment_name: str,
@@ -81,7 +85,7 @@ class MlFlowAssetLoader(AssetLoader):
 
         logging.info(f"Base absolute storage URI: {asset_base_uri}")
 
-        return os.path.join(asset_base_uri, asset_file_path)
+        return posixpath.join(asset_base_uri, asset_file_path.replace("\\", "/"))
 
     def _mark_as_latest(self, client, experiment_id, new_run_id):
 
@@ -147,7 +151,8 @@ class MlFlowAssetLoader(AssetLoader):
                                                         experiment_name=experiment_name,
                                                         tags=asset_tags)
 
-            local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
+            with timing_span("mlflow.artifact_download", "io"):
+                local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
             if not os.path.exists(local_path):
 
@@ -186,11 +191,13 @@ class MlFlowAssetLoader(AssetLoader):
                                                         experiment_name=experiment_name,
                                                         tags=asset_tags)
 
-            local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
+            with timing_span("mlflow.artifact_download", "io"):
+                local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uri)
 
             os.makedirs(download_dir, exist_ok=True)
 
-            shutil.copytree(local_path, download_dir, dirs_exist_ok=True)
+            with timing_span("mlflow.artifact_copy", "io"):
+                shutil.copytree(local_path, download_dir, dirs_exist_ok=True)
 
         except Exception as e:
 
@@ -198,6 +205,7 @@ class MlFlowAssetLoader(AssetLoader):
 
             raise e
 
+    @timed("mlflow.log_results", "mlflow")
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
                     content: str = None):
         """Logs pipeline output artifacts to a new MLflow run."""
@@ -218,26 +226,60 @@ class MlFlowAssetLoader(AssetLoader):
 
             experiment_name = self.RESULT_DIRECTORY_ASSET_EXPERIMENT if is_dir else self.RESULT_ASSET_EXPERIMENT
 
-            experiment = self.get_or_create_experiment_by_name(client, experiment_name)
+            with timing_span("mlflow.experiment_lookup", "mlflow"):
+                experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 
-            if mlflow.active_run():
-                mlflow.end_run()
+            fields = {}
+            if timing_enabled():
+                fields.update(upload_identity(results_path, artifact_path))
+                with timing_span("mlflow.payload_measurement", "io", **fields) as measurement:
+                    fields.update(measure_payload(results_path))
+                    measurement.update(fields)
 
-            with mlflow.start_run(experiment_id=experiment.experiment_id) as run:
+            active_run = mlflow.active_run()
+            if active_run:
+                prior_fields = dict(fields)
+                if timing_enabled():
+                    try:
+                        prior_fields["prior_mlflow_run_id"] = active_run.info.run_id
+                    except Exception:
+                        pass
+                with timing_span("mlflow.prior_run_end", "mlflow", **prior_fields):
+                    mlflow.end_run()
 
-                if tags:
+            with timing_span("mlflow.run_lifecycle", "mlflow", **fields) as lifecycle:
+                with timing_span("mlflow.run_create", "mlflow", **fields) as creation:
+                    run_context = mlflow.start_run(experiment_id=experiment.experiment_id)
+                    if timing_enabled():
+                        try:
+                            fields.update(mlflow_run_id=run_context.info.run_id, experiment_id=str(experiment.experiment_id))
+                        except Exception:
+                            pass
+                        creation.update(fields)
+                with run_context as run:
+                    # Backend IDs only; do not inspect caller tags or artifact URIs.
+                    if timing_enabled():
+                        try:
+                            fields.update(mlflow_run_id=run.info.run_id, experiment_id=str(experiment.experiment_id))
+                        except Exception:
+                            pass
+                        lifecycle.update(fields)
 
-                    mlflow.set_tags(tags)
+                    if tags:
 
-                if is_dir:
+                        with timing_span("mlflow.run_tags", "mlflow", **fields):
+                            mlflow.set_tags(tags)
 
-                    mlflow.log_artifacts(results_path, artifact_path=artifact_path)
+                    with timing_span("mlflow.artifact_upload", "io", **fields):
+                        if is_dir:
 
-                else:
+                            mlflow.log_artifacts(results_path, artifact_path=artifact_path)
 
-                    mlflow.log_artifact(results_path, artifact_path=artifact_path)
+                        else:
 
-                logging.info(f"Logged results to run {run.info.run_id}")
+                            mlflow.log_artifact(results_path, artifact_path=artifact_path)
+
+                    logging.info(f"Logged results to run {run.info.run_id}")
 
         except Exception as e:
 

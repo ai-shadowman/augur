@@ -3,6 +3,7 @@ import os
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+from utils.request_timing import timing_span
 
 from utils.kubeflow_utils import setup_logging
 setup_logging()
@@ -302,7 +303,8 @@ def get_parsed_code_metadata(df, language, config=False):
 
         converted_df = None
         try:
-            converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
+            with timing_span("sdg.generate_batch", "batch"):
+                converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
@@ -721,40 +723,30 @@ class DataGenerationPipeline:
                     dur_tracker.record_pod_creation_overhead(stage="Data Generation")
                 except Exception as e:
                     logging.debug(f"Failed to record pod creation overhead in data generation: {e}")
-                with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
-                    prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
-
-                    with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                        languages = detect_languages(source_path)
-
-                    if code_tracker:
-                        try:
-                            with dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics"):
-                                code_tracker.measure_repository(source_path, languages=languages)
-                        except Exception as e:
-                            logging.debug(f"Code metrics measurement failed: {e}")
-
-                    with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                        external_metadata = load_external_data(source_path)
-
-                    for language in languages:
-                        for config in [False, True]:
-                            generate_code_and_meta(
-                                git_repo=git_repo, git_branch=git_branch,
-                                language=language, source_path=source_path, target_path=target_path,
-                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                            )
-            else:
+            total_cm = dur_tracker.measure(
+                stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}
+            ) if dur_tracker else nullcontext()
+            with total_cm:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
-                languages = detect_languages(source_path)
+                ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
+
+                detect_cm = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
+                with detect_cm:
+                    languages = detect_languages(source_path, ignore_policy)
+
                 if code_tracker:
                     try:
-                        code_tracker.measure_repository(source_path, languages=languages)
+                        metrics_cm = dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics") if dur_tracker else nullcontext()
+                        with metrics_cm:
+                            code_tracker.measure_repository(source_path, languages=languages)
                     except Exception as e:
                         logging.debug(f"Code metrics measurement failed: {e}")
-                external_metadata = load_external_data(source_path)
+
+                metadata_cm = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
+                with metadata_cm:
+                    external_metadata = load_external_data(source_path, ignore_policy)
+
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(

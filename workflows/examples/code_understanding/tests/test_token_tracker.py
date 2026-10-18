@@ -35,7 +35,12 @@ import loaders.default_asset_loader
 import utils.code_utils
 import utils.visualization_utils
 import telemetry.default_custom_telemetry
+import utils.token_tracker as _token_tracker_module
 from utils.token_tracker import TokenCostTracker
+
+if _token_tracker_module.litellm is None and "litellm" in sys.modules:
+    _token_tracker_module.litellm = sys.modules["litellm"]
+    _token_tracker_module.HAS_LITELLM = True
 
 
 class TestTokenCostTracker(unittest.TestCase):

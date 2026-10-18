@@ -20,12 +20,19 @@ for pkg_name in [
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
     "sdg_hub", "sdg_hub.core", "sdg_hub.core.flow", "flows.flow_extensions", "datasets",
     "lancedb", "nest_asyncio", "jsonpath_ng", "github", "pygments", "pygments.lexers", "pygments.util",
-    "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
         m.__path__ = []
         sys.modules[pkg_name] = m
+
+if "pathspec" not in sys.modules:
+    try:
+        import pathspec  # noqa: F401
+    except ModuleNotFoundError:
+        m = MagicMock()
+        m.__path__ = []
+        sys.modules["pathspec"] = m
 
 from utils.duration_tracker import DurationTracker
 from utils.token_tracker import TokenCostTracker
