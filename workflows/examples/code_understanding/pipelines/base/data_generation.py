@@ -565,7 +565,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
             c_tr = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
-            c_tr.record_ignored_symlinks(ignore_policy)
+            c_tr.record_ignored_locations(ignore_policy)
             c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
@@ -802,7 +802,7 @@ class DataGenerationPipeline:
                 from utils.code_metrics_tracker import CodeMetricsTracker
                 code_tr = CodeMetricsTracker.get_instance()
                 if ignore_policy is not None:
-                    code_tr.record_ignored_symlinks(ignore_policy)
+                    code_tr.record_ignored_locations(ignore_policy)
                 if target_path:
                     code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
                 code_tr.log_to_mlflow()

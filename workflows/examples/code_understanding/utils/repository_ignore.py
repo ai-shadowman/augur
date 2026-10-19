@@ -19,7 +19,7 @@ def skip_unsafe_symlink(
     path: str | os.PathLike[str],
     repository_root: Path,
     warned_paths: set[str],
-    ignored_symlinks: dict[str, str] | None = None,
+    ignored_locations: dict[str, str] | None = None,
 ) -> bool:
     """Skip unsafe content links, warning once per lexical path for this scan."""
     candidate = Path(path)
@@ -41,8 +41,8 @@ def skip_unsafe_symlink(
             return False
 
     relative_path = Path(os.path.relpath(candidate, repository_root)).as_posix()
-    if ignored_symlinks is not None:
-        ignored_symlinks[relative_path] = reason
+    if ignored_locations is not None:
+        ignored_locations[relative_path] = reason
     if relative_path not in warned_paths:
         warned_paths.add(relative_path)
         _LOG.warning("Skipping %s: %s", relative_path, reason)
@@ -72,7 +72,7 @@ class RepositoryIgnorePolicy:
         self._custom_ignored_directories: set[str] = set()
         self._custom_ignored_files: set[str] = set()
         self._warned_symlinks: set[str] = set()
-        self._ignored_symlinks: dict[str, str] = {}
+        self._ignored_locations: dict[str, str] = {}
 
     @classmethod
     def from_repository(
@@ -106,12 +106,9 @@ class RepositoryIgnorePolicy:
         return cls(root, spec, pattern_count)
 
     @property
-    def ignored_symlinks(self) -> list[dict[str, str]]:
-        """Skipped links encountered during ingestion, once per lexical path."""
-        return [
-            {"path": path, "reason": reason}
-            for path, reason in sorted(self._ignored_symlinks.items())
-        ]
+    def ignored_locations(self) -> dict[str, str]:
+        """Skipped symlinks and .augurignore exclusions encountered during ingestion."""
+        return dict(self._ignored_locations)
 
     @property
     def active_pattern_count(self) -> int:
@@ -206,20 +203,20 @@ class RepositoryIgnorePolicy:
                 candidate,
                 self._repository_root,
                 self._warned_symlinks,
-                self._ignored_symlinks,
+                self._ignored_locations,
             )
             custom_excluded = not unsafe_symlink and self.is_ignored(
                 candidate, is_directory=is_directory
             )
             excluded = unsafe_symlink or name in built_in_names or custom_excluded
-            if not unsafe_symlink and candidate.is_symlink():
-                link_path = Path(os.path.relpath(candidate, self._repository_root)).as_posix()
+            if not unsafe_symlink and (custom_excluded or candidate.is_symlink()):
+                ignored_path = Path(os.path.relpath(candidate, self._repository_root)).as_posix()
                 if custom_excluded:
-                    self._ignored_symlinks[link_path] = "excluded by .augurignore"
-                elif name in built_in_names:
-                    self._ignored_symlinks[link_path] = "excluded by built-in rules"
+                    self._ignored_locations[ignored_path] = "excluded by .augurignore"
                 elif is_directory:
-                    self._ignored_symlinks.setdefault(link_path, "directory symlink was not traversed")
+                    self._ignored_locations[ignored_path] = "directory symlink was not traversed"
+                elif name in built_in_names:
+                    self._ignored_locations[ignored_path] = "excluded by built-in rules"
             if not excluded:
                 kept.append(name)
                 continue

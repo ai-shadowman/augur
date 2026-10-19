@@ -240,7 +240,7 @@ def generate_code_and_meta_op(
 
             if code_tracker:
                 try:
-                    code_tracker.record_ignored_symlinks(ignore_policy)
+                    code_tracker.record_ignored_locations(ignore_policy)
                     code_tracker.save_to_file(os.path.join(tmp_target, "project_metrics.json"))
                 except Exception as e:
                     logging.debug(f"Failed to save project_metrics.json in generate_code_and_meta_op: {e}")

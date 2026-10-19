@@ -129,8 +129,11 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.code_metrics_tracker import CodeMetricsTracker
 
-        root = self.repository()
+        root = self.repository("hidden.py\nprivate/\n")
         target = self.repository()
+        (root / "hidden.py").write_text("secret", encoding="utf-8")
+        (root / "private").mkdir()
+        (root / "private" / "unseen.py").write_text("secret", encoding="utf-8")
         (root / "visible.py").write_text("print('visible')\n", encoding="utf-8")
         (root / "broken.py").symlink_to("missing.py")
         CodeMetricsTracker.reset_instance(git_slug="org-repo-main", git_repo="org/repo")
@@ -158,6 +161,12 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
         restored = CodeMetricsTracker.from_dict(uploaded[0])
         self.assertIn("broken.py", restored.format_markdown_section())
         self.assertIn("symlink target does not exist", restored.format_markdown_section())
+        self.assertIn("hidden.py", restored.format_markdown_section())
+        self.assertIn("private", restored.format_markdown_section())
+        self.assertIn("excluded by .augurignore", restored.format_markdown_section())
+        self.assertNotIn("unseen.py", restored.format_markdown_section())
+        self.assertTrue((target / "visible.txt").exists())
+        self.assertFalse((target / "hidden.txt").exists())
 
     def test_raw_dataset_never_stats_or_opens_ignored_files(self):
         root = self.repository("hidden.py\n")
@@ -263,12 +272,13 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
 
         for mode in ("local", "local-with-telemetry", "kubeflow"):
             with self.subTest(mode=mode):
-                root = self.repository()
+                root = self.repository("hidden.py\n")
                 target = self.repository()
                 outside = self.repository()
                 (outside / "secret.py").write_text("secret", encoding="utf-8")
                 (root / "external.py").symlink_to(outside / "secret.py")
                 (root / "visible.py").write_text("visible", encoding="utf-8")
+                (root / "hidden.py").write_text("secret", encoding="utf-8")
                 records = []
 
                 def generate(**kwargs):
@@ -317,6 +327,8 @@ class TestAugurIgnoreDataGeneration(unittest.TestCase):
                 self.assertIn("external.py", report)
                 self.assertIn("symlink target is outside repository root", report)
                 self.assertIn("org/repo", report)
+                self.assertIn("hidden.py", report)
+                self.assertIn("excluded by .augurignore", report)
 
     def test_external_metadata_skips_ignored_json_and_prunes_ignored_directories(self):
         root = self.repository(".code_metadata/private/\n.code_metadata/hidden.json\n")
