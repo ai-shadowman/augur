@@ -33,13 +33,17 @@ spec:
             - sh
             - -c
             - |
+              export HOME=/tmp
+              export HF_HOME=/tmp/.cache/huggingface
               if [ -f /tmp/benchmark-llm-scripts/llm_benchmark.py ]; then
-                mkdir -p workflows/examples/code_understanding/utils workflows/examples/code_understanding/scripts
-                tr -d '\r' < /tmp/benchmark-llm-scripts/llm_benchmark.py > workflows/examples/code_understanding/utils/llm_benchmark.py
-                tr -d '\r' < /tmp/benchmark-llm-scripts/benchmark_llm.sh > workflows/examples/code_understanding/scripts/benchmark_llm.sh
-                chmod +x workflows/examples/code_understanding/scripts/benchmark_llm.sh
+                mkdir -p /tmp/benchmark-runtime/utils /tmp/benchmark-runtime/scripts
+                : > /tmp/benchmark-runtime/utils/__init__.py
+                tr -d '\r' < /tmp/benchmark-llm-scripts/llm_benchmark.py > /tmp/benchmark-runtime/utils/llm_benchmark.py
+                tr -d '\r' < /tmp/benchmark-llm-scripts/benchmark_llm.sh > /tmp/benchmark-runtime/scripts/benchmark_llm.sh
+                export PYTHONPATH="/tmp/benchmark-runtime:/opt/app-root/src/workflows/examples/code_understanding:${PYTHONPATH:-}"
+                exec bash /tmp/benchmark-runtime/scripts/benchmark_llm.sh {{ .Values.benchmarkLlm.args }}
               fi
-              bash workflows/examples/code_understanding/scripts/benchmark_llm.sh {{ .Values.benchmarkLlm.args }}
+              exec bash workflows/examples/code_understanding/scripts/benchmark_llm.sh {{ .Values.benchmarkLlm.args }}
           workingDir: /opt/app-root/src
           env:
             - name: KFP_NAMESPACE

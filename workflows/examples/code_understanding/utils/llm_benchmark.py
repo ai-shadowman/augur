@@ -316,7 +316,7 @@ def _find_guidellm_executable() -> Optional[List[str]]:
 
 
 def _detect_guidellm_subcommand(base_cmd: List[str], env: Dict[str, str]) -> str:
-    """Detect whether the installed GuideLLM CLI uses `benchmark` or `run`."""
+    """Detect whether the installed GuideLLM CLI uses `benchmark run`, `benchmark`, or `run`."""
     try:
         proc = subprocess.run(
             [*base_cmd, "--help"],
@@ -328,6 +328,17 @@ def _detect_guidellm_subcommand(base_cmd: List[str], env: Dict[str, str]) -> str
         )
         help_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
         if "benchmark" in help_text:
+            bench_proc = subprocess.run(
+                [*base_cmd, "benchmark", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+                check=False,
+            )
+            bench_help = (bench_proc.stdout or "") + "\n" + (bench_proc.stderr or "")
+            if "--target" not in bench_help and "run" in bench_help:
+                return "benchmark_run"
             return "benchmark"
         if "run" in help_text:
             return "run"
@@ -352,6 +363,10 @@ def _run_guidellm_cli_for_level(
 ) -> Optional[Dict[str, Any]]:
     """Execute GuideLLM CLI for a single concurrency level and parse its JSON output."""
     env = dict(os.environ)
+    tmp_root = tempfile.gettempdir()
+    if not os.access(env.get("HOME", "/"), os.W_OK):
+        env["HOME"] = tmp_root
+    env.setdefault("HF_HOME", os.path.join(tmp_root, ".cache", "huggingface"))
     if api_key:
         env["OPENAI_API_KEY"] = api_key
         env["GUIDELLM__OPENAI__API_KEY"] = api_key
@@ -382,9 +397,10 @@ def _run_guidellm_cli_for_level(
             f"kind=json,path={output_path}",
         ]
     else:
+        sub_args = ["benchmark", "run"] if subcommand == "benchmark_run" else ["benchmark"]
         cmd = [
             *base_cmd,
-            "benchmark",
+            *sub_args,
             "--target",
             api_base,
             "--model",
@@ -785,8 +801,12 @@ def run_guidellm_benchmark(
                     )
                     if lvl_res:
                         level_metrics.append(lvl_res)
+                    elif not level_metrics:
+                        break
                 except Exception as exc:
                     logger.warning("GuideLLM CLI failed for concurrency=%d: %s", c, exc)
+                    if not level_metrics:
+                        break
 
     if not level_metrics:
         runner_used = "async_http_probe"
@@ -796,6 +816,7 @@ def run_guidellm_benchmark(
         )
         for c in levels_to_test:
             try:
+                logger.info("Probing LLM endpoint at concurrency=%d ...", c)
                 lvl_res = asyncio.run(
                     _run_async_probe_level(
                         api_base=endpoint["api_base"],

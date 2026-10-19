@@ -33,4 +33,8 @@ done
 
 export PYTHONPATH="${CODE_UNDERSTANDING_DIR}:${PYTHONPATH:-}"
 
+if [[ -f "${CODE_UNDERSTANDING_DIR}/utils/llm_benchmark.py" ]]; then
+    exec "$PYTHON_BIN" "${CODE_UNDERSTANDING_DIR}/utils/llm_benchmark.py" "$@"
+fi
+
 exec "$PYTHON_BIN" -m utils.llm_benchmark "$@"
