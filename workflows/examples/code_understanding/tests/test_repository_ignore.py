@@ -156,7 +156,23 @@ class TestRepositoryIgnorePolicyLoading(unittest.TestCase):
 
     def test_broken_root_augurignore_symlink_raises_repository_ignore_error(self):
         root = self.make_repository()
-        (root / AUGURIGNORE_FILENAME).symlink_to(root / "missing-rules")
+        ignore_file = root / AUGURIGNORE_FILENAME
+        try:
+            ignore_file.symlink_to(root / "missing-rules")
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 1314:
+                raise
+            orig_is_symlink = Path.is_symlink
+            self.enterContext(
+                patch.object(
+                    Path,
+                    "is_symlink",
+                    autospec=True,
+                    side_effect=lambda p: True
+                    if p == ignore_file
+                    else orig_is_symlink(p),
+                )
+            )
 
         with self.assertRaisesRegex(RepositoryIgnoreError, r"\.augurignore"):
             RepositoryIgnorePolicy.from_repository(root)
@@ -243,15 +259,41 @@ class TestRepositoryIgnorePolicyMatching(unittest.TestCase):
     def test_lexical_symlink_path_is_matched_and_unsafe_targets_fail_closed(self):
         root, policy = self.make_policy("alias.py\n")
         (root / "real.py").write_text("", encoding="utf-8")
-        (root / "alias.py").symlink_to(root / "real.py")
-        (root / "outside.py").symlink_to(root.parent / "outside.py")
-        (root / "loop.py").symlink_to("loop.py")
+        alias_path = root / "alias.py"
+        outside_path = root / "outside.py"
+        loop_path = root / "loop.py"
+        try:
+            alias_path.symlink_to(root / "real.py")
+            outside_path.symlink_to(root.parent / "outside.py")
+            loop_path.symlink_to("loop.py")
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 1314:
+                raise
+            orig_resolve = Path.resolve
 
-        self.assertTrue(policy.is_ignored(root / "alias.py"))
+            def _fake_resolve(path_obj, *args, **kwargs):
+                norm = os.path.abspath(path_obj)
+                if norm == os.path.abspath(alias_path):
+                    return orig_resolve(root / "real.py", *args, **kwargs)
+                if norm == os.path.abspath(outside_path):
+                    return orig_resolve(
+                        root.parent / "outside.py", *args, **kwargs
+                    )
+                if norm == os.path.abspath(loop_path):
+                    raise RuntimeError("Symlink loop")
+                return orig_resolve(path_obj, *args, **kwargs)
+
+            self.enterContext(
+                patch.object(
+                    Path, "resolve", autospec=True, side_effect=_fake_resolve
+                )
+            )
+
+        self.assertTrue(policy.is_ignored(alias_path))
         with self.assertRaises(RepositoryIgnoreError):
-            policy.is_ignored(root / "outside.py")
+            policy.is_ignored(outside_path)
         with self.assertRaises(RepositoryIgnoreError):
-            policy.is_ignored(root / "loop.py")
+            policy.is_ignored(loop_path)
 
     def test_filtering_combines_builtin_exclusions_and_counts_unique_paths(self):
         root, policy = self.make_policy("cache/\n*.log\n!vendor/keep.py\n")
