@@ -181,7 +181,10 @@ class TestRequestTiming(unittest.TestCase):
             tracker.enable_litellm_callbacks("first")
             tracker.enable_litellm_callbacks("second")
             self.assertEqual(tracker._active_category, "second")
-            self.assertTrue(all(len(getattr(fake, name)) == 2 for name in names))
+            active_names = ("success_callback", "_async_success_callback",
+                            "failure_callback", "_async_failure_callback")
+            self.assertTrue(all(len(getattr(fake, name)) == 2 for name in active_names))
+            self.assertEqual(fake.callbacks, ["mlflow"])
             response = types.SimpleNamespace(model="test", usage=types.SimpleNamespace(prompt_tokens=5, completion_tokens=2))
             for callback in fake.success_callback:
                 if callable(callback):

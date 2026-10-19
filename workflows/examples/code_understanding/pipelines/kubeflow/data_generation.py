@@ -39,6 +39,7 @@ def prepare_environment_op(git_repo: str,
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            dur_tracker.record_pod_creation_overhead(stage="Data Generation")
         except Exception as e:
             logging.debug(f"DurationTracker initialization skipped in prepare_environment_op: {e}")
 
@@ -50,6 +51,16 @@ def prepare_environment_op(git_repo: str,
             git_username=git_username,
             git_token=git_token,
         )
+
+        try:
+            from utils.code_metrics_tracker import CodeMetricsTracker
+            CodeMetricsTracker.reset_instance()
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
+            code_tracker.measure_repository(tmp_source)
+            code_tracker.save_to_file(os.path.join(tmp_source, "project_metrics.json"))
+            code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
+        except Exception as e:
+            logging.debug(f"CodeMetricsTracker handling in prepare_environment_op: {e}")
 
         if dur_tracker:
             try:
@@ -69,16 +80,6 @@ def prepare_environment_op(git_repo: str,
             token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
         except Exception as e:
             logging.debug(f"TokenCostTracker handling in prepare_environment_op: {e}")
-
-        try:
-            from utils.code_metrics_tracker import CodeMetricsTracker
-            CodeMetricsTracker.reset_instance()
-            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
-            code_tracker.measure_repository(tmp_source)
-            code_tracker.save_to_file(os.path.join(tmp_source, "project_metrics.json"))
-            code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
-        except Exception as e:
-            logging.debug(f"CodeMetricsTracker handling in prepare_environment_op: {e}")
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
@@ -117,6 +118,7 @@ def generate_code_and_meta_op(
             dur_file = os.path.join(tmp_source, "durations.json")
             if os.path.exists(dur_file):
                 dur_tracker.load_and_merge(dur_file)
+            dur_tracker.record_pod_creation_overhead(stage="Data Generation")
         except Exception as e:
             logging.debug(f"DurationTracker handling in generate_code_and_meta_op: {e}")
 

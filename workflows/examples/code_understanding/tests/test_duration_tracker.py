@@ -18,7 +18,7 @@ for pkg_name in [
     "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
     "pandas", "yaml", "mlflow", "mlflow.tracking", "requests", "deepeval",
     "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
-    "pygments", "pygments.lexers", "pygments.util"
+    "pygments", "pygments.lexers", "pygments.util", "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
