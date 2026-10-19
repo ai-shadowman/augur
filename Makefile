@@ -277,11 +277,11 @@ benchmark-llm:
 		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
 		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set guidellm.run=true \
-		--set-string guidellm.args="$${GUIDELLM_ARGS:---upload-mlflow}" \
+		--set-literal guidellm.args="$${GUIDELLM_ARGS:---upload-mlflow}" \
 		--set-string guidellm.targetRole="$${GUIDELLM_TARGET_ROLE:-graphrag}" \
 		--set-string guidellm.workload="$${GUIDELLM_WORKLOAD:-indexing}" \
 		--set-string guidellm.profile="$${GUIDELLM_PROFILE:-concurrent}" \
-		--set-string guidellm.concurrencyRates="$${GUIDELLM_CONCURRENCY_RATES:-$${GUIDELLM_RATES:-1,5,10,20,25}}" \
+		--set-literal guidellm.concurrencyRates="$${GUIDELLM_CONCURRENCY_RATES:-$${GUIDELLM_RATES:-1,5,10,20,25}}" \
 		--set-string guidellm.maxSeconds="$${GUIDELLM_MAX_SECONDS:-30}" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
