@@ -1,38 +1,48 @@
 ---
-title: "### End-to-End RHEL Migration Plan (JSON)"
-skip_prompt: "multi_repo"
+title: "### End-to-End Application Migration Plan (JSON)"
 ---
-{{system_prompt_rhel_admin}}
+{{system_prompt_application_migration}}
 
-The following is reference material describing RHEL 8 to RHEL 10 upgrade requirements.
-Use it to structure your migration plan.
-
---- BEGIN RHEL UPGRADE CONTEXT ---
+--- BEGIN APPLICATION MODERNIZATION GUIDANCE ---
 {{additional_context}}
---- END RHEL UPGRADE CONTEXT ---
+--- END APPLICATION MODERNIZATION GUIDANCE ---
 
-The following is a summary of the codebase being migrated.
+--- BEGIN APPLICATION ANALYSIS ---
+{{application_analysis_context}}
+--- END APPLICATION ANALYSIS ---
 
---- BEGIN HOSTED APPLICATIONS ---
-{{answers[1]}}
---- END HOSTED APPLICATIONS ---
+--- BEGIN CHARACTERIZATION TEST PLAN ---
+{{answers[8]}}
+--- END CHARACTERIZATION TEST PLAN ---
 
-Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.
-Each step should represent a distinct phase of the migration (e.g. pre-migration assessment, OS upgrade, application migration, validation).
-If runtime stack version information is available in the hosted applications summary, include a dedicated runtime upgrade phase for each component that requires a version change to run on RHEL 10 (e.g., JDK 1.8 → 21, Node.js 14 → 22, MySQL 5.7 → 8.0). Place runtime upgrade phases before the application migration phase.
-Rank steps in the order they should be executed.
-Generate the migration plan in JSON format using the following schema:
+--- BEGIN MODERNIZATION-ENHANCED COMPONENT PLAN ---
+{{answers[10]}}
+--- END MODERNIZATION-ENHANCED COMPONENT PLAN ---
+
+Recommend an end-to-end application migration plan from the detected stack and modernization findings.
+Each step should be a distinct phase with an observable completion criterion. Include discovery and target verification, characterization baseline, compatibility prerequisites, application changes, regression and integration validation, staged rollout, and rollback readiness where relevant.
+Include runtime, framework, library, build, database/schema, or application-server changes only where warranted by the findings. Do not require changes to retained components or invent an operating system upgrade.
+Coordinate tightly coupled changes explicitly. For multiple repositories, preserve per-repository targets and sequence shared contract validation only for evidenced relationships; independent applications may proceed in parallel.
+Keep missing versions, conflicting declarations, provisional targets, and unverified compatibility claims visible as prerequisites. The prior plans are recommendations, not independent reference evidence.
+Rank phases in execution order and generate JSON using the following schema. Use null for unknown scalar values and [] for absent lists. Exact versions and authoritative compatibility claims require supplied reference evidence.
 {
     "end_to_end_migration_plan": [
         {
             "rank": <step number in execution order>,
             "phase": <phase name>,
+            "affected_repositories": [<git repository urls present in the findings>],
+            "affected_components": [<detected application components involved in this phase>],
             "description": <what this phase involves and why it is needed>,
             "complexity": <low | medium | high>,
             "complexity_score": <0-10>,
             "complexity_justification": <rationale for complexity score>,
-            "rhel10_compatibility_issues": <known or likely compatibility issues relevant to this phase>,
-            "rhel10_compatibility_issues_reference_sources": [<titles or identifiers of documents from additional_context that informed this entry, if any>]
+            "application_compatibility_issues": [<documented issues or explicitly labeled potential risks>],
+            "application_compatibility_issues_reference_sources": [<supplied reference identifiers supporting compatibility findings>],
+            "modernization_actions": [<actions tied to detected dependencies; label unverified targets>],
+            "prerequisites": [<required prior phases, coordinated changes, or verification tasks>],
+            "validation_steps": [<checks demonstrating the phase succeeded>],
+            "completion_criteria": [<observable acceptance criteria>],
+            "rollback_considerations": [<recovery requirements appropriate to this phase>]
         }
     ]
 }

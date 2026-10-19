@@ -1,17 +1,23 @@
 ---
 title: "### High-Level Summary"
 ---
+{{system_prompt_application_migration}}
+
 {% if multi_repo %}
 Provide a brief high-level summary of the repos in this codebase covering the
 purpose, architecture, and key dependencies of each repo.
 Include all the git urls you can find, including smaller repos. Treat repos with the
 same git url as a single repo.
 After all per-repository entries, add a short paragraph describing how the repositories relate to each other (omit if they are unrelated).
-If runtime stack version information is available (languages, frameworks,
-databases, middleware), include a brief "Runtime Stack" section for each repo.
-Omit if not available.
 {% else %}
 Provide a brief high-level summary of the codebase covering its purpose, architecture, and key dependencies.
-If runtime stack version information is available (languages, frameworks, databases, middleware), include a brief "Runtime Stack" section. Omit if not available.
 {% endif %}
+For each repository, include a "Detected Application Stack" section and a "Dependency Inventory" table with:
+- Component or library name and role
+- Observed version, version constraint, or "unknown"; identify which kind of version is evidenced
+- Evidence of declaration and evidence of usage, distinguishing direct/transitive and runtime/development scope only when known
+- Application components using the dependency
+- Verbatim supporting file paths or source identifiers, if available
 
+Include detected languages, runtimes, frameworks, build tools, application servers, databases, and libraries. Do not treat an import as proof of a version or a declaration as proof of active usage.
+Keep repository-specific and module-specific versions separate. Flag conflicting versions and missing evidence in a short "Assessment Gaps" section; do not claim the inventory is exhaustive when retrieval is incomplete.

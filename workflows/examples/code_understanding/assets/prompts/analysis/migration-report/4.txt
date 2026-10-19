@@ -1,8 +1,26 @@
 ---
-title: "### Known Dependencies Requiring Upgrade"
-search_mode: "local"
-skip_prompt: "multi_repo"
+title: "### Application Modernization Recommendations"
 ---
-Are there any dependencies that need to be upgraded and in what order?
-If runtime stack version information is available (languages, frameworks, databases, middleware), include those components alongside library dependencies (e.g., JDK 1.8 → 21, Angular 15 → 17, MySQL 5.7 → 8.0).
-For each, note the current version, the recommended target version, and whether the component is end-of-life.
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+--- BEGIN SECURITY AND SUPPORT FINDINGS ---
+{{answers[3]}}
+--- END SECURITY AND SUPPORT FINDINGS ---
+
+Recommend a modernization direction for each repository from its detected application stack. Cover relevant libraries, frameworks, runtimes, build tooling, and application servers; include database or integration changes only where evidenced.
+Render a recommendation table with one row per assessed dependency or coordinated group:
+- Repository and dependency or stack component
+- Current version or constraint and its supporting evidence; use unknown where missing
+- Proposed action: retain | upgrade | replace | remove
+- Proposed target or direction; an exact target version requires supplied reference evidence, otherwise use "version verification required"
+- Application benefit and rationale
+- Affected application components and verbatim file paths, if available
+- Compatibility prerequisites and potential API, configuration, build, or integration changes
+- Validation steps
+- Supporting source/reference identifiers and evidence status: observed | supported_reference | verification_required
+
+Clearly label proposals requiring verification. Do not assert specific breaking changes, CVEs, or support status from memory. Preserve conflicting versions by repository/module and make reconciliation a prerequisite.
+Prioritize recommendations by evidenced application risk, compatibility constraints, and benefit. Include justified retention; do not equate modernization with replacing every library or changing the application's language or operating system.
