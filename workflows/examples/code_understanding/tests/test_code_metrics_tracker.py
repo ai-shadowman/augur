@@ -30,6 +30,7 @@ if isinstance(mlflow_mock, MagicMock):
     mlflow_mock.get_tracking_uri.return_value = "http://localhost:5000"
     mlflow_mock.active_run.return_value = None
 
+from tests.test_repository_ignore import install_windows_symlink_fallback
 from utils.code_metrics_tracker import (
     CodeMetricsTracker,
     extract_data_generation_code_metrics,
@@ -40,6 +41,7 @@ class TestCodeMetricsTracker(unittest.TestCase):
     """Unit tests for CodeMetricsTracker singleton, line counter, scanning, and persistence."""
 
     def setUp(self):
+        install_windows_symlink_fallback(self)
         self.tracker = CodeMetricsTracker.reset_instance(git_slug="test-repo_main", git_repo="https://github.com/org/test-repo")
         self.temp_dir = tempfile.mkdtemp()
 

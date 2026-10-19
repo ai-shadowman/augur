@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from utils.repository_ignore import skip_unsafe_symlink
 
+
 # Extension and file classification maps
 EXT_TO_LANGUAGE: Dict[str, str] = {
     ".py": "python", ".pyi": "python", ".pyw": "python",
@@ -61,6 +62,12 @@ BINARY_EXTENSIONS: Set[str] = {
 EXCLUDED_DIRS: Set[str] = {
     ".git", "node_modules", "target", "vendor", "__pycache__", ".venv", "venv",
     ".idea", ".vscode", "dist", "build", "bin", "obj", ".pytest_cache", ".ruff_cache"
+}
+
+EXCLUDED_FILES: Set[str] = {
+    "metadata.json", "code-metadata.json", "durations.json",
+    "tokens.json", "project_metrics.json",
+    "durations.txt", "tokens.txt", "project_metrics.txt",
 }
 
 SINGLE_LINE_COMMENTS: Dict[str, List[str]] = {
@@ -514,10 +521,7 @@ class CodeMetricsTracker:
                     continue
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
-                if fname.endswith("_metadata.txt") or fname in (
-                    "metadata.json", "code-metadata.json", "durations.json",
-                    "tokens.json", "project_metrics.json"
-                ):
+                if fname.endswith("_metadata.txt") or fname in EXCLUDED_FILES:
                     continue
 
                 resolved_lang = None

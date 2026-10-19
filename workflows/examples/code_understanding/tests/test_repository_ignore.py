@@ -1,5 +1,5 @@
-import tempfile
 import os
+import tempfile
 import unittest
 import subprocess
 from pathlib import Path
@@ -13,7 +13,96 @@ from utils.repository_ignore import (
 )
 
 
+def install_windows_symlink_fallback(test_case: unittest.TestCase) -> None:
+    """Simulate POSIX symlinks in tests when Windows lacks symlink privileges (WinError 1314)."""
+    if os.name != "nt":
+        return
+
+    orig_symlink_to = Path.symlink_to
+    orig_is_symlink = Path.is_symlink
+    orig_resolve = Path.resolve
+    orig_islink = os.path.islink
+    orig_isdir = os.path.isdir
+    orig_isfile = os.path.isfile
+    symlinks: dict[str, tuple[Path, bool]] = {}
+
+    def norm_path(path) -> str:
+        return os.path.abspath(os.fspath(path))
+
+    def follow_link(path_str: str, strict: bool = False) -> Path:
+        seen: set[str] = set()
+        curr = path_str
+        while curr in symlinks:
+            if curr in seen:
+                raise RuntimeError(f"Symlink loop: {path_str}")
+            seen.add(curr)
+            raw_target, _ = symlinks[curr]
+            target_path = Path(raw_target)
+            if not target_path.is_absolute():
+                target_path = Path(curr).parent / target_path
+            curr = norm_path(target_path)
+        return orig_resolve(Path(curr), strict=strict)
+
+    def symlink_to(self_path: Path, target, target_is_directory: bool = False):
+        try:
+            return orig_symlink_to(self_path, target, target_is_directory=target_is_directory)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 1314:
+                raise
+            norm = norm_path(self_path)
+            symlinks[norm] = (Path(target), target_is_directory)
+            if target_is_directory:
+                self_path.mkdir(exist_ok=True)
+            elif self_path.name != AUGURIGNORE_FILENAME:
+                try:
+                    resolved = follow_link(norm, strict=True)
+                    content = resolved.read_bytes() if orig_isfile(resolved) else b""
+                except (OSError, RuntimeError):
+                    content = b""
+                self_path.write_bytes(content)
+
+    def is_symlink(self_path: Path) -> bool:
+        return norm_path(self_path) in symlinks or orig_is_symlink(self_path)
+
+    def resolve(self_path: Path, strict: bool = False) -> Path:
+        norm = norm_path(self_path)
+        if norm in symlinks:
+            return follow_link(norm, strict=strict)
+        return orig_resolve(self_path, strict=strict)
+
+    def islink(path) -> bool:
+        return norm_path(path) in symlinks or orig_islink(path)
+
+    def isdir(path) -> bool:
+        norm = norm_path(path)
+        if norm in symlinks:
+            try:
+                return orig_isdir(follow_link(norm, strict=True))
+            except (OSError, RuntimeError):
+                return False
+        return orig_isdir(path)
+
+    def isfile(path) -> bool:
+        norm = norm_path(path)
+        if norm in symlinks:
+            try:
+                return orig_isfile(follow_link(norm, strict=True))
+            except (OSError, RuntimeError):
+                return False
+        return orig_isfile(path)
+
+    test_case.enterContext(patch.object(Path, "symlink_to", symlink_to))
+    test_case.enterContext(patch.object(Path, "is_symlink", is_symlink))
+    test_case.enterContext(patch.object(Path, "resolve", resolve))
+    test_case.enterContext(patch("os.path.islink", side_effect=islink))
+    test_case.enterContext(patch("os.path.isdir", side_effect=isdir))
+    test_case.enterContext(patch("os.path.isfile", side_effect=isfile))
+
+
 class TestRepositoryIgnorePolicyLoading(unittest.TestCase):
+    def setUp(self):
+        install_windows_symlink_fallback(self)
+
     def make_repository(self, contents=None):
         directory = tempfile.TemporaryDirectory()
         root = Path(directory.name)
@@ -111,6 +200,9 @@ class TestRepositoryIgnorePolicyLoading(unittest.TestCase):
 
 
 class TestRepositoryIgnorePolicyMatching(unittest.TestCase):
+    def setUp(self):
+        install_windows_symlink_fallback(self)
+
     def make_policy(self, patterns):
         directory = tempfile.TemporaryDirectory()
         root = Path(directory.name)

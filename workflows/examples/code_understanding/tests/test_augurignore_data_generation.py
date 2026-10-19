@@ -77,6 +77,7 @@ if "loaders.default_asset_loader" not in sys.modules:
 
 from pipelines.base import data_generation
 from utils import code_utils
+from tests.test_repository_ignore import install_windows_symlink_fallback
 from utils.repository_ignore import RepositoryIgnoreError, RepositoryIgnorePolicy
 
 
@@ -98,6 +99,9 @@ class TestAugurIgnoreKubeflowFailure(unittest.TestCase):
 
 
 class TestAugurIgnoreDataGeneration(unittest.TestCase):
+    def setUp(self):
+        install_windows_symlink_fallback(self)
+
     def repository(self, rules=""):
         directory = tempfile.TemporaryDirectory()
         root = Path(directory.name)

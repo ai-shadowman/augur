@@ -373,7 +373,7 @@ class DependencyAnalyzer:
                     config=llm_config,
                 )
 
-                with timing_span("graphrag.direct_model", "provider"):
+                with timing_span("graphrag.direct_model", "provider"), self.token_tracker.suppress_callbacks():
                     response = await chat_model.achat(question)
 
                 result = response.output.content
@@ -396,7 +396,7 @@ class DependencyAnalyzer:
 
                     _community_threshold = int(os.getenv("GRAPHRAG_DYNAMIC_COMMUNITY_THRESHOLD", "50"))
 
-                    with timing_span("graphrag.global_search", "retrieval"):
+                    with timing_span("graphrag.global_search", "retrieval"), self.token_tracker.suppress_callbacks():
                         result, context_data = await api.global_search(
                             config=config,
                             entities=self.entity_df,
@@ -437,7 +437,7 @@ class DependencyAnalyzer:
                         if "embed" in s.lower()
                     )
 
-                    with timing_span("graphrag.local_search", "retrieval"):
+                    with timing_span("graphrag.local_search", "retrieval"), self.token_tracker.suppress_callbacks():
                         result, context_data = await api.local_search(
                             config=config,
                             entities=self.entity_df,

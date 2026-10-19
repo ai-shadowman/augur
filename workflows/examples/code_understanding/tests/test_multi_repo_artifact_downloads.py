@@ -36,6 +36,10 @@ class TestMultiRepoArtifactDownloads(unittest.TestCase):
             "mlflow": MagicMock(),
             "mlflow.tracking": MagicMock(),
             "requests": MagicMock(),
+            "yaml": sys.modules.get("yaml") or MagicMock(),
+            "pygments": sys.modules.get("pygments") or MagicMock(),
+            "pygments.lexers": sys.modules.get("pygments.lexers") or MagicMock(),
+            "pygments.util": sys.modules.get("pygments.util") or MagicMock(),
         }))
         from _multi_repo_test_loaders.default_asset_loader import DefaultAssetLoader
         from _multi_repo_test_loaders import mlflow_asset_loader
@@ -96,9 +100,10 @@ class TestMultiRepoArtifactDownloads(unittest.TestCase):
         ][:1]
 
     def download_artifacts(self, *, artifact_uri):
-        if artifact_uri not in self.artifacts:
+        normalized_uri = artifact_uri.replace("\\", "/")
+        if normalized_uri not in self.artifacts:
             raise FileNotFoundError(f"No such artifact: {artifact_uri}")
-        return str(self.artifacts[artifact_uri])
+        return str(self.artifacts[normalized_uri])
 
     def test_downloads_generated_artifacts_for_every_requested_repo(self):
         for slug in ("example-first-main", "example-second-main"):

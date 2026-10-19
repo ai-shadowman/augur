@@ -1,5 +1,6 @@
 import json
 import os
+import posixpath
 import mlflow
 import requests
 from mlflow.tracking import MlflowClient
@@ -84,7 +85,7 @@ class MlFlowAssetLoader(AssetLoader):
 
         logging.info(f"Base absolute storage URI: {asset_base_uri}")
 
-        return os.path.join(asset_base_uri, asset_file_path)
+        return posixpath.join(asset_base_uri, asset_file_path.replace("\\", "/"))
 
     def _mark_as_latest(self, client, experiment_id, new_run_id):
 

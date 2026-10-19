@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 import logging
 import os
 import tempfile
@@ -8,7 +9,7 @@ import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity, answer_correctness
 
-from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
+from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, _get_token_tracker, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
 
@@ -58,13 +59,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         if os.environ.get("MLFLOW_TRACKING_TOKEN"):
             _patch_session_forwarded_token()
 
-        try:
-            from utils.token_tracker import TokenCostTracker
-            token_tracker = TokenCostTracker.get_instance()
+        token_tracker = _get_token_tracker()
+        if token_tracker:
             token_tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
             token_tracker.enable_openai_tracking(category="Evaluation (Judge)")
-        except Exception as e:
-            logging.debug(f"Failed to enable token tracking in MlFlowCustomEvaluator: {e}")
 
     def _judge_model_uri(self) -> str:
         """Returns the MLflow judge model URI, using an OpenAI-compatible endpoint."""
@@ -90,6 +88,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         repo_context = build_repo_context(graphrag_source_dir)
 
         try:
+            token_tracker = _get_token_tracker()
+            if token_tracker:
+                token_tracker.set_category("Evaluation (Ground Truth)")
             response = completion(
                 model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
                 api_base=os.getenv("GROUND_TRUTH_LLM_API_BASE"),
@@ -113,6 +114,66 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             logging.error(f"Ground truth LLM failed: {e}")
             return "Could not process query"
 
+    @staticmethod
+    def _get_judge_call_count(token_tracker) -> int:
+        if not token_tracker:
+            return 0
+        return sum(
+            r.get("calls", 0)
+            for k, r in token_tracker.records.items()
+            if "evaluation (judge)" in k.lower()
+        )
+
+    def _track_judge_usage_fallback(
+        self,
+        eval_data: pd.DataFrame,
+        eval_results: pd.DataFrame = None,
+        num_metrics: int = 4,
+        prev_judge_calls: int = 0,
+    ):
+        """Records LLM-as-judge token usage when MLflow's scoring workers bypass the OpenAI wrapper."""
+        token_tracker = _get_token_tracker()
+        if not token_tracker or eval_data is None or eval_data.empty:
+            return
+        if self._get_judge_call_count(token_tracker) > prev_judge_calls:
+            return
+
+        total_calls = len(eval_data) * num_metrics
+        if total_calls <= 0:
+            return
+
+        total_prompt_tokens = 0
+        for _, row in eval_data.iterrows():
+            inp_tok = token_tracker.count_tokens(str(row.get("inputs", "") or ""))
+            tgt_tok = token_tracker.count_tokens(str(row.get("targets", "") or ""))
+            pred_tok = token_tracker.count_tokens(str(row.get("predictions", "") or ""))
+            ctx_tok = token_tracker.count_tokens(str(row.get("context", "") or ""))
+            row_prompt = (
+                2 * (250 + inp_tok + pred_tok + ctx_tok)
+                + (num_metrics - 2) * (250 + inp_tok + tgt_tok + pred_tok)
+            )
+            total_prompt_tokens += row_prompt
+
+        total_output_tokens = 0
+        if eval_results is not None and not eval_results.empty:
+            just_cols = [c for c in eval_results.columns if "justification" in str(c).lower()]
+            for col in just_cols:
+                values = eval_results[col].dropna() if hasattr(eval_results[col], "dropna") else eval_results[col]
+                for val in values:
+                    total_output_tokens += token_tracker.count_tokens(str(val)) + 15
+
+        if total_output_tokens <= 0:
+            total_output_tokens = total_calls * 60
+
+        judge_id = os.getenv("JUDGE_LLM_ID") or token_tracker.chat_model
+        token_tracker.track(
+            source=f"Evaluation (Judge) ({judge_id})",
+            calls=total_calls,
+            prompt_tokens=total_prompt_tokens,
+            output_tokens=total_output_tokens,
+            model=judge_id,
+        )
+
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
         """Evaluates a GraphRAG response using MLflow's genai evaluation API.
@@ -127,70 +188,87 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         Returns:
             dict of MLflow evaluation metric scores for the single sample.
         """
-        try:
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+        with eval_scope:
+            try:
 
-            actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
+                analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-            context_str = DependencyAnalyzer.extract_context_content(context_data)
+                if token_tracker:
+                    token_tracker.disable_litellm_callbacks()
 
-            reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
+                actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
 
-            judge_model = self._judge_model_uri()
+                context_str = DependencyAnalyzer.extract_context_content(context_data)
 
-            eval_data = pd.DataFrame({
-                "inputs": [input],
-                "targets": [reference_answer],
-                "predictions": [actual_answer],
-                "context": [context_str],
-            })
+                reference_answer = self._ground_truth_answer(input, graphrag_source_dir)
 
-            from mlflow.tracking import MlflowClient
+                judge_model = self._judge_model_uri()
 
-            client = MlflowClient()
+                eval_data = pd.DataFrame({
+                    "inputs": [input],
+                    "targets": [reference_answer],
+                    "predictions": [actual_answer],
+                    "context": [context_str],
+                })
 
-            experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
+                from mlflow.tracking import MlflowClient
 
-            if not experiment:
+                client = MlflowClient()
 
-                experiment = client.get_experiment(
-                    client.create_experiment(name=self._EXPERIMENT_NAME)
+                experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
+
+                if not experiment:
+
+                    experiment = client.get_experiment(
+                        client.create_experiment(name=self._EXPERIMENT_NAME)
+                    )
+
+                if mlflow.active_run():
+                    mlflow.end_run()
+
+                if token_tracker:
+                    token_tracker._openai_category = "Evaluation (Judge)"
+                prev_judge_calls = self._get_judge_call_count(token_tracker)
+
+                with mlflow.start_run(
+                    experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
+                ):
+
+                    results = mlflow.evaluate(
+                        data=eval_data,
+                        predictions="predictions",
+                        targets="targets",
+                        extra_metrics=[
+                            faithfulness(model=judge_model),
+                            answer_relevance(model=judge_model),
+                            answer_similarity(model=judge_model),
+                        ],
+                    )
+
+                self._track_judge_usage_fallback(
+                    eval_data,
+                    num_metrics=3,
+                    prev_judge_calls=prev_judge_calls,
                 )
 
-            if mlflow.active_run():
-                mlflow.end_run()
+                metrics = results.metrics
 
-            with mlflow.start_run(
-                experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
-            ):
+                metrics["question"] = input
+                metrics["actual_answer"] = actual_answer
+                metrics["reference_answer"] = reference_answer
 
-                results = mlflow.evaluate(
-                    data=eval_data,
-                    predictions="predictions",
-                    targets="targets",
-                    extra_metrics=[
-                        faithfulness(model=judge_model),
-                        answer_relevance(model=judge_model),
-                        answer_similarity(model=judge_model),
-                    ],
-                )
+                logging.info(f"MLflow evaluation complete: {results.metrics}")
 
-            metrics = results.metrics
+                return metrics
 
-            metrics["question"] = input
-            metrics["actual_answer"] = actual_answer
-            metrics["reference_answer"] = reference_answer
+            except Exception as e:
 
-            logging.info(f"MLflow evaluation complete: {results.metrics}")
+                logging.error(f"Error during MLflow evaluation: {e}")
 
-            return metrics
-
-        except Exception as e:
-
-            logging.error(f"Error during MLflow evaluation: {e}")
-
-            raise e
+                raise e
 
     def evaluate_with_dataset(
         self,
@@ -222,122 +300,139 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         from utils import code_utils
 
-        df = pd.read_csv(eval_dataset_file)
+        token_tracker = _get_token_tracker()
+        eval_scope = token_tracker.evaluation_scope() if token_tracker else nullcontext()
 
-        analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+        with eval_scope:
+            df = pd.read_csv(eval_dataset_file)
 
-        df["inputs"] = df["question"].astype(str) + "\n\n**Example format:**\n" + df["one_shot_example"].astype(str)
+            analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
-        df["targets"] = df["inputs"].apply(
-            lambda t: self._ground_truth_answer(t, graphrag_source_dir)
-        )
+            df["inputs"] = df["question"].astype(str) + "\n\n**Example format:**\n" + df["one_shot_example"].astype(str)
 
-        def _query(row):
-
-            input_text = row["inputs"]
-
-            global_val = row.get("global_query", False)
-            use_global = bool(global_val) if pd.notna(global_val) else False
-
-            try:
-
-                answer, context_data = asyncio.run(analyzer.query_with_llm(input_text, include_context=True, use_global=use_global))
-
-                context_str = DependencyAnalyzer.extract_context_content(context_data)
-
-            except Exception as e:
-
-                logging.error(f"GraphRAG query failed: {e}")
-
-                answer = f"ERROR: {e}"
-
-                context_str = ""
-
-            return pd.Series({"predictions": answer, "context": context_str})
-
-        results = df.apply(_query, axis=1)
-
-        df["predictions"] = results["predictions"]
-
-        df["context"] = results["context"]
-
-        eval_data = df[["inputs", "targets", "predictions", "context"]]
-
-        judge_model = self._judge_model_uri()
-
-        client = MlflowClient()
-
-        experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
-
-        if not experiment:
-
-            experiment = client.get_experiment(
-                client.create_experiment(name=self._EXPERIMENT_NAME)
+            df["targets"] = df["inputs"].apply(
+                lambda t: self._ground_truth_answer(t, graphrag_source_dir)
             )
 
-        slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+            if token_tracker:
+                token_tracker.disable_litellm_callbacks()
 
-        _eval_tags = {"category": "evaluation", "git_slug": slug}
+            def _query(row):
 
-        if mlflow.active_run():
-            mlflow.end_run()
+                input_text = row["inputs"]
 
-        with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
+                global_val = row.get("global_query", False)
+                use_global = bool(global_val) if pd.notna(global_val) else False
 
-            results = mlflow.evaluate(
-                data=eval_data,
-                predictions="predictions",
-                targets="targets",
-                extra_metrics=[
-                    faithfulness(model=judge_model),
-                    answer_relevance(model=judge_model),
-                    answer_similarity(model=judge_model),
-                    answer_correctness(model=judge_model),
-                ],
+                try:
+
+                    answer, context_data = asyncio.run(analyzer.query_with_llm(input_text, include_context=True, use_global=use_global))
+
+                    context_str = DependencyAnalyzer.extract_context_content(context_data)
+
+                except Exception as e:
+
+                    logging.error(f"GraphRAG query failed: {e}")
+
+                    answer = f"ERROR: {e}"
+
+                    context_str = ""
+
+                return pd.Series({"predictions": answer, "context": context_str})
+
+            results = df.apply(_query, axis=1)
+
+            df["predictions"] = results["predictions"]
+
+            df["context"] = results["context"]
+
+            eval_data = df[["inputs", "targets", "predictions", "context"]]
+
+            judge_model = self._judge_model_uri()
+            if token_tracker:
+                token_tracker._openai_category = "Evaluation (Judge)"
+            prev_judge_calls = self._get_judge_call_count(token_tracker)
+
+            client = MlflowClient()
+
+            experiment = client.get_experiment_by_name(self._EXPERIMENT_NAME)
+
+            if not experiment:
+
+                experiment = client.get_experiment(
+                    client.create_experiment(name=self._EXPERIMENT_NAME)
+                )
+
+            slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
+
+            _eval_tags = {"category": "evaluation", "git_slug": slug}
+
+            if mlflow.active_run():
+                mlflow.end_run()
+
+            with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
+
+                results = mlflow.evaluate(
+                    data=eval_data,
+                    predictions="predictions",
+                    targets="targets",
+                    extra_metrics=[
+                        faithfulness(model=judge_model),
+                        answer_relevance(model=judge_model),
+                        answer_similarity(model=judge_model),
+                        answer_correctness(model=judge_model),
+                    ],
+                )
+
+                eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
+
+            self._track_judge_usage_fallback(
+                eval_data,
+                eval_results=eval_results,
+                num_metrics=4,
+                prev_judge_calls=prev_judge_calls,
             )
 
-            eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
+            logging.info(f"MLflow batch evaluation complete: {results.metrics}")
 
-        logging.info(f"MLflow batch evaluation complete: {results.metrics}")
+            if eval_results is not None:
 
-        if eval_results is not None:
+                for col in eval_results.columns:
 
-            for col in eval_results.columns:
+                    if col not in ("inputs", "targets", "predictions"):
 
-                if col not in ("inputs", "targets", "predictions"):
+                        df[col] = eval_results[col].values
 
-                    df[col] = eval_results[col].values
+            else:
 
-        else:
+                logging.info("MLflow eval_results_table not available; metric scores will not be captured.")
 
-            logging.info("MLflow eval_results_table not available; metric scores will not be captured.")
+            df["answer"] = df["predictions"]
 
-        df["answer"] = df["predictions"]
+            df = df.rename(columns={"targets": "reference"})
 
-        df = df.rename(columns={"targets": "reference"})
+            df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
 
-        df = df.drop(columns=["inputs", "predictions", "reference_answer"], errors="ignore")
+            artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
 
-        artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_EVAL,
 
-            DefaultAssetLoader.RESULTS_PATH_PREFIX_EVAL,
+                git_slug=slug,
 
-            git_slug=slug,
+                multi_repo=multi_repo,
 
-            multi_repo=multi_repo,
+            )
 
-        )
+            df["git_slug"] = slug
 
-        df["git_slug"] = slug
+            result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
 
-        result_file = os.path.join(tempfile.gettempdir(), f"code_understanding_results_{slug}.csv")
+            df.to_csv(result_file, index=False)
 
-        df.to_csv(result_file, index=False)
+            DefaultAssetLoader().log_results(
+                result_file,
+                artifact_path=artifact_path,
+                tags=_eval_tags,
+            )
 
-        DefaultAssetLoader().log_results(
-            result_file,
-            artifact_path=artifact_path,
-            tags=_eval_tags,
-        )
-
-        return df
+            return df

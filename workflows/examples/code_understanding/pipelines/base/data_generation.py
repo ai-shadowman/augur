@@ -124,6 +124,8 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
             )
 
             for filename in files:
+                if filename in code_utils.TELEMETRY_FILES:
+                    continue
                 if os.path.splitext(filename)[1] not in include_extensions:
                     continue
 
@@ -155,15 +157,16 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
         raise e
 
 
-def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_df=None):
+def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_df=None, config: bool = False):
     """Ensures token usage is recorded for data generation even if flow parsing threw an error
     or callbacks intercepted 0 tokens."""
     if not token_tracker or df is None or len(df) == 0:
         return
     try:
+        lang_label = f"{language} config" if config else language
         records_for_lang = [
             (k, r) for k, r in token_tracker.records.items()
-            if f"Data Generation ({language})" in k
+            if f"Data Generation ({lang_label})" in k
         ]
         has_real_tokens = any(
             r.get("prompt_tokens", 0) > 0 or r.get("output_tokens", 0) > 0
@@ -188,7 +191,7 @@ def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_d
                 total_o_tokens = len(df) * 150
 
             token_tracker.track(
-                source=f"Data Generation ({language}) ({model_name})",
+                source=f"Data Generation ({lang_label}) ({model_name})",
                 calls=len(df),
                 prompt_tokens=total_p_tokens,
                 output_tokens=total_o_tokens,
@@ -198,6 +201,44 @@ def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_d
             )
     except Exception as e:
         logging.debug(f"Failed fallback token estimation in _ensure_data_generation_tokens: {e}")
+
+
+_UNSUPPORTED_CHAT_COMPLETION_PARAMS = ("best_of", "top_k")
+_BLOCK_CONFIG_ATTRS = ("block_config", "model_config", "llm_kwargs", "default_kwargs", "extra_body")
+
+
+def _sanitize_flow_config(flow_yaml_path: str, flow=None):
+    """Strips unsupported OpenAI Chat Completions parameters (e.g., best_of, top_k)
+    from downloaded flow.yaml files (in case MLflow static-assets serves a stale version)
+    and from instantiated Flow objects."""
+    if flow_yaml_path and os.path.isfile(flow_yaml_path):
+        try:
+            import re
+            with open(flow_yaml_path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+            pattern = r"(?m)^[ \t]*(?:" + "|".join(_UNSUPPORTED_CHAT_COMPLETION_PARAMS) + r")[ \t]*:.*(?:\r?\n)?"
+            sanitized_text = re.sub(pattern, "", raw_text)
+            if sanitized_text != raw_text:
+                with open(flow_yaml_path, "w", encoding="utf-8") as f:
+                    f.write(sanitized_text)
+        except Exception as e:
+            logging.debug(f"Could not sanitize flow yaml {flow_yaml_path}: {e}")
+
+    if flow is not None:
+        try:
+            if isinstance(getattr(flow, "parameters", None), dict):
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    flow.parameters.pop(key, None)
+            for block in getattr(flow, "blocks", None) or []:
+                for key in _UNSUPPORTED_CHAT_COMPLETION_PARAMS:
+                    if hasattr(block, key):
+                        setattr(block, key, None)
+                    for attr in _BLOCK_CONFIG_ATTRS:
+                        cfg = getattr(block, attr, None)
+                        if isinstance(cfg, dict):
+                            cfg.pop(key, None)
+        except Exception as e:
+            logging.debug(f"Could not sanitize instantiated flow object: {e}")
 
 
 def get_parsed_code_metadata(df, language, config=False):
@@ -222,16 +263,22 @@ def get_parsed_code_metadata(df, language, config=False):
         )
 
         try:
+            import litellm
+            litellm.drop_params = True
+        except ImportError:
+            pass
+
+        token_tracker = None
+        lang_label = f"{language} config" if config else language
+        try:
             from utils.token_tracker import TokenCostTracker
+            category = f"Data Generation ({lang_label})"
             token_tracker = TokenCostTracker.get_instance()
-            token_tracker.set_category(f"Data Generation ({language})")
-            token_tracker.enable_litellm_callbacks(category=f"Data Generation ({language})")
-            token_tracker.enable_openai_tracking(category=f"Data Generation ({language})")
-            calls_before = token_tracker.get_totals()["total_calls"]
+            token_tracker.set_category(category)
+            token_tracker.enable_litellm_callbacks(category=category)
+            token_tracker.enable_openai_tracking(category=category)
         except Exception as e:
             logging.debug(f"Failed to enable token tracking in get_parsed_code_metadata: {e}")
-            token_tracker = None
-            calls_before = 0
 
         dataset = Dataset.from_pandas(df)
 
@@ -240,7 +287,10 @@ def get_parsed_code_metadata(df, language, config=False):
         flows_dir = f"flows/{flow_dir}"
         DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_dir)
 
-        flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
+        flow_yaml_path = f"{flows_dir}/flow.yaml"
+        _sanitize_flow_config(flow_yaml_path)
+
+        flow = Flow.from_yaml(flow_yaml_path)
 
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",
@@ -250,10 +300,10 @@ def get_parsed_code_metadata(df, language, config=False):
             n=1,
             max_tokens=32_000,
             response_format={"type": "json_object"},
-            top_k=1,
             timeout=llm_timeout,
             num_retries=llm_num_retries,
         )
+        _sanitize_flow_config(flow_yaml_path, flow=flow)
 
         converted_df = None
         try:
@@ -262,8 +312,8 @@ def get_parsed_code_metadata(df, language, config=False):
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
-            if token_tracker and len(df) > 0:
-                _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df)
+            if token_tracker and len(df) > 0 and converted_df is not None:
+                _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df, config=config)
 
         if converted_df is not None:
             converted_df.to_csv(
@@ -527,10 +577,12 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             result["status"] = "skipped"
             return
 
+        llm_extracted = False
         try:
             llm_cm = dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})") if dur_tracker else nullcontext()
             with llm_cm:
                 code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+                llm_extracted = code_and_metadata_df is not None
         except Exception as e:
             logging.warning(
                 f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
@@ -557,7 +609,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         try:
             from utils.token_tracker import TokenCostTracker, extract_data_generation_tokens
             t_tr = TokenCostTracker.get_instance()
-            extract_data_generation_tokens(target_path, t_tr)
+            if llm_extracted:
+                extract_data_generation_tokens(target_path, t_tr)
             t_tr.save_to_file(os.path.join(target_path, "tokens.json"))
         except Exception:
             pass
@@ -680,44 +733,30 @@ class DataGenerationPipeline:
                     dur_tracker.record_pod_creation_overhead(stage="Data Generation")
                 except Exception as e:
                     logging.debug(f"Failed to record pod creation overhead in data generation: {e}")
-                with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
-                    prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
-                    ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
-
-                    with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                        languages = detect_languages(source_path, ignore_policy)
-
-                    if code_tracker:
-                        try:
-                            with dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics"):
-                                code_tracker.measure_repository(source_path, languages=languages)
-                        except Exception as e:
-                            logging.debug(f"Code metrics measurement failed: {e}")
-
-                    with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                        external_metadata = load_external_data(source_path, ignore_policy)
-
-                    for language in languages:
-                        for config in [False, True]:
-                            generate_code_and_meta(
-                                git_repo=git_repo, git_branch=git_branch,
-                                language=language, source_path=source_path, target_path=target_path,
-                                config=config, multi_repo=multi_repo, external_metadata=external_metadata,
-                                ignore_policy=ignore_policy,
-                            )
-                    ignore_policy.log_summary()
-            else:
+            total_cm = dur_tracker.measure(
+                stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}
+            ) if dur_tracker else nullcontext()
+            with total_cm:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
                 ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
-                languages = detect_languages(source_path, ignore_policy)
+
+                detect_cm = dur_tracker.measure(stage="Data Generation", step="Detect Languages") if dur_tracker else nullcontext()
+                with detect_cm:
+                    languages = detect_languages(source_path, ignore_policy)
+
                 if code_tracker:
                     try:
-                        code_tracker.measure_repository(source_path, languages=languages)
+                        metrics_cm = dur_tracker.measure(stage="Data Generation", step="Measure Code Metrics") if dur_tracker else nullcontext()
+                        with metrics_cm:
+                            code_tracker.measure_repository(source_path, languages=languages)
                     except Exception as e:
                         logging.debug(f"Code metrics measurement failed: {e}")
-                external_metadata = load_external_data(source_path, ignore_policy)
+
+                metadata_cm = dur_tracker.measure(stage="Data Generation", step="Load External Data") if dur_tracker else nullcontext()
+                with metadata_cm:
+                    external_metadata = load_external_data(source_path, ignore_policy)
+
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(

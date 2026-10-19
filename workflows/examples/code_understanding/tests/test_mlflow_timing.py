@@ -154,11 +154,50 @@ class TestMlflowTiming(unittest.TestCase):
         self.assertEqual(self.events()[-1]["status"], "failed")
 
     def test_symlinks_and_missing_files_are_partial_without_following_targets(self):
+        import stat
+        from contextlib import ExitStack
+
         (self.path / "data").write_bytes(b"abc")
         outside = Path(self.tmp.name) / "outside"
         outside.write_bytes(b"abcdefghij")
-        (self.path / "link").symlink_to(outside)
-        counts = measurement.measure_payload(str(self.path))
+        link = self.path / "link"
+        with ExitStack() as stack:
+            try:
+                link.symlink_to(outside)
+            except OSError as err:
+                if getattr(err, "winerror", None) != 1314:
+                    raise
+                link.write_bytes(b"abcdefghij")
+                orig_scandir = measurement.os.scandir
+
+                class _DirEntryProxy:
+                    def __init__(self, entry):
+                        self._entry = entry
+                        self.path = entry.path
+                        self.name = entry.name
+
+                    def stat(self, *, follow_symlinks=True):
+                        if not follow_symlinks and self.name == "link":
+                            return types.SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_size=10)
+                        return self._entry.stat(follow_symlinks=follow_symlinks)
+
+                class _ScandirProxy:
+                    def __init__(self, it):
+                        self._it = it
+
+                    def __iter__(self):
+                        return self
+
+                    def __next__(self):
+                        return _DirEntryProxy(next(self._it))
+
+                    def close(self):
+                        self._it.close()
+
+                stack.enter_context(
+                    patch.object(measurement.os, "scandir", side_effect=lambda p: _ScandirProxy(orig_scandir(p)))
+                )
+            counts = measurement.measure_payload(str(self.path))
         self.assertEqual(counts["payload_logical_bytes"], 3)
         self.assertEqual(counts["payload_symlinks"], 1)
         self.assertFalse(counts["payload_scan_complete"])

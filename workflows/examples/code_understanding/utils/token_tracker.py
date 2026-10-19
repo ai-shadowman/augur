@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import inspect
 import os
 import re
 import json
@@ -17,6 +19,15 @@ except ImportError:
     HAS_LITELLM = False
 
 
+def _matches_model(model_name: Optional[str], configured_model: Optional[str]) -> bool:
+    """Returns True if model_name matches configured_model directly or as a provider/model suffix."""
+    if not model_name or not configured_model:
+        return False
+    m = str(model_name).strip()
+    c = str(configured_model).strip()
+    return m == c or m.endswith(f"/{c}") or c.endswith(f"/{m}")
+
+
 class TokenCostTracker:
     """Tracks token usage and estimates LLM invocation costs across a pipeline using LiteLLM."""
 
@@ -31,16 +42,38 @@ class TokenCostTracker:
     _global_instance: Optional["TokenCostTracker"] = None
 
     @classmethod
-    def get_instance(cls) -> "TokenCostTracker":
+    def get_instance(
+        cls,
+        git_slug: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        run_id: Optional[str] = None,
+        **kwargs,
+    ) -> "TokenCostTracker":
         """Returns the shared global TokenCostTracker instance."""
         if cls._global_instance is None:
-            cls._global_instance = cls()
+            cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, run_id=run_id, **kwargs)
+        else:
+            if git_slug:
+                cls._global_instance.git_slug = git_slug
+            if git_repo:
+                cls._global_instance.git_repo = git_repo
+            if run_id:
+                cls._global_instance.run_id = run_id
         return cls._global_instance
 
     @classmethod
-    def reset_instance(cls) -> "TokenCostTracker":
+    def reset_instance(
+        cls,
+        git_slug: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        run_id: Optional[str] = None,
+        **kwargs,
+    ) -> "TokenCostTracker":
         """Resets and returns the singleton instance."""
-        cls._global_instance = cls()
+        if cls._global_instance is not None:
+            cls._global_instance.disable_litellm_callbacks()
+            cls._global_instance.disable_openai_tracking()
+        cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, run_id=run_id, **kwargs)
         return cls._global_instance
 
     def __init__(
@@ -90,6 +123,14 @@ class TokenCostTracker:
         self._merged_upstream_sources: Set[str] = set()
         self._merged_files: Set[str] = set()
 
+        self._active_category: str = "LiteLLM"
+        self._litellm_category: str = "LiteLLM"
+        self._openai_category: str = "GraphRAG Indexing"
+        self._litellm_callback = None
+        self._openai_tracking_enabled: bool = False
+        self._suppress_callbacks: bool = False
+        self._in_evaluation: bool = False
+
         self._register_models_in_litellm()
 
     def _register_models_in_litellm(self):
@@ -97,18 +138,27 @@ class TokenCostTracker:
         if not HAS_LITELLM or litellm is None:
             return
 
-        model_dict = {
-            self.chat_model: {
-                "input_cost_per_token": self.chat_prompt_price,
-                "output_cost_per_token": self.chat_output_price,
-                "litellm_provider": "openai",
-            },
-            self.embed_model: {
-                "input_cost_per_token": self.embed_prompt_price,
-                "output_cost_per_token": self.embed_output_price,
-                "litellm_provider": "openai",
-            },
+        chat_spec = {
+            "input_cost_per_token": self.chat_prompt_price,
+            "output_cost_per_token": self.chat_output_price,
+            "litellm_provider": "openai",
         }
+        embed_spec = {
+            "input_cost_per_token": self.embed_prompt_price,
+            "output_cost_per_token": self.embed_output_price,
+            "litellm_provider": "openai",
+        }
+
+        model_dict = {
+            self.chat_model: chat_spec,
+            self.embed_model: embed_spec,
+        }
+        if "/" in self.chat_model:
+            model_dict[self.chat_model.split("/")[-1]] = chat_spec
+        if not self.chat_model.startswith("openrouter/"):
+            model_dict[f"openrouter/{self.chat_model}"] = chat_spec
+        if "/" in self.embed_model:
+            model_dict[self.embed_model.split("/")[-1]] = embed_spec
 
         try:
             if hasattr(litellm, "register_model"):
@@ -137,11 +187,24 @@ class TokenCostTracker:
         # Fallback approximation: ~4 characters per token
         return max(1, len(text) // 4)
 
+    def _is_configured_chat_model(self, model_name: Optional[str]) -> bool:
+        return _matches_model(model_name, self.chat_model)
+
+    def _is_configured_embed_model(self, model_name: Optional[str]) -> bool:
+        return _matches_model(model_name, self.embed_model)
+
     def calculate_cost(
         self, prompt_tokens: int, output_tokens: int = 0, model: Optional[str] = None
     ) -> float:
-        """Calculates estimated cost for prompt and output tokens using LiteLLM."""
+        """Calculates estimated cost for prompt and output tokens using configured pricing or LiteLLM."""
         target_model = model or self.chat_model
+
+        # Use configured rates directly for the pipeline's primary chat and embedding models
+        # so pricing is deterministic and consistent across all stages and pods.
+        if self._is_configured_embed_model(target_model):
+            return float(prompt_tokens * self.embed_prompt_price)
+        if self._is_configured_chat_model(target_model):
+            return float((prompt_tokens * self.chat_prompt_price) + (output_tokens * self.chat_output_price))
 
         if HAS_LITELLM and litellm is not None:
             try:
@@ -150,16 +213,18 @@ class TokenCostTracker:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=output_tokens,
                 )
-                return float(prompt_cost + completion_cost)
+                computed = float(prompt_cost + completion_cost)
+                if computed > 0.0 or (prompt_tokens == 0 and output_tokens == 0):
+                    return computed
             except Exception as e:
                 logging.debug(f"litellm.cost_per_token error for model {target_model}: {e}")
 
         # Fallback direct calculation
         is_embed = (target_model == self.embed_model) or ("embed" in target_model.lower())
         if is_embed:
-            return prompt_tokens * self.embed_prompt_price
+            return float(prompt_tokens * self.embed_prompt_price)
         else:
-            return (prompt_tokens * self.chat_prompt_price) + (output_tokens * self.chat_output_price)
+            return float((prompt_tokens * self.chat_prompt_price) + (output_tokens * self.chat_output_price))
 
     def track(
         self,
@@ -174,7 +239,7 @@ class TokenCostTracker:
         """Records token usage and cost for a given source or model, outputting live metrics to console."""
         target_model = model or (self.embed_model if "embed" in source.lower() else self.chat_model)
 
-        if cost is None:
+        if cost is None or (cost <= 0.0 and (prompt_tokens > 0 or output_tokens > 0)):
             cost = self.calculate_cost(prompt_tokens, output_tokens, model=target_model)
 
         if source not in self.records:
@@ -213,15 +278,18 @@ class TokenCostTracker:
             f"Total Tokens: {total_tokens:,} | Est. Cost: ${cost:.4f}"
         )
         logging.debug(console_msg)
-        if getattr(self, "print_to_console", True):
+        if self.print_to_console:
             print(console_msg, flush=True)
+
+    def _stage_prefix(self, base_label: str) -> str:
+        return f"Evaluation {base_label}" if self._in_evaluation else base_label
 
     def track_chat(
         self, prompt_tokens: int, output_tokens: int, calls: int = 1, model: Optional[str] = None
     ):
         """Records GraphRAG Direct Chat invocation."""
         target_model = model or self.chat_model
-        source = f"GraphRAG Chat ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Chat')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -235,7 +303,7 @@ class TokenCostTracker:
     ):
         """Records GraphRAG Global Search invocation."""
         target_model = model or self.chat_model
-        source = f"GraphRAG Global Search ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Global Search')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -249,7 +317,7 @@ class TokenCostTracker:
     ):
         """Records GraphRAG Local Search invocation."""
         target_model = model or self.chat_model
-        source = f"GraphRAG Local Search ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Local Search')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -261,7 +329,7 @@ class TokenCostTracker:
     def track_embedding(self, prompt_tokens: int, calls: int = 1, model: Optional[str] = None):
         """Records embedding model invocation."""
         target_model = model or self.embed_model
-        source = f"GraphRAG Embeddings ({target_model})"
+        source = f"{self._stage_prefix('GraphRAG Embeddings')} ({target_model})"
         self.track(
             source=source,
             calls=calls,
@@ -320,7 +388,9 @@ class TokenCostTracker:
                 return 1
             if "indexing" in src_lower:
                 return 2
-            return 3
+            if "evaluation" in src_lower:
+                return 3
+            return 4
 
         sorted_records = sorted(
             self.records.items(),
@@ -433,13 +503,14 @@ class TokenCostTracker:
             self._merged_upstream_sources = set()
 
         is_analysis = current_stage and current_stage.lower() == "analysis"
+        is_evaluation = current_stage and current_stage.lower() == "evaluation"
         is_indexing = current_stage and current_stage.lower() == "indexing"
 
         for source, r in other.records.items():
             s_lower = source.lower()
             if is_analysis:
-                # If explicitly an indexing or data generation record, always keep it
-                if "indexing" in s_lower or "data generation" in s_lower:
+                # If explicitly an indexing, data generation, or evaluation record, always keep it
+                if "indexing" in s_lower or "data generation" in s_lower or "evaluation" in s_lower:
                     pass
                 else:
                     # Filter out any Analysis-specific records from upstream files/runs
@@ -451,13 +522,21 @@ class TokenCostTracker:
                 if source in self._merged_upstream_sources:
                     continue
                 self._merged_upstream_sources.add(source)
+            elif is_evaluation:
+                # In evaluation stage, only data generation and indexing records are upstream
+                if "data generation" in s_lower or "indexing" in s_lower:
+                    if source in self._merged_upstream_sources:
+                        continue
+                    self._merged_upstream_sources.add(source)
+                elif "evaluation" in s_lower or "local search" in s_lower or "graphrag chat" in s_lower or (s_lower.startswith("chat") and "data generation" not in s_lower and "indexing" not in s_lower):
+                    continue
             elif is_indexing:
                 # In indexing stage, only data generation records are upstream
                 if "data generation" in s_lower:
                     if source in self._merged_upstream_sources:
                         continue
                     self._merged_upstream_sources.add(source)
-                elif "indexing" in s_lower or "local search" in s_lower or (s_lower.startswith("chat") and "data generation" not in s_lower):
+                elif "indexing" in s_lower or "evaluation" in s_lower or "local search" in s_lower or (s_lower.startswith("chat") and "data generation" not in s_lower):
                     continue
 
             if source not in self.records:
@@ -472,8 +551,17 @@ class TokenCostTracker:
             other_calls = r.get("calls", 0)
             other_prompt = r.get("prompt_tokens", 0)
             other_output = r.get("output_tokens", 0)
+            other_cost = r.get("cost", 0.0)
+            if other_prompt > 0 or other_output > 0:
+                is_embed_source = "embed" in s_lower
+                inferred_model = self.embed_model if is_embed_source else self.chat_model
+                expected_cost = self.calculate_cost(other_prompt, other_output, model=inferred_model)
+                if other_cost <= 0.0 or (not is_embed_source and "graphrag indexing" in s_lower and other_cost < expected_cost):
+                    other_cost = expected_cost
             # If the exact same record is encountered again (e.g. from copies across candidate dirs), do not double-count
             if rec["calls"] == other_calls and rec["prompt_tokens"] == other_prompt and rec["output_tokens"] == other_output and other_calls > 0:
+                if rec["cost"] <= 0.0 and other_cost > 0.0:
+                    rec["cost"] = other_cost
                 continue
             # If local record had 0 tokens but incoming record has real tokens, overwrite with the real data
             if rec["calls"] > 0 and rec["prompt_tokens"] == 0 and rec["output_tokens"] == 0 and (other_prompt > 0 or other_output > 0):
@@ -481,13 +569,13 @@ class TokenCostTracker:
                 rec["prompt_tokens"] = other_prompt
                 rec["output_tokens"] = other_output
                 rec["total_tokens"] = r.get("total_tokens", other_prompt + other_output)
-                rec["cost"] = r.get("cost", 0.0)
+                rec["cost"] = other_cost
                 continue
             rec["calls"] += other_calls
             rec["prompt_tokens"] += other_prompt
             rec["output_tokens"] += other_output
             rec["total_tokens"] += r.get("total_tokens", 0)
-            rec["cost"] += r.get("cost", 0.0)
+            rec["cost"] += other_cost
 
     def load_and_merge(self, filepath: str, current_stage: Optional[str] = None):
         """Loads token records from a JSON file and merges them into this instance."""
@@ -508,6 +596,59 @@ class TokenCostTracker:
     def set_category(self, category: str):
         """Sets the active category used by callback interceptors for upcoming calls."""
         self._active_category = category
+        self._litellm_category = category
+        self._openai_category = category
+        if self._litellm_callback is None:
+            self.enable_litellm_callbacks(category=category)
+
+    @contextmanager
+    def suppress_callbacks(self):
+        """Temporarily suppresses LiteLLM and OpenAI callback tracking, including async LiteLLM worker queues."""
+        prev = self._suppress_callbacks
+        self._suppress_callbacks = True
+        removed_lists = []
+        cb = self._litellm_callback
+        if not prev and HAS_LITELLM and litellm is not None and cb is not None:
+            for attr in ("success_callback", "_async_success_callback", "callbacks"):
+                cb_list = getattr(litellm, attr, None)
+                if isinstance(cb_list, list) and cb in cb_list:
+                    try:
+                        cb_list.remove(cb)
+                        removed_lists.append(cb_list)
+                    except ValueError:
+                        pass
+        try:
+            yield
+        finally:
+            self._suppress_callbacks = prev
+            if not prev and cb is not None:
+                for cb_list in removed_lists:
+                    if cb not in cb_list:
+                        cb_list.append(cb)
+
+    @contextmanager
+    def evaluation_scope(self):
+        """Marks tracked GraphRAG queries and embeddings as belonging to the Evaluation stage."""
+        prev = self._in_evaluation
+        self._in_evaluation = True
+        try:
+            yield
+        finally:
+            self._in_evaluation = prev
+
+    def _is_called_from_litellm(self) -> bool:
+        """Returns True if the current execution frame was invoked from inside litellm,
+        so OpenAI SDK wrappers do not double-count calls already handled by LiteLLM callbacks."""
+        if self._litellm_callback is None:
+            return False
+        try:
+            for frame_info in inspect.stack()[1:10]:
+                fname = (frame_info.filename or "").replace("\\", "/").lower()
+                if "/litellm/" in fname or fname.endswith("litellm.py"):
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _extract_tokens(self, resp, kwargs=None, is_embed: bool = False) -> Tuple[int, int]:
         """Extracts prompt and output tokens from a response object or dictionary,
@@ -590,40 +731,45 @@ class TokenCostTracker:
         """
         self.disable_litellm_callbacks()
         self._active_category = category
+        self._litellm_category = category
         if not HAS_LITELLM or litellm is None:
             logging.debug("LiteLLM not available; skipping callback registration.")
             return
 
-        # Pipeline and language/config passes can enable this repeatedly.
-        # Remove this tracker's prior handlers, preserving other integrations.
-        if getattr(self, "_litellm_callback", None) is not None:
-            self.disable_litellm_callbacks()
-
-        tracker_self = self
-
         def _litellm_success_handler(kwargs, completion_response, start_time, end_time):
             try:
-                cat = getattr(tracker_self, "_active_category", None) or category
-                model = kwargs.get("model") or getattr(completion_response, "model", tracker_self.chat_model)
+                if self._suppress_callbacks:
+                    return
+                if completion_response is None or isinstance(completion_response, BaseException):
+                    return
+                if isinstance(kwargs, dict) and kwargs.get("exception") is not None:
+                    return
+
+                cat = self._litellm_category or self._active_category or category
+                model = (kwargs.get("model") if isinstance(kwargs, dict) else None) or getattr(completion_response, "model", self.chat_model)
                 record_callback_timing(start_time, end_time, model=model)
-                call_type = kwargs.get("call_type", "")
-                is_embed = "embed" in str(call_type).lower() or "embed" in str(model).lower() or (model == tracker_self.embed_model or "embed" in tracker_self.embed_model)
+                call_type = kwargs.get("call_type", "") if isinstance(kwargs, dict) else ""
+                is_embed = (
+                    "embed" in str(call_type).lower()
+                    or "embed" in str(model).lower()
+                    or model == self.embed_model
+                    or "embed" in self.embed_model
+                )
 
-                p_tokens, o_tokens = tracker_self._extract_tokens(completion_response, kwargs=kwargs, is_embed=is_embed)
+                p_tokens, o_tokens = self._extract_tokens(completion_response, kwargs=kwargs, is_embed=is_embed)
 
-                response_cost = kwargs.get("response_cost")
+                response_cost = kwargs.get("response_cost") if isinstance(kwargs, dict) else None
                 if response_cost is None and completion_response is not None:
                     response_cost = getattr(completion_response, "_response_cost", None)
                     if response_cost is None and isinstance(completion_response, dict):
                         response_cost = completion_response.get("_response_cost") or completion_response.get("response_cost")
 
-                if is_embed:
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                else:
-                    source = f"{cat} ({model})"
-                tracker_self.track(
-                    source=source,
+                if response_cost is not None and (self._is_configured_chat_model(model) or self._is_configured_embed_model(model)):
+                    response_cost = None
+
+                prefix = (cat if "Embeddings" in cat else f"{cat} Embeddings") if is_embed else cat
+                self.track(
+                    source=f"{prefix} ({model})",
                     calls=1,
                     prompt_tokens=p_tokens,
                     output_tokens=o_tokens,
@@ -648,6 +794,8 @@ class TokenCostTracker:
             if isinstance(callbacks, list) and _litellm_failure_handler not in callbacks:
                 callbacks.append(_litellm_failure_handler)
 
+        # Register only on success_callback and _async_success_callback to avoid duplicate invocations
+        # from registering the same function in both litellm.success_callback and litellm.callbacks.
         if not hasattr(litellm, "success_callback") or not isinstance(litellm.success_callback, list):
             litellm.success_callback = []
         if _litellm_success_handler not in litellm.success_callback:
@@ -656,10 +804,6 @@ class TokenCostTracker:
         if hasattr(litellm, "_async_success_callback") and isinstance(litellm._async_success_callback, list):
             if _litellm_success_handler not in litellm._async_success_callback:
                 litellm._async_success_callback.append(_litellm_success_handler)
-
-        if hasattr(litellm, "callbacks") and isinstance(litellm.callbacks, list):
-            if _litellm_success_handler not in litellm.callbacks:
-                litellm.callbacks.append(_litellm_success_handler)
 
     def disable_litellm_callbacks(self):
         """Unregisters the callback from litellm.success_callback."""
@@ -678,17 +822,38 @@ class TokenCostTracker:
                     cb_list.remove(cb)
         self._litellm_callback = None
 
+    def _record_openai_call(self, resp, kwargs: dict, default_category: str, is_embed: bool):
+        """Records token usage from a patched OpenAI SDK completion or embedding call."""
+        try:
+            if self._suppress_callbacks or self._is_called_from_litellm():
+                return
+            cat = self._openai_category or self._active_category or default_category
+            default_model = self.embed_model if is_embed else self.chat_model
+            model = kwargs.get("model") or getattr(resp, "model", default_model)
+            p_tokens, o_tokens = self._extract_tokens(resp, kwargs=kwargs, is_embed=is_embed)
+            prefix = (cat if "Embeddings" in cat else f"{cat} Embeddings") if is_embed else cat
+            self.track(
+                source=f"{prefix} ({model})",
+                calls=1,
+                prompt_tokens=p_tokens,
+                output_tokens=0 if is_embed else o_tokens,
+                model=model,
+            )
+        except Exception as e:
+            logging.debug(f"Error in openai tracking callback: {e}")
+
     def enable_openai_tracking(self, category: str = "GraphRAG Indexing"):
         """Intercepts OpenAI chat completions and embeddings calls when direct OpenAI client
         is used (e.g. by GraphRAG indexing) so token usage is captured."""
         self._active_category = category
+        self._openai_category = category
         try:
             import openai
         except ImportError:
             logging.debug("OpenAI package not available; skipping direct OpenAI tracking.")
             return
 
-        if getattr(self, "_openai_tracking_enabled", False):
+        if self._openai_tracking_enabled:
             return
 
         try:
@@ -698,8 +863,6 @@ class TokenCostTracker:
             logging.debug(f"Unable to access openai resource modules: {e}")
             return
 
-        tracker_self = self
-
         # 1. Patch AsyncCompletions.create
         if hasattr(chat_mod, "AsyncCompletions") and hasattr(chat_mod.AsyncCompletions, "create"):
             self._orig_async_chat = chat_mod.AsyncCompletions.create
@@ -707,22 +870,9 @@ class TokenCostTracker:
             async def wrapped_async_chat(*args, **kwargs):
                 with timing_span("openai.chat", "sdk", model=kwargs.get("model"),
                                  stream_requested=bool(kwargs.get("stream", False))) as event:
-                    resp = await tracker_self._orig_async_chat(*args, **kwargs)
+                    resp = await self._orig_async_chat(*args, **kwargs)
                     event.update(response_usage(resp))
-                try:
-                    cat = getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
-                    source = f"{cat} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=o_tokens,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai tracking callback: {e}")
+                self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
             chat_mod.AsyncCompletions.create = wrapped_async_chat
@@ -734,22 +884,9 @@ class TokenCostTracker:
             def wrapped_sync_chat(*args, **kwargs):
                 with timing_span("openai.chat", "sdk", model=kwargs.get("model"),
                                  stream_requested=bool(kwargs.get("stream", False))) as event:
-                    resp = tracker_self._orig_sync_chat(*args, **kwargs)
+                    resp = self._orig_sync_chat(*args, **kwargs)
                     event.update(response_usage(resp))
-                try:
-                    cat = getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.chat_model)
-                    p_tokens, o_tokens = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=False)
-                    source = f"{cat} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=o_tokens,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai sync tracking callback: {e}")
+                self._record_openai_call(resp, kwargs, category, is_embed=False)
                 return resp
 
             chat_mod.Completions.create = wrapped_sync_chat
@@ -761,23 +898,9 @@ class TokenCostTracker:
             async def wrapped_async_embed(*args, **kwargs):
                 with timing_span("openai.embeddings", "sdk", model=kwargs.get("model"),
                                  stream_requested=bool(kwargs.get("stream", False))) as event:
-                    resp = await tracker_self._orig_async_embed(*args, **kwargs)
+                    resp = await self._orig_async_embed(*args, **kwargs)
                     event.update(response_usage(resp))
-                try:
-                    cat = getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=0,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai embed tracking callback: {e}")
+                self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
             embed_mod.AsyncEmbeddings.create = wrapped_async_embed
@@ -789,23 +912,9 @@ class TokenCostTracker:
             def wrapped_sync_embed(*args, **kwargs):
                 with timing_span("openai.embeddings", "sdk", model=kwargs.get("model"),
                                  stream_requested=bool(kwargs.get("stream", False))) as event:
-                    resp = tracker_self._orig_sync_embed(*args, **kwargs)
+                    resp = self._orig_sync_embed(*args, **kwargs)
                     event.update(response_usage(resp))
-                try:
-                    cat = getattr(tracker_self, "_active_category", None) or category
-                    model = kwargs.get("model") or getattr(resp, "model", tracker_self.embed_model)
-                    p_tokens, _ = tracker_self._extract_tokens(resp, kwargs=kwargs, is_embed=True)
-                    prefix = cat if "Embeddings" in cat else f"{cat} Embeddings"
-                    source = f"{prefix} ({model})"
-                    tracker_self.track(
-                        source=source,
-                        calls=1,
-                        prompt_tokens=p_tokens,
-                        output_tokens=0,
-                        model=model,
-                    )
-                except Exception as e:
-                    logging.debug(f"Error in openai sync embed tracking callback: {e}")
+                self._record_openai_call(resp, kwargs, category, is_embed=True)
                 return resp
 
             embed_mod.Embeddings.create = wrapped_sync_embed
@@ -1012,8 +1121,8 @@ class TokenCostTracker:
             )
             return merged_any
 
-        # 2. Fallback to DefaultAssetLoader for git_slug / multi_repo
-        if (git_slug or multi_repo) and not merged_any:
+        # 2. Fallback to DefaultAssetLoader for git_slug / multi_repo (or stage-based upstream aggregation)
+        if (git_slug or multi_repo) and (not merged_any or (current_stage is not None and not run_id)):
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
                 upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
@@ -1310,18 +1419,24 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
 
     model_name = os.getenv("METADATA_LLM_ID") or os.getenv("GRAPHRAG_LLM_ID") or "gpt-oss-120b"
 
+    skipped_files = {
+        "durations_metadata.txt", "tokens_metadata.txt", "project_metrics_metadata.txt",
+        "durations.txt", "tokens.txt", "project_metrics.txt",
+        "durations.json.txt", "tokens.json.txt", "project_metrics.json.txt",
+    }
     # Find metadata files (*_metadata.txt) or parsed code files
     metadata_files = []
     for sp in search_paths:
         if not sp or not os.path.exists(sp):
             continue
         if os.path.isfile(sp):
-            if sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json"):
+            bname = os.path.basename(sp)
+            if bname not in skipped_files and (sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json")):
                 metadata_files.append(sp)
         elif os.path.isdir(sp):
             for root, _, files in os.walk(sp):
                 for f in files:
-                    if f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json"):
+                    if f not in skipped_files and (f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json")):
                         metadata_files.append(os.path.join(root, f))
 
     if not metadata_files:
@@ -1335,7 +1450,7 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
                 if os.path.isdir(cd):
                     for root, _, files in os.walk(cd):
                         for f in files:
-                            if f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
+                            if f not in skipped_files and f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
                                 txt_files.append(os.path.join(root, f))
         if not txt_files:
             return False

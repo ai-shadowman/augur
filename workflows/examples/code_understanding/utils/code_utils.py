@@ -19,6 +19,13 @@ from loaders.default_asset_loader import DefaultAssetLoader
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 CODE_METADATA_DIR = ".code_metadata"
+TELEMETRY_FILES = frozenset({
+    "durations.json",
+    "tokens.json",
+    "project_metrics.json",
+    "metadata.json",
+    "code-metadata.json",
+})
 
 
 def _load_mappings():
@@ -152,6 +159,8 @@ def get_detected_languages_for_repo(code_dir: str, ignore_policy=None):
         )
 
         for f in files:
+            if f in TELEMETRY_FILES:
+                continue
 
             try:
 

@@ -18,7 +18,8 @@ for pkg_name in [
     "graphrag", "graphrag.api", "graphrag.config", "graphrag.config.load_config",
     "pandas", "yaml", "mlflow", "mlflow.tracking", "mlflow.metrics", "mlflow.metrics.genai",
     "requests", "deepeval",
-    "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm"
+    "pyvis", "pyvis.network", "networkx", "matplotlib", "matplotlib.pyplot", "litellm",
+    "pygments", "pygments.lexers", "pygments.util", "pathspec"
 ]:
     if pkg_name not in sys.modules:
         m = MagicMock()
@@ -31,9 +32,15 @@ if isinstance(mlflow_mock, MagicMock):
     mlflow_mock.active_run.return_value = None
 
 import loaders.default_asset_loader
+import utils.code_utils
 import utils.visualization_utils
 import telemetry.default_custom_telemetry
+import utils.token_tracker as _token_tracker_module
 from utils.token_tracker import TokenCostTracker
+
+if _token_tracker_module.litellm is None and "litellm" in sys.modules:
+    _token_tracker_module.litellm = sys.modules["litellm"]
+    _token_tracker_module.HAS_LITELLM = True
 
 
 class TestTokenCostTracker(unittest.TestCase):
@@ -607,7 +614,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
              patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
              patch.object(DurationTracker, 'download_from_mlflow', side_effect=fake_dur_download), \
              patch.object(TokenCostTracker, 'download_from_mlflow', side_effect=fake_token_download), \
-             patch('sys.modules'):
+             patch.dict('sys.modules'):
 
             analyzer = DependencyAnalyzer(root_dir="/dummy/dir", git_slug="test-slug")
 
@@ -1146,7 +1153,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                  patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value={"https://github.com/org/repo"}), \
                  patch('utils.visualization_utils.log_interactive_dependency_graph'), \
                  patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
-                 patch('sys.modules'):
+                 patch.dict('sys.modules'):
 
                 analyzer = DependencyAnalyzer(root_dir=tmp_dir, git_slug="test-slug")
 
@@ -1236,10 +1243,232 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertGreater(rec["prompt_tokens"], 0)
             self.assertGreater(rec["output_tokens"], 0)
 
+    def test_pricing_consistency_across_provider_prefixes_and_zero_cost_recalculation(self):
+        """Verify configured chat/embed pricing applies consistently across provider prefixes and recalculates 0.0 cost."""
+        tracker = TokenCostTracker(
+            chat_model="openai/gpt-oss-120b",
+            embed_model="e5-mistral-7b-instruct",
+            chat_prompt_price=0.000002,   # $2 / 1M
+            chat_output_price=0.000008,   # $8 / 1M
+            embed_prompt_price=0.0000002, # $0.20 / 1M
+        )
+        expected_chat_cost = 1000 * 0.000002 + 500 * 0.000008
+        for variant in ("openai/gpt-oss-120b", "gpt-oss-120b", "openrouter/openai/gpt-oss-120b"):
+            self.assertAlmostEqual(
+                tracker.calculate_cost(1000, 500, model=variant),
+                expected_chat_cost,
+                places=6,
+            )
+
+        # Passing cost=0.0 when tokens > 0 should recalculate cost
+        tracker.track(
+            "GraphRAG Indexing (openai/gpt-oss-120b)",
+            calls=10,
+            prompt_tokens=1000,
+            output_tokens=500,
+            cost=0.0,
+            model="openai/gpt-oss-120b",
+        )
+        self.assertAlmostEqual(
+            tracker.records["GraphRAG Indexing (openai/gpt-oss-120b)"]["cost"],
+            expected_chat_cost,
+            places=6,
+        )
+
+        # Merging an upstream record that had cost=0.0 with tokens > 0 should also recalculate cost
+        upstream = TokenCostTracker()
+        upstream.records["Data Generation (java) (openai/gpt-oss-120b)"] = {
+            "calls": 5,
+            "prompt_tokens": 1000,
+            "output_tokens": 500,
+            "total_tokens": 1500,
+            "cost": 0.0,
+            "model": "openai/gpt-oss-120b",
+        }
+        tracker.merge(upstream, current_stage="Analysis")
+        self.assertAlmostEqual(
+            tracker.records["Data Generation (java) (openai/gpt-oss-120b)"]["cost"],
+            expected_chat_cost,
+            places=6,
+        )
+
+    def test_separate_litellm_and_openai_categories_and_callback_guards(self):
+        """Verify enable_litellm_callbacks and enable_openai_tracking maintain separate categories and ignore failed/suppressed calls."""
+        tracker = TokenCostTracker()
+        tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
+        tracker.enable_openai_tracking(category="Evaluation (Judge)")
+
+        self.assertEqual(tracker._litellm_category, "Evaluation (Ground Truth)")
+        self.assertEqual(tracker._openai_category, "Evaluation (Judge)")
+
+        # Failed / None / Exception responses should NOT increment call count
+        tracker._litellm_callback({}, None, 0.0, 1.0)
+        tracker._litellm_callback({}, RuntimeError("bad param"), 0.0, 1.0)
+        self.assertEqual(len(tracker.records), 0)
+
+        # Suppressed callbacks should NOT record
+        tracker._suppress_callbacks = True
+        try:
+            tracker._litellm_callback(
+                {"model": "openai/gpt-oss-120b"},
+                {"usage": {"prompt_tokens": 100, "completion_tokens": 50}},
+                0.0,
+                1.0,
+            )
+        finally:
+            tracker._suppress_callbacks = False
+        self.assertEqual(len(tracker.records), 0)
+
+        # Valid LiteLLM callback uses _litellm_category ("Evaluation (Ground Truth)")
+        tracker._litellm_callback(
+            {"model": "openai/gpt-oss-120b"},
+            {"usage": {"prompt_tokens": 100, "completion_tokens": 50}},
+            0.0,
+            1.0,
+        )
+        self.assertIn("Evaluation (Ground Truth) (openai/gpt-oss-120b)", tracker.records)
+
+    def test_evaluation_stage_tracking_and_merge_in_analysis(self):
+        """Verify _in_evaluation prefixes GraphRAG tracking sources with 'Evaluation ' and merge preserves them in Analysis."""
+        eval_tracker = TokenCostTracker(chat_model="openai/gpt-oss-120b", embed_model="e5-mistral-7b-instruct")
+        eval_tracker._in_evaluation = True
+        try:
+            eval_tracker.track_local_search(prompt_tokens=2000, output_tokens=400)
+            eval_tracker.track_embedding(prompt_tokens=150)
+        finally:
+            eval_tracker._in_evaluation = False
+
+        self.assertIn("Evaluation GraphRAG Local Search (openai/gpt-oss-120b)", eval_tracker.records)
+        self.assertIn("Evaluation GraphRAG Embeddings (e5-mistral-7b-instruct)", eval_tracker.records)
+
+        # Merge into Analysis tracker: Evaluation records must be preserved while stale Analysis records are skipped
+        analysis_tracker = TokenCostTracker(chat_model="openai/gpt-oss-120b", embed_model="e5-mistral-7b-instruct")
+        analysis_tracker.track_local_search(prompt_tokens=5000, output_tokens=1000)
+        analysis_tracker.merge(eval_tracker, current_stage="Analysis")
+
+        self.assertIn("Evaluation GraphRAG Local Search (openai/gpt-oss-120b)", analysis_tracker.records)
+        self.assertIn("Evaluation GraphRAG Embeddings (e5-mistral-7b-instruct)", analysis_tracker.records)
+        self.assertIn("GraphRAG Local Search (openai/gpt-oss-120b)", analysis_tracker.records)
+
+        summary = analysis_tracker.format_summary()
+        pos_eval = summary.find("Evaluation GraphRAG Local Search")
+        pos_analysis = summary.find("GraphRAG Local Search")
+        self.assertTrue(0 <= pos_eval < pos_analysis)
+
+    def test_ensure_writable_tiktoken_cache_sets_writable_dir(self):
+        """Verify _ensure_writable_tiktoken_cache redirects non-writable TIKTOKEN_CACHE_DIR to a writable temp folder."""
+        from eval.custom_evaluator import _ensure_writable_tiktoken_cache
+        with patch.dict(os.environ, {"TIKTOKEN_CACHE_DIR": "/nonexistent_root_dir/tiktoken_cache"}):
+            with patch("os.access", return_value=False):
+                _ensure_writable_tiktoken_cache()
+                self.assertIn("tiktoken_cache", os.environ.get("TIKTOKEN_CACHE_DIR", ""))
+                self.assertNotEqual(os.environ.get("TIKTOKEN_CACHE_DIR"), "/nonexistent_root_dir/tiktoken_cache")
+
+    def test_get_instance_and_reset_instance_accept_git_slug_and_kwargs(self):
+        """Verify TokenCostTracker.get_instance and reset_instance accept git_slug, git_repo, and run_id kwargs."""
+        TokenCostTracker.reset_instance()
+        inst = TokenCostTracker.get_instance(git_slug="repo-main", git_repo="https://github.com/org/repo", run_id="run-1")
+        self.assertEqual(inst.git_slug, "repo-main")
+        self.assertEqual(inst.git_repo, "https://github.com/org/repo")
+        self.assertEqual(inst.run_id, "run-1")
+
+        inst2 = TokenCostTracker.get_instance(git_slug="repo-dev")
+        self.assertIs(inst, inst2)
+        self.assertEqual(inst2.git_slug, "repo-dev")
+
+        inst3 = TokenCostTracker.reset_instance(git_slug="fresh-slug")
+        self.assertEqual(inst3.git_slug, "fresh-slug")
+
+    def test_suppress_callbacks_removes_and_restores_litellm_callbacks(self):
+        """Verify suppress_callbacks temporarily removes callback from litellm.success_callback."""
+        import utils.token_tracker as tt_mod
+        tracker = TokenCostTracker()
+        tracker.enable_litellm_callbacks(category="Evaluation (Ground Truth)")
+        cb = tracker._litellm_callback
+        if tt_mod.HAS_LITELLM and tt_mod.litellm is not None and cb is not None:
+            self.assertIn(cb, tt_mod.litellm.success_callback)
+            with tracker.suppress_callbacks():
+                self.assertNotIn(cb, tt_mod.litellm.success_callback)
+            self.assertIn(cb, tt_mod.litellm.success_callback)
+
+    def test_configured_model_overrides_litellm_response_cost(self):
+        """Verify _litellm_success_handler uses configured model pricing instead of LiteLLM internal response_cost."""
+        tracker = TokenCostTracker(
+            chat_model="openai/gpt-oss-120b",
+            chat_prompt_price=0.000002,
+            chat_output_price=0.000008,
+        )
+        tracker.enable_litellm_callbacks(category="GraphRAG Indexing")
+        tracker._litellm_callback(
+            {"model": "openai/gpt-oss-120b", "response_cost": 0.0002},
+            {"usage": {"prompt_tokens": 10000, "completion_tokens": 5000}},
+            0.0,
+            1.0,
+        )
+        expected_cost = 10000 * 0.000002 + 5000 * 0.000008
+        rec = tracker.records["GraphRAG Indexing (openai/gpt-oss-120b)"]
+        self.assertAlmostEqual(rec["cost"], expected_cost, places=5)
+
+    def test_mlflow_evaluator_judge_fallback_tracking(self):
+        """Verify MlFlowCustomEvaluator._track_judge_usage_fallback records Judge tokens when OpenAI wrapper is bypassed."""
+        from eval.mlflow_custom_evaluator import MlFlowCustomEvaluator
+
+        class SimpleDF:
+            empty = False
+            def __init__(self, rows, cols=None):
+                self._rows = rows
+                self.columns = cols or (list(rows[0].keys()) if rows else [])
+            def __len__(self):
+                return len(self._rows)
+            def iterrows(self):
+                return enumerate(self._rows)
+            def __getitem__(self, col):
+                return [r[col] for r in self._rows if col in r]
+
+        TokenCostTracker.reset_instance()
+        tracker = TokenCostTracker.get_instance(chat_model="gpt-oss-120b")
+        evaluator = MlFlowCustomEvaluator()
+
+        eval_data = SimpleDF([
+            {
+                "inputs": "What are the main dependencies?",
+                "targets": "Uses Spring and Hibernate.",
+                "predictions": "Spring and Hibernate.",
+                "context": "Context A",
+            },
+            {
+                "inputs": "How is config loaded?",
+                "targets": "Uses Properties loader.",
+                "predictions": "Properties file.",
+                "context": "Context B",
+            },
+        ])
+        eval_results = SimpleDF([
+            {
+                "faithfulness/v1/justification": "Faithful to context A",
+                "answer_relevance/v1/justification": "Relevant A",
+                "answer_similarity/v1/justification": "Similar A",
+                "answer_correctness/v1/justification": "Correct A",
+            },
+            {
+                "faithfulness/v1/justification": "Faithful to context B",
+                "answer_relevance/v1/justification": "Relevant B",
+                "answer_similarity/v1/justification": "Similar B",
+                "answer_correctness/v1/justification": "Correct B",
+            },
+        ])
+
+        evaluator._track_judge_usage_fallback(eval_data, eval_results=eval_results, num_metrics=4, prev_judge_calls=0)
+        judge_keys = [k for k in tracker.records if "Evaluation (Judge)" in k]
+        self.assertEqual(len(judge_keys), 1)
+        rec = tracker.records[judge_keys[0]]
+        self.assertEqual(rec["calls"], 8)
+        self.assertGreater(rec["prompt_tokens"], 0)
+        self.assertGreater(rec["output_tokens"], 0)
+
+        evaluator._track_judge_usage_fallback(eval_data, eval_results=eval_results, num_metrics=4, prev_judge_calls=0)
+        self.assertEqual(tracker.records[judge_keys[0]]["calls"], 8)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-
-

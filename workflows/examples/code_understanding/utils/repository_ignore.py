@@ -120,7 +120,13 @@ class RepositoryIgnorePolicy:
     def _relative_path(
         self, path: str | os.PathLike[str], *, is_directory: bool
     ) -> str:
-        candidate = Path(str(path).replace("\\", "/"))
+        raw_str = str(path).replace("\\", "/")
+        trailing_spaces = (
+            len(raw_str) - len(raw_str.rstrip(" "))
+            if not raw_str.endswith("/")
+            else 0
+        )
+        candidate = Path(raw_str)
         if not candidate.is_absolute():
             candidate = self._repository_root / candidate
         candidate = Path(os.path.abspath(candidate))
@@ -131,6 +137,12 @@ class RepositoryIgnorePolicy:
                 f"Path is outside repository root: {candidate}"
             ) from error
         normalized = relative.as_posix()
+        if (
+            trailing_spaces
+            and normalized
+            and not normalized.endswith(" " * trailing_spaces)
+        ):
+            normalized = normalized.rstrip(" ") + (" " * trailing_spaces)
         return f"{normalized}/" if is_directory and normalized else normalized
 
     def _validate_resolved_containment(self, path: str | os.PathLike[str]) -> None:
