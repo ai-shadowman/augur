@@ -562,6 +562,8 @@ class DependencyAnalyzer:
             if not env.get("EMBED_LLM_TOKEN"):
                 logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
                 env["EMBED_LLM_TOKEN"] = "EMPTY"
+            if not env.get("GRAPHRAG_CONCURRENT_REQUESTS"):
+                env["GRAPHRAG_CONCURRENT_REQUESTS"] = str(env.get("SDG_LLM_MAX_CONCURRENCY") or "25")
 
             with open(template_path) as f:
                 content = string.Template(f.read())
@@ -832,10 +834,20 @@ class DependencyAnalyzer:
             if dur_tracker is None:
                 from utils.duration_tracker import DurationTracker
                 dur_tracker = DurationTracker.get_instance()
-            from utils.duration_tracker import extract_graphrag_indexing_durations, extract_data_generation_durations
+            from utils.duration_tracker import (
+                extract_benchmark_duration,
+                extract_graphrag_indexing_durations,
+                extract_data_generation_durations,
+            )
+            extract_benchmark_duration(candidate_dirs, dur_tracker)
             if not any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records):
                 extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
-            if not any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records):
+            if not any(
+                r.get("stage", "").lower() == "data generation"
+                and "guidellm" not in str(r.get("step", "")).lower()
+                and "concurrency benchmark" not in str(r.get("step", "")).lower()
+                for r in dur_tracker.records
+            ):
                 extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (durations): {e}")

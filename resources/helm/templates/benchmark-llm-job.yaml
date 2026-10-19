@@ -1,0 +1,88 @@
+{{- if .Values.benchmarkLlm.run }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: benchmark-llm
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: pipeline-upload-job
+      {{- if .Values.tls.enableVerification }}
+      initContainers:
+        - name: concatenate-all-ca-trusts
+          image: "{{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - cat /etc/pki/ca-trust/extracted/trusted-ca/* /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt > /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/ca-trust/extracted/trusted-ca
+              readOnly: true
+            - name: trusted-ca-concatenated
+              mountPath: /etc/pki/ca-trust/extracted/pem
+      {{- end }}
+      containers:
+        - name: benchmark-llm
+          image: {{ .Values.pipelineTools.image.registry }}/{{ .Values.pipelineTools.image.name }}:{{ .Values.pipelineTools.image.tag }}
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - workflows/examples/code_understanding/scripts/benchmark_llm.sh {{ .Values.benchmarkLlm.args }}
+          workingDir: /opt/app-root/src
+          env:
+            - name: KFP_NAMESPACE
+              value: "{{ .Values.namespace }}"
+            {{- if .Values.benchmarkLlm.concurrencyLevels }}
+            - name: GUIDELLM_CONCURRENCY_LEVELS
+              value: "{{ .Values.benchmarkLlm.concurrencyLevels }}"
+            {{- end }}
+            {{- if .Values.benchmarkLlm.maxSeconds }}
+            - name: GUIDELLM_MAX_SECONDS
+              value: "{{ .Values.benchmarkLlm.maxSeconds }}"
+            {{- end }}
+            {{- if .Values.benchmarkLlm.maxRequests }}
+            - name: GUIDELLM_MAX_REQUESTS
+              value: "{{ .Values.benchmarkLlm.maxRequests }}"
+            {{- end }}
+            {{- if not .Values.tls.enableVerification }}
+            - name: ENABLE_TLS_VERIFICATION
+              value: "false"
+            {{- else }}
+            - name: ENABLE_TLS_VERIFICATION
+              value: "true"
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: SSL_CERT_FILE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            - name: AWS_CA_BUNDLE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            {{- end }}
+          {{- if .Values.tls.enableVerification }}
+          volumeMounts:
+            - name: trusted-ca-concatenated
+              mountPath: /etc/pki/ca-trust/extracted/pem
+              readOnly: true
+          {{- end }}
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+                optional: true
+      {{- if .Values.tls.enableVerification }}
+      volumes:
+        - name: trusted-ca
+          configMap:
+            name: odh-trusted-ca-bundle
+            items:
+              - key: ca-bundle.crt
+                path: ca-bundle.pem
+              - key: odh-ca-bundle.crt
+                path: odh-ca-bundle.crt
+        - name: trusted-ca-concatenated
+          emptyDir: {}
+      {{- end }}
+{{- end }}

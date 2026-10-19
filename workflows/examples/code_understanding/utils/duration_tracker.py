@@ -312,7 +312,7 @@ class DurationTracker:
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
         """Returns a mapping of stage names to total elapsed seconds in canonical stage order,
         avoiding double-counting parent/aggregate steps when sub-steps exist."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_recs = self.get_all_records(include_active=include_active)
         stages: Dict[str, List[Dict[str, Any]]] = {}
         for rec in all_recs:
@@ -351,18 +351,25 @@ class DurationTracker:
         rem_minutes = minutes % 60
         return f"{hours}h {rem_minutes:02d}m {rem_seconds:.0f}s"
 
+    @staticmethod
+    def _record_sort_key(rec: Dict[str, Any], stage_order: Dict[str, int]):
+        stage_rank = stage_order.get(str(rec.get("stage", "")).lower(), 99)
+        step_low = str(rec.get("step", "")).lower()
+        is_prestep = "guidellm" in step_low or "concurrency benchmark" in step_low
+        return (stage_rank, 0 if is_prestep else 1)
+
     def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
 
-        # Sort records into canonical stage order (Data Generation -> Indexing -> Analysis)
-        # while preserving step execution order within each stage.
+        # Sort records into canonical stage order (Pre-Pipeline -> Data Generation -> Indexing -> Analysis)
+        # while placing the GuideLLM pre-pipeline step first and preserving step execution order.
         all_records = sorted(
             all_records,
-            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+            key=lambda r: self._record_sort_key(r, stage_order),
         )
 
         stage_w = 18
@@ -422,14 +429,14 @@ class DurationTracker:
 
     def format_markdown_table(self, include_active: bool = False) -> str:
         """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         records = self.get_all_records(include_active=include_active)
         if not records:
             return ""
 
         records = sorted(
             records,
-            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+            key=lambda r: self._record_sort_key(r, stage_order),
         )
 
         self.capture_mlflow_context()
@@ -727,13 +734,15 @@ class DurationTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
-                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation", "Indexing", "Evaluation"]
             elif current_stage and current_stage.lower() == "evaluation":
-                upstream_targets = ["Data Generation", "Indexing"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
-                upstream_targets = ["Data Generation"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation"]
+            elif current_stage and current_stage.lower() == "data generation":
+                upstream_targets = ["Pre-Pipeline"]
             else:
-                upstream_targets = [None]
+                upstream_targets = ["Pre-Pipeline", None]
 
             for target_stage in upstream_targets:
                 try:
@@ -1063,19 +1072,66 @@ def extract_graphrag_indexing_durations(graphrag_dir: str, dur_tracker: Duration
     return extracted_any
 
 
+def extract_benchmark_duration(search_paths: Union[str, List[str]], dur_tracker: DurationTracker) -> bool:
+    """Extracts GuideLLM Concurrency Benchmark duration from benchmark_results.json if not already recorded."""
+    if not search_paths or not dur_tracker:
+        return False
+
+    has_bench = any(
+        "guidellm" in str(r.get("step", "")).lower()
+        or "concurrency benchmark" in str(r.get("step", "")).lower()
+        for r in dur_tracker.records
+    )
+    if has_bench:
+        return False
+
+    if isinstance(search_paths, str):
+        search_paths = [search_paths]
+
+    for bench_file in find_all_telemetry_files(search_paths, "benchmark_results.json"):
+        try:
+            with open(bench_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                dur_val = float(data.get("duration_seconds", 0.0) or 0.0)
+                dur_tracker.record_step(
+                    stage="Data Generation",
+                    step="GuideLLM Concurrency Benchmark",
+                    duration=dur_val,
+                    status="success",
+                    metadata={
+                        "best_concurrency": data.get("best_concurrency"),
+                        "runner": data.get("runner"),
+                        "skipped": bool(data.get("skipped", False)),
+                    },
+                )
+                return True
+        except Exception as e:
+            logging.debug(f"Failed to extract benchmark duration from {bench_file}: {e}")
+
+    return False
+
+
 def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_tracker: DurationTracker) -> bool:
     """Extracts/reconstructs Data Generation execution durations from generated files if not already recorded.
     Returns True if any Data Generation durations were recorded, False otherwise."""
     if not search_paths or not dur_tracker:
         return False
 
-    # If dur_tracker already contains Data Generation records, do nothing
-    has_data_gen = any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records)
-    if has_data_gen:
-        return False
-
     if isinstance(search_paths, str):
         search_paths = [search_paths]
+
+    bench_extracted = extract_benchmark_duration(search_paths, dur_tracker)
+
+    # Check if dur_tracker already contains non-benchmark Data Generation records
+    has_data_gen = any(
+        r.get("stage", "").lower() == "data generation"
+        and "guidellm" not in str(r.get("step", "")).lower()
+        and "concurrency benchmark" not in str(r.get("step", "")).lower()
+        for r in dur_tracker.records
+    )
+    if has_data_gen:
+        return bench_extracted
 
     # Look for files produced by Data Generation
     found_files = []
@@ -1092,7 +1148,7 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
                         found_files.append(os.path.join(root, f))
 
     if not found_files:
-        return False
+        return bench_extracted
 
     meta_files = [f for f in found_files if f.endswith("_metadata.txt") or f.endswith("code-metadata.json") or f.endswith("metadata.json")]
     n_files = len(meta_files) if meta_files else max(1, len(found_files) // 2)
@@ -1116,14 +1172,19 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
     save_dur = round(max(0.1, total_elapsed * 0.10), 2)
     log_dur = round(max(0.1, total_elapsed * 0.05), 2)
 
-    steps = [
+    steps = []
+    if not bench_extracted:
+        bench_dur = round(max(0.1, total_elapsed * 0.05), 2)
+        steps.append(("GuideLLM Concurrency Benchmark", bench_dur))
+
+    steps.extend([
         ("Load External Data", load_dur),
         ("Detect Languages", detect_dur),
         ("Parse Raw Code", parse_dur),
         ("LLM Metadata Extraction", llm_dur),
         ("Save Metadata Files", save_dur),
         ("Log Metadata Results", log_dur),
-    ]
+    ])
 
     for step_name, dur in steps:
         dur_tracker.record_step(
@@ -1134,4 +1195,5 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
         )
 
     return True
+
 

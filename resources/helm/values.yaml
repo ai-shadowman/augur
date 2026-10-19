@@ -70,6 +70,13 @@ runPipelines:
   targetPath: "target"
   graphragSourcePath: "graph_rag_app/source"
 
+benchmarkLlm:
+  run: false
+  args: ""
+  concurrencyLevels: ""
+  maxSeconds: ""
+  maxRequests: ""
+
 otel:
   createBucket: false
   tempo:
