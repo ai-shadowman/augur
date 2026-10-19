@@ -61,6 +61,12 @@ EXCLUDED_DIRS: Set[str] = {
     ".idea", ".vscode", "dist", "build", "bin", "obj", ".pytest_cache", ".ruff_cache"
 }
 
+EXCLUDED_FILES: Set[str] = {
+    "metadata.json", "code-metadata.json", "durations.json",
+    "tokens.json", "project_metrics.json",
+    "durations.txt", "tokens.txt", "project_metrics.txt",
+}
+
 SINGLE_LINE_COMMENTS: Dict[str, List[str]] = {
     "python": ["#"], "ruby": ["#"], "shell": ["#"], "bash": ["#"],
     "yaml": ["#"], "toml": ["#"], "terraform": ["#"],
@@ -490,10 +496,7 @@ class CodeMetricsTracker:
             for fname in files:
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
-                if fname.endswith("_metadata.txt") or fname in (
-                    "metadata.json", "code-metadata.json", "durations.json",
-                    "tokens.json", "project_metrics.json"
-                ):
+                if fname.endswith("_metadata.txt") or fname in EXCLUDED_FILES:
                     continue
 
                 fpath = os.path.join(root, fname)

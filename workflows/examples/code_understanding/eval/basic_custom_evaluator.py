@@ -78,6 +78,9 @@ Respond ONLY with valid JSON in this exact format:
 
                 analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
 
+                if token_tracker:
+                    token_tracker.disable_litellm_callbacks()
+
                 actual_answer = asyncio.run(analyzer.query_with_llm(input))
 
                 repo_context = build_repo_context(graphrag_source_dir)
@@ -219,6 +222,9 @@ Respond ONLY with valid JSON in this exact format:
                     return "Could not process query"
 
             df["targets"] = df["inputs"].apply(_ground_truth)
+
+            if token_tracker:
+                token_tracker.disable_litellm_callbacks()
 
             def _query(row):
                 global_val = row.get("global_query", False)

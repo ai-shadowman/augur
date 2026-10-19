@@ -124,6 +124,8 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
             )
 
             for filename in files:
+                if filename in code_utils.TELEMETRY_FILES:
+                    continue
                 if os.path.splitext(filename)[1] not in include_extensions:
                     continue
 
@@ -155,15 +157,16 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
         raise e
 
 
-def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_df=None):
+def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_df=None, config: bool = False):
     """Ensures token usage is recorded for data generation even if flow parsing threw an error
     or callbacks intercepted 0 tokens."""
     if not token_tracker or df is None or len(df) == 0:
         return
     try:
+        lang_label = f"{language} config" if config else language
         records_for_lang = [
             (k, r) for k, r in token_tracker.records.items()
-            if f"Data Generation ({language})" in k
+            if f"Data Generation ({lang_label})" in k
         ]
         has_real_tokens = any(
             r.get("prompt_tokens", 0) > 0 or r.get("output_tokens", 0) > 0
@@ -188,7 +191,7 @@ def _ensure_data_generation_tokens(token_tracker, df, language: str, converted_d
                 total_o_tokens = len(df) * 150
 
             token_tracker.track(
-                source=f"Data Generation ({language}) ({model_name})",
+                source=f"Data Generation ({lang_label}) ({model_name})",
                 calls=len(df),
                 prompt_tokens=total_p_tokens,
                 output_tokens=total_o_tokens,
@@ -266,9 +269,10 @@ def get_parsed_code_metadata(df, language, config=False):
             pass
 
         token_tracker = None
+        lang_label = f"{language} config" if config else language
         try:
             from utils.token_tracker import TokenCostTracker
-            category = f"Data Generation ({language})"
+            category = f"Data Generation ({lang_label})"
             token_tracker = TokenCostTracker.get_instance()
             token_tracker.set_category(category)
             token_tracker.enable_litellm_callbacks(category=category)
@@ -309,7 +313,7 @@ def get_parsed_code_metadata(df, language, config=False):
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
             if token_tracker and len(df) > 0 and converted_df is not None:
-                _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df)
+                _ensure_data_generation_tokens(token_tracker, df, language, converted_df=converted_df, config=config)
 
         if converted_df is not None:
             converted_df.to_csv(

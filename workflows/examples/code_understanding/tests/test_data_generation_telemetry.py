@@ -491,6 +491,55 @@ class TestFallbackExtraction(unittest.TestCase):
                 )
             self.assertIn("No .txt files found", str(ctx.exception))
 
+    def test_generate_raw_dataset_skips_telemetry_json_files(self):
+        """Verify generate_raw_dataset ignores durations.json, tokens.json, and project_metrics.json."""
+        from pipelines.base.data_generation import generate_raw_dataset
+
+        repo_dir = os.path.join(self.temp_dir, "repo_with_telemetry")
+        os.makedirs(repo_dir, exist_ok=True)
+        for tfile in ("durations.json", "tokens.json", "project_metrics.json"):
+            with open(os.path.join(repo_dir, tfile), "w", encoding="utf-8") as f:
+                f.write('{"telemetry": true}')
+        with open(os.path.join(repo_dir, "pom.xml"), "w", encoding="utf-8") as f:
+            f.write("<project></project>")
+
+        captured_records = []
+        with patch("utils.code_utils.get_config_file_extensions_for_language", return_value=[".json", ".xml"]), \
+             patch("utils.code_utils.is_large_code_file", return_value=False), \
+             patch("pandas.DataFrame", side_effect=lambda recs: captured_records.extend(recs) or recs):
+            df = generate_raw_dataset(
+                source_path=repo_dir,
+                target_path=repo_dir,
+                git_repo="https://github.com/test/repo",
+                git_branch="main",
+                language="java",
+                config=True,
+            )
+            self.assertIsNotNone(df)
+            paths = [r.get("file_path") for r in captured_records if isinstance(r, dict)]
+            self.assertIn("pom.xml", paths)
+            for tfile in ("durations.json", "tokens.json", "project_metrics.json"):
+                self.assertNotIn(tfile, paths)
+
+    def test_data_generation_config_tracked_separately_from_source(self):
+        """Verify _ensure_data_generation_tokens separates Data Generation (<lang> config) from Data Generation (<lang>)."""
+        from pipelines.base.data_generation import _ensure_data_generation_tokens
+
+        tracker = TokenCostTracker(chat_model="openai/gpt-oss-120b")
+        tracker.track("Data Generation (java) (openai/gpt-oss-120b)", calls=7, prompt_tokens=4374, output_tokens=35862)
+
+        class DummyDF:
+            def __len__(self):
+                return 1
+            def iterrows(self):
+                return [(0, {"code": "<project><modelVersion>4.0.0</modelVersion></project>"})]
+
+        _ensure_data_generation_tokens(tracker, DummyDF(), language="java", config=True)
+        config_keys = [k for k in tracker.records if "Data Generation (java config)" in k]
+        self.assertEqual(len(config_keys), 1)
+        self.assertEqual(tracker.records[config_keys[0]]["calls"], 1)
+        self.assertEqual(tracker.records["Data Generation (java) (openai/gpt-oss-120b)"]["calls"], 7)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,7 +79,9 @@ def build_repo_context(graphrag_source_dir: str = "") -> str:
             str(codebase_dir),
             max_file_size=50_000, # TODO: make this an environment variable setting
             exclude_patterns={"*.lock", "*.min.js", "*.min.css", "dist/*", "vendor/*",
-                              "node_modules/*", "*.egg-info/*", "*.pyc", "__pycache__/*", "*_metadata.txt"},
+                              "node_modules/*", "*.egg-info/*", "*.pyc", "__pycache__/*", "*_metadata.txt",
+                              "durations.json", "tokens.json", "project_metrics.json",
+                              "durations.txt", "tokens.txt", "project_metrics.txt"},
         )
 
         _MAX_CONTEXT_CHARS = 480_000 # TODO: make this an environment variable setting

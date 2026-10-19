@@ -90,7 +90,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
         try:
             token_tracker = _get_token_tracker()
             if token_tracker:
-                token_tracker._litellm_category = "Evaluation (Ground Truth)"
+                token_tracker.set_category("Evaluation (Ground Truth)")
             response = completion(
                 model=f"{os.getenv('GROUND_TRUTH_LLM_PROVIDER')}/{os.getenv('GROUND_TRUTH_LLM_ID')}",
                 api_base=os.getenv("GROUND_TRUTH_LLM_API_BASE"),
@@ -114,6 +114,66 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             logging.error(f"Ground truth LLM failed: {e}")
             return "Could not process query"
 
+    @staticmethod
+    def _get_judge_call_count(token_tracker) -> int:
+        if not token_tracker:
+            return 0
+        return sum(
+            r.get("calls", 0)
+            for k, r in token_tracker.records.items()
+            if "evaluation (judge)" in k.lower()
+        )
+
+    def _track_judge_usage_fallback(
+        self,
+        eval_data: pd.DataFrame,
+        eval_results: pd.DataFrame = None,
+        num_metrics: int = 4,
+        prev_judge_calls: int = 0,
+    ):
+        """Records LLM-as-judge token usage when MLflow's scoring workers bypass the OpenAI wrapper."""
+        token_tracker = _get_token_tracker()
+        if not token_tracker or eval_data is None or eval_data.empty:
+            return
+        if self._get_judge_call_count(token_tracker) > prev_judge_calls:
+            return
+
+        total_calls = len(eval_data) * num_metrics
+        if total_calls <= 0:
+            return
+
+        total_prompt_tokens = 0
+        for _, row in eval_data.iterrows():
+            inp_tok = token_tracker.count_tokens(str(row.get("inputs", "") or ""))
+            tgt_tok = token_tracker.count_tokens(str(row.get("targets", "") or ""))
+            pred_tok = token_tracker.count_tokens(str(row.get("predictions", "") or ""))
+            ctx_tok = token_tracker.count_tokens(str(row.get("context", "") or ""))
+            row_prompt = (
+                2 * (250 + inp_tok + pred_tok + ctx_tok)
+                + (num_metrics - 2) * (250 + inp_tok + tgt_tok + pred_tok)
+            )
+            total_prompt_tokens += row_prompt
+
+        total_output_tokens = 0
+        if eval_results is not None and not eval_results.empty:
+            just_cols = [c for c in eval_results.columns if "justification" in str(c).lower()]
+            for col in just_cols:
+                values = eval_results[col].dropna() if hasattr(eval_results[col], "dropna") else eval_results[col]
+                for val in values:
+                    total_output_tokens += token_tracker.count_tokens(str(val)) + 15
+
+        if total_output_tokens <= 0:
+            total_output_tokens = total_calls * 60
+
+        judge_id = os.getenv("JUDGE_LLM_ID") or token_tracker.chat_model
+        token_tracker.track(
+            source=f"Evaluation (Judge) ({judge_id})",
+            calls=total_calls,
+            prompt_tokens=total_prompt_tokens,
+            output_tokens=total_output_tokens,
+            model=judge_id,
+        )
+
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):
         """Evaluates a GraphRAG response using MLflow's genai evaluation API.
@@ -135,6 +195,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             try:
 
                 analyzer = DependencyAnalyzer(root_dir=graphrag_source_dir, git_slug=git_slug or "", multi_repo=multi_repo)
+
+                if token_tracker:
+                    token_tracker.disable_litellm_callbacks()
 
                 actual_answer, context_data = asyncio.run(analyzer.query_with_llm(input, include_context=True))
 
@@ -168,6 +231,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
                 if token_tracker:
                     token_tracker._openai_category = "Evaluation (Judge)"
+                prev_judge_calls = self._get_judge_call_count(token_tracker)
 
                 with mlflow.start_run(
                     experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
@@ -183,6 +247,12 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                             answer_similarity(model=judge_model),
                         ],
                     )
+
+                self._track_judge_usage_fallback(
+                    eval_data,
+                    num_metrics=3,
+                    prev_judge_calls=prev_judge_calls,
+                )
 
                 metrics = results.metrics
 
@@ -244,6 +314,9 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 lambda t: self._ground_truth_answer(t, graphrag_source_dir)
             )
 
+            if token_tracker:
+                token_tracker.disable_litellm_callbacks()
+
             def _query(row):
 
                 input_text = row["inputs"]
@@ -278,6 +351,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             judge_model = self._judge_model_uri()
             if token_tracker:
                 token_tracker._openai_category = "Evaluation (Judge)"
+            prev_judge_calls = self._get_judge_call_count(token_tracker)
 
             client = MlflowClient()
 
@@ -311,6 +385,13 @@ class MlFlowCustomEvaluator(CustomEvaluator):
                 )
 
                 eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
+
+            self._track_judge_usage_fallback(
+                eval_data,
+                eval_results=eval_results,
+                num_metrics=4,
+                prev_judge_calls=prev_judge_calls,
+            )
 
             logging.info(f"MLflow batch evaluation complete: {results.metrics}")
 

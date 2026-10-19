@@ -42,16 +42,38 @@ class TokenCostTracker:
     _global_instance: Optional["TokenCostTracker"] = None
 
     @classmethod
-    def get_instance(cls) -> "TokenCostTracker":
+    def get_instance(
+        cls,
+        git_slug: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        run_id: Optional[str] = None,
+        **kwargs,
+    ) -> "TokenCostTracker":
         """Returns the shared global TokenCostTracker instance."""
         if cls._global_instance is None:
-            cls._global_instance = cls()
+            cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, run_id=run_id, **kwargs)
+        else:
+            if git_slug:
+                cls._global_instance.git_slug = git_slug
+            if git_repo:
+                cls._global_instance.git_repo = git_repo
+            if run_id:
+                cls._global_instance.run_id = run_id
         return cls._global_instance
 
     @classmethod
-    def reset_instance(cls) -> "TokenCostTracker":
+    def reset_instance(
+        cls,
+        git_slug: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        run_id: Optional[str] = None,
+        **kwargs,
+    ) -> "TokenCostTracker":
         """Resets and returns the singleton instance."""
-        cls._global_instance = cls()
+        if cls._global_instance is not None:
+            cls._global_instance.disable_litellm_callbacks()
+            cls._global_instance.disable_openai_tracking()
+        cls._global_instance = cls(git_slug=git_slug, git_repo=git_repo, run_id=run_id, **kwargs)
         return cls._global_instance
 
     def __init__(
@@ -530,9 +552,12 @@ class TokenCostTracker:
             other_prompt = r.get("prompt_tokens", 0)
             other_output = r.get("output_tokens", 0)
             other_cost = r.get("cost", 0.0)
-            if other_cost <= 0.0 and (other_prompt > 0 or other_output > 0):
-                inferred_model = self.embed_model if "embed" in s_lower else self.chat_model
-                other_cost = self.calculate_cost(other_prompt, other_output, model=inferred_model)
+            if other_prompt > 0 or other_output > 0:
+                is_embed_source = "embed" in s_lower
+                inferred_model = self.embed_model if is_embed_source else self.chat_model
+                expected_cost = self.calculate_cost(other_prompt, other_output, model=inferred_model)
+                if other_cost <= 0.0 or (not is_embed_source and "graphrag indexing" in s_lower and other_cost < expected_cost):
+                    other_cost = expected_cost
             # If the exact same record is encountered again (e.g. from copies across candidate dirs), do not double-count
             if rec["calls"] == other_calls and rec["prompt_tokens"] == other_prompt and rec["output_tokens"] == other_output and other_calls > 0:
                 if rec["cost"] <= 0.0 and other_cost > 0.0:
@@ -573,16 +598,33 @@ class TokenCostTracker:
         self._active_category = category
         self._litellm_category = category
         self._openai_category = category
+        if self._litellm_callback is None:
+            self.enable_litellm_callbacks(category=category)
 
     @contextmanager
     def suppress_callbacks(self):
-        """Temporarily suppresses LiteLLM and OpenAI callback tracking."""
+        """Temporarily suppresses LiteLLM and OpenAI callback tracking, including async LiteLLM worker queues."""
         prev = self._suppress_callbacks
         self._suppress_callbacks = True
+        removed_lists = []
+        cb = self._litellm_callback
+        if not prev and HAS_LITELLM and litellm is not None and cb is not None:
+            for attr in ("success_callback", "_async_success_callback", "callbacks"):
+                cb_list = getattr(litellm, attr, None)
+                if isinstance(cb_list, list) and cb in cb_list:
+                    try:
+                        cb_list.remove(cb)
+                        removed_lists.append(cb_list)
+                    except ValueError:
+                        pass
         try:
             yield
         finally:
             self._suppress_callbacks = prev
+            if not prev and cb is not None:
+                for cb_list in removed_lists:
+                    if cb not in cb_list:
+                        cb_list.append(cb)
 
     @contextmanager
     def evaluation_scope(self):
@@ -721,6 +763,9 @@ class TokenCostTracker:
                     response_cost = getattr(completion_response, "_response_cost", None)
                     if response_cost is None and isinstance(completion_response, dict):
                         response_cost = completion_response.get("_response_cost") or completion_response.get("response_cost")
+
+                if response_cost is not None and (self._is_configured_chat_model(model) or self._is_configured_embed_model(model)):
+                    response_cost = None
 
                 prefix = (cat if "Embeddings" in cat else f"{cat} Embeddings") if is_embed else cat
                 self.track(
@@ -1374,18 +1419,24 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
 
     model_name = os.getenv("METADATA_LLM_ID") or os.getenv("GRAPHRAG_LLM_ID") or "gpt-oss-120b"
 
+    skipped_files = {
+        "durations_metadata.txt", "tokens_metadata.txt", "project_metrics_metadata.txt",
+        "durations.txt", "tokens.txt", "project_metrics.txt",
+        "durations.json.txt", "tokens.json.txt", "project_metrics.json.txt",
+    }
     # Find metadata files (*_metadata.txt) or parsed code files
     metadata_files = []
     for sp in search_paths:
         if not sp or not os.path.exists(sp):
             continue
         if os.path.isfile(sp):
-            if sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json"):
+            bname = os.path.basename(sp)
+            if bname not in skipped_files and (sp.endswith("_metadata.txt") or sp.endswith("code-metadata.json") or sp.endswith("metadata.json")):
                 metadata_files.append(sp)
         elif os.path.isdir(sp):
             for root, _, files in os.walk(sp):
                 for f in files:
-                    if f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json"):
+                    if f not in skipped_files and (f.endswith("_metadata.txt") or f in ("code-metadata.json", "metadata.json")):
                         metadata_files.append(os.path.join(root, f))
 
     if not metadata_files:
@@ -1399,7 +1450,7 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
                 if os.path.isdir(cd):
                     for root, _, files in os.walk(cd):
                         for f in files:
-                            if f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
+                            if f not in skipped_files and f.endswith(".txt") and not f.endswith("_metadata.txt") and not f.startswith("."):
                                 txt_files.append(os.path.join(root, f))
         if not txt_files:
             return False
