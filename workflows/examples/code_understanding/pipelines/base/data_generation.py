@@ -565,12 +565,12 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
 
         result["status"] = "complete"
 
-        # Immediately persist telemetry to target_path before asset logging
-        try:
-            if dur_tracker:
+        # Persist stage telemetry to target_path before asset logging
+        if dur_tracker:
+            try:
                 dur_tracker.save_to_file(os.path.join(target_path, "durations.json"))
-        except Exception:
-            pass
+            except Exception:
+                pass
         try:
             from utils.token_tracker import TokenCostTracker, extract_data_generation_tokens
             t_tr = TokenCostTracker.get_instance()
@@ -580,8 +580,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             pass
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
-            c_tr = CodeMetricsTracker.get_instance()
-            c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
+            CodeMetricsTracker.get_instance().save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
         try:

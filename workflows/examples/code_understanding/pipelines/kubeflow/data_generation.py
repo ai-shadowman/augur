@@ -38,21 +38,15 @@ def guidellm_calibration_op(
     setup_logging()
     import logging, os
 
-    def _clean(name: str, default: str = "") -> str:
-        val = os.getenv(name)
-        if val is None:
-            return default
-        cleaned = val.split("#", 1)[0].strip()
-        return cleaned if cleaned else default
+    from utils.benchmark_tracker import BenchmarkTracker, _clean_env
 
-    git_repo = git_repo or _clean("GIT_REPO", "")
-    git_branch = git_branch or _clean("GIT_BRANCH", "main")
+    git_repo = git_repo or _clean_env("GIT_REPO", "")
+    git_branch = git_branch or _clean_env("GIT_BRANCH", "main")
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
 
-    should_run = enabled or _clean("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes")
+    should_run = enabled or _clean_env("GUIDELLM_CALIBRATE_PIPELINE", "false").lower() in ("true", "1", "yes")
 
     try:
-        from utils.benchmark_tracker import BenchmarkTracker
         bt = BenchmarkTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
         bt.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
 
@@ -67,9 +61,9 @@ def guidellm_calibration_op(
             except Exception as e:
                 logging.debug(f"DurationTracker initialization skipped in guidellm_calibration_op: {e}")
 
-            profile_arg = _clean("GUIDELLM_PROFILE", "sdg").lower()
-            max_sec = int(_clean("GUIDELLM_MAX_SECONDS", "15"))
-            rates_str = _clean("GUIDELLM_RATES", _clean("GUIDELLM_CONCURRENCY_RATES", "1,4,8,16"))
+            profile_arg = _clean_env("GUIDELLM_PROFILE", "sdg").lower()
+            max_sec = int(_clean_env("GUIDELLM_MAX_SECONDS", "15"))
+            rates_str = _clean_env("GUIDELLM_RATES", _clean_env("GUIDELLM_CONCURRENCY_RATES", "1,4,8,16"))
             rates = [int(r.strip()) for r in rates_str.split(",") if r.strip().isdigit()] or [1, 4, 8, 16]
 
             logging.info(
@@ -106,12 +100,12 @@ def guidellm_calibration_op(
             except Exception as e:
                 logging.debug(f"Failed to clear Calibration stage durations in MLflow: {e}")
 
-        rec = bt.get_recommended_sdg_concurrency(default=int(_clean("SDG_LLM_MAX_CONCURRENCY", "10")))
+        rec = bt.get_recommended_sdg_concurrency(default=int(_clean_env("SDG_LLM_MAX_CONCURRENCY", "10")))
         logging.info(f"GuideLLM recommended SDG_LLM_MAX_CONCURRENCY={rec}")
         return int(rec)
     except Exception as e:
         logging.warning(f"GuideLLM calibration encountered an error (falling back to default concurrency): {e}")
-        return int(_clean("SDG_LLM_MAX_CONCURRENCY", "10"))
+        return int(_clean_env("SDG_LLM_MAX_CONCURRENCY", "10"))
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")

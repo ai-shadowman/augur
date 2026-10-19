@@ -663,10 +663,10 @@ class BenchmarkTracker:
         prompt_tokens: int,
         output_tokens: int,
     ) -> int:
-        """Async OpenAI-compatible SSE streaming benchmark with zero required third-party dependencies.
-        Uses httpx.AsyncClient when installed, and falls back to Python stdlib urllib.request + ThreadPoolExecutor
-        so `make benchmark-llm-local` works on bare host Python environments without `openai` or `httpx` installed.
-        Full support for both standard models and reasoning models (e.g. openai/gpt-oss-120b)."""
+        """Benchmark LLM endpoint concurrency via streaming SSE requests.
+
+        Uses httpx if installed, falling back to urllib.request and a thread pool.
+        """
         import concurrent.futures
         import ssl
         import urllib.error
@@ -710,7 +710,7 @@ class BenchmarkTracker:
             )
             http_client = httpx.AsyncClient(verify=verify_arg, timeout=httpx.Timeout(120.0, connect=15.0))
 
-        # Construct a synthetic code-analysis prompt matching prompt_tokens (~4 chars/token)
+        # Synthetic prompt roughly matching requested prompt_tokens (~4 chars/token)
         base_snippet = (
             "Analyze the following software module dependencies, exported symbols, "
             "and configuration keys for enterprise OpenShift modernization:\n"
@@ -723,96 +723,122 @@ class BenchmarkTracker:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(16, max_conc + 4))
         logged_cluster_hint = False
 
-        def _extract_chunk_fields(chunk: Dict[str, Any]) -> Tuple[int, int, str, bool]:
-            u = chunk.get("usage")
-            u_out = 0
-            u_in = 0
-            if isinstance(u, dict):
-                u_out = int(u.get("completion_tokens") or 0)
-                u_in = int(u.get("prompt_tokens") or 0)
-            choices = chunk.get("choices")
-            delta_text = ""
-            has_choice = False
-            if isinstance(choices, list) and len(choices) > 0:
-                has_choice = True
-                c0 = choices[0] if isinstance(choices[0], dict) else {}
-                delta_obj = c0.get("delta") or c0.get("message") or {}
-                if isinstance(delta_obj, dict):
-                    delta_text = str(
-                        delta_obj.get("content")
-                        or delta_obj.get("reasoning_content")
-                        or delta_obj.get("reasoning")
-                        or delta_obj.get("text")
-                        or ""
-                    )
-            return u_out, u_in, delta_text, has_choice
-
-        def _sync_urllib_stream(include_usage: bool = True) -> Tuple[float, Optional[float], List[float], int, int, int, int]:
-            req_start = time.perf_counter()
-            first_token_t: Optional[float] = None
-            prev_token_t: Optional[float] = None
-            chunk_gaps: List[float] = []
-            chunks_count = 0
-            char_count = 0
-            usage_out_tokens = 0
-            usage_in_tokens = 0
-
-            body_dict: Dict[str, Any] = {
-                "model": model_id,
-                "messages": [{"role": "user", "content": synthetic_prompt}],
-                "max_tokens": output_tokens,
-                "temperature": 0.1,
-                "stream": True,
-            }
-            if include_usage:
-                body_dict["stream_options"] = {"include_usage": True}
-
-            data_bytes = json.dumps(body_dict).encode("utf-8")
-            req = urllib.request.Request(chat_url, data=data_bytes, headers=headers, method="POST")
+        def _parse_sse_line(line: str) -> Optional[Dict[str, Any]]:
+            line = line.strip()
+            if not line or line.startswith(":"):
+                return None
+            data_str = line[5:].strip() if line.startswith("data:") else line
+            if data_str == "[DONE]":
+                return {"__done__": True}
             try:
-                resp_cm = urllib.request.urlopen(req, context=ssl_ctx, timeout=120.0)
-            except urllib.error.HTTPError as he:
-                if include_usage and he.code == 400:
-                    return _sync_urllib_stream(include_usage=False)
+                parsed = json.loads(data_str)
+                return parsed if isinstance(parsed, dict) else None
+            except Exception:
+                return None
+
+        class _StreamMetrics:
+            def __init__(self, start_time: float):
+                self.start_time = start_time
+                self.first_token_t: Optional[float] = None
+                self.prev_token_t: Optional[float] = None
+                self.chunk_gaps: List[float] = []
+                self.chunks_count = 0
+                self.char_count = 0
+                self.usage_out_tokens = 0
+                self.usage_in_tokens = 0
+
+            def feed_chunk(self, chunk: Dict[str, Any], now: float) -> bool:
+                if chunk.get("__done__"):
+                    return False
+                usage = chunk.get("usage")
+                if isinstance(usage, dict):
+                    self.usage_out_tokens = max(self.usage_out_tokens, int(usage.get("completion_tokens") or 0))
+                    self.usage_in_tokens = max(self.usage_in_tokens, int(usage.get("prompt_tokens") or 0))
+
+                choices = chunk.get("choices")
+                if isinstance(choices, list) and choices:
+                    c0 = choices[0] if isinstance(choices[0], dict) else {}
+                    delta = c0.get("delta") or c0.get("message") or {}
+                    delta_text = ""
+                    if isinstance(delta, dict):
+                        delta_text = str(
+                            delta.get("content")
+                            or delta.get("reasoning_content")
+                            or delta.get("reasoning")
+                            or delta.get("text")
+                            or ""
+                        )
+                    if delta_text:
+                        self.chunks_count += 1
+                        self.char_count += len(delta_text)
+                        if self.first_token_t is None:
+                            self.first_token_t = now
+                        elif self.prev_token_t is not None:
+                            self.chunk_gaps.append((now - self.prev_token_t) * 1000.0)
+                        self.prev_token_t = now
+                    elif self.first_token_t is None:
+                        self.first_token_t = now
+                        self.prev_token_t = now
+                return True
+
+            def calculate(self) -> Tuple[float, float, Optional[float], int, int]:
+                req_dur = max(0.001, time.perf_counter() - self.start_time)
+                if self.first_token_t is not None:
+                    ttft = (self.first_token_t - self.start_time) * 1000.0
+                    if self.chunks_count <= 1 and ttft >= req_dur * 900.0:
+                        ttft = req_dur * 250.0
+                    ttft = max(1.0, ttft)
+                else:
+                    ttft = req_dur * 250.0
+
+                est_out = (
+                    self.usage_out_tokens
+                    or max(self.chunks_count, int(self.char_count / 3.8))
+                    or max(16, output_tokens // 2)
+                )
+                if self.chunk_gaps:
+                    itl = sum(self.chunk_gaps) / len(self.chunk_gaps)
+                elif est_out > 1:
+                    itl = max(1.0, (req_dur * 1000.0) - ttft) / max(1, est_out - 1)
+                else:
+                    itl = None
+
+                est_in = self.usage_in_tokens or prompt_tokens
+                return req_dur, ttft, itl, est_out, est_in
+
+        def _sync_urllib_stream(payload: dict) -> Tuple[float, float, Optional[float], int, int]:
+            metrics = _StreamMetrics(time.perf_counter())
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(chat_url, data=data, headers=headers, method="POST")
+            try:
+                resp = urllib.request.urlopen(req, context=ssl_ctx, timeout=120.0)
+            except urllib.error.HTTPError as err:
+                if "stream_options" in payload and err.code == 400:
+                    retry_payload = dict(payload)
+                    retry_payload.pop("stream_options", None)
+                    return _sync_urllib_stream(retry_payload)
                 raise
 
-            with resp_cm as resp:
+            with resp:
                 for raw_line in resp:
-                    now = time.perf_counter()
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or line.startswith(":"):
-                        continue
-                    if line.startswith("data:"):
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                    else:
-                        data_str = line
-                    try:
-                        chunk = json.loads(data_str)
-                    except Exception:
-                        continue
-                    if not isinstance(chunk, dict):
-                        continue
-                    u_out, u_in, delta_text, has_choice = _extract_chunk_fields(chunk)
-                    if u_out:
-                        usage_out_tokens = max(usage_out_tokens, u_out)
-                    if u_in:
-                        usage_in_tokens = max(usage_in_tokens, u_in)
-                    if delta_text:
-                        chunks_count += 1
-                        char_count += len(delta_text)
-                        if first_token_t is None:
-                            first_token_t = now
-                        elif prev_token_t is not None:
-                            chunk_gaps.append((now - prev_token_t) * 1000.0)
-                        prev_token_t = now
-                    elif first_token_t is None and has_choice:
-                        first_token_t = now
-                        prev_token_t = now
+                    chunk = _parse_sse_line(raw_line.decode("utf-8", errors="replace"))
+                    if chunk and not metrics.feed_chunk(chunk, time.perf_counter()):
+                        break
+            return metrics.calculate()
 
-            req_dur = max(0.001, time.perf_counter() - req_start)
-            return req_dur, first_token_t and (first_token_t - req_start) * 1000.0, chunk_gaps, chunks_count, char_count, usage_out_tokens, usage_in_tokens
+        async def _async_httpx_stream(payload: dict) -> Tuple[float, float, Optional[float], int, int]:
+            metrics = _StreamMetrics(time.perf_counter())
+            async with http_client.stream("POST", chat_url, headers=headers, json=payload) as resp:
+                if "stream_options" in payload and resp.status_code == 400:
+                    retry_payload = dict(payload)
+                    retry_payload.pop("stream_options", None)
+                    return await _async_httpx_stream(retry_payload)
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    chunk = _parse_sse_line(line)
+                    if chunk and not metrics.feed_chunk(chunk, time.perf_counter()):
+                        break
+            return metrics.calculate()
 
         added = 0
         try:
@@ -833,120 +859,28 @@ class BenchmarkTracker:
                 async def _single_stream_call() -> None:
                     nonlocal total_out_tokens, total_in_tokens, completed, errored, logged_error_for_rate, logged_cluster_hint
                     try:
+                        payload = {
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": synthetic_prompt}],
+                            "max_tokens": output_tokens,
+                            "temperature": 0.1,
+                            "stream": True,
+                            "stream_options": {"include_usage": True},
+                        }
                         if http_client is not None:
-                            req_start = time.perf_counter()
-                            first_token_t: Optional[float] = None
-                            prev_token_t: Optional[float] = None
-                            chunk_gaps: List[float] = []
-                            chunks_count = 0
-                            char_count = 0
-                            usage_out_tokens = 0
-                            usage_in_tokens = 0
-
-                            body_dict: Dict[str, Any] = {
-                                "model": model_id,
-                                "messages": [{"role": "user", "content": synthetic_prompt}],
-                                "max_tokens": output_tokens,
-                                "temperature": 0.1,
-                                "stream": True,
-                                "stream_options": {"include_usage": True},
-                            }
-                            async with http_client.stream("POST", chat_url, headers=headers, json=body_dict) as resp:
-                                if resp.status_code == 400:
-                                    body_dict.pop("stream_options", None)
-                                    async with http_client.stream("POST", chat_url, headers=headers, json=body_dict) as resp_retry:
-                                        resp_retry.raise_for_status()
-                                        async for line in resp_retry.aiter_lines():
-                                            now = time.perf_counter()
-                                            line_s = line.strip()
-                                            if not line_s or line_s.startswith(":"):
-                                                continue
-                                            data_str = line_s[5:].strip() if line_s.startswith("data:") else line_s
-                                            if data_str == "[DONE]":
-                                                break
-                                            try:
-                                                chunk = json.loads(data_str)
-                                            except Exception:
-                                                continue
-                                            if isinstance(chunk, dict):
-                                                u_out, u_in, delta_text, has_choice = _extract_chunk_fields(chunk)
-                                                if u_out:
-                                                    usage_out_tokens = max(usage_out_tokens, u_out)
-                                                if u_in:
-                                                    usage_in_tokens = max(usage_in_tokens, u_in)
-                                                if delta_text:
-                                                    chunks_count += 1
-                                                    char_count += len(delta_text)
-                                                    if first_token_t is None:
-                                                        first_token_t = now
-                                                    elif prev_token_t is not None:
-                                                        chunk_gaps.append((now - prev_token_t) * 1000.0)
-                                                    prev_token_t = now
-                                                elif first_token_t is None and has_choice:
-                                                    first_token_t = now
-                                                    prev_token_t = now
-                                else:
-                                    resp.raise_for_status()
-                                    async for line in resp.aiter_lines():
-                                        now = time.perf_counter()
-                                        line_s = line.strip()
-                                        if not line_s or line_s.startswith(":"):
-                                            continue
-                                        data_str = line_s[5:].strip() if line_s.startswith("data:") else line_s
-                                        if data_str == "[DONE]":
-                                            break
-                                        try:
-                                            chunk = json.loads(data_str)
-                                        except Exception:
-                                            continue
-                                        if isinstance(chunk, dict):
-                                            u_out, u_in, delta_text, has_choice = _extract_chunk_fields(chunk)
-                                            if u_out:
-                                                usage_out_tokens = max(usage_out_tokens, u_out)
-                                            if u_in:
-                                                usage_in_tokens = max(usage_in_tokens, u_in)
-                                            if delta_text:
-                                                chunks_count += 1
-                                                char_count += len(delta_text)
-                                                if first_token_t is None:
-                                                    first_token_t = now
-                                                elif prev_token_t is not None:
-                                                    chunk_gaps.append((now - prev_token_t) * 1000.0)
-                                                prev_token_t = now
-                                            elif first_token_t is None and has_choice:
-                                                first_token_t = now
-                                                prev_token_t = now
-
-                            req_dur = max(0.001, time.perf_counter() - req_start)
-                            ttft_raw = (first_token_t - req_start) * 1000.0 if first_token_t is not None else None
+                            req_dur, ttft, itl, est_out, est_in = await _async_httpx_stream(payload)
                         else:
                             loop = asyncio.get_running_loop()
-                            req_dur, ttft_raw, chunk_gaps, chunks_count, char_count, usage_out_tokens, usage_in_tokens = (
-                                await loop.run_in_executor(executor, _sync_urllib_stream, True)
+                            req_dur, ttft, itl, est_out, est_in = await loop.run_in_executor(
+                                executor, _sync_urllib_stream, payload
                             )
 
                         latencies_s.append(req_dur)
-                        if ttft_raw is not None:
-                            ttft_val = ttft_raw
-                            if chunks_count <= 1 and ttft_val >= req_dur * 900.0:
-                                ttft_val = req_dur * 250.0
-                            ttfts_ms.append(max(1.0, ttft_val))
-                        else:
-                            ttfts_ms.append(req_dur * 250.0)
-
-                        est_out = (
-                            usage_out_tokens
-                            or max(chunks_count, int(char_count / 3.8))
-                            or max(16, output_tokens // 2)
-                        )
-                        if chunk_gaps:
-                            itls_ms.append(sum(chunk_gaps) / len(chunk_gaps))
-                        elif est_out > 1:
-                            gen_ms = max(1.0, (req_dur * 1000.0) - ttfts_ms[-1])
-                            itls_ms.append(gen_ms / max(1, est_out - 1))
-
+                        ttfts_ms.append(ttft)
+                        if itl is not None:
+                            itls_ms.append(itl)
                         total_out_tokens += est_out
-                        total_in_tokens += usage_in_tokens or prompt_tokens
+                        total_in_tokens += est_in
                         completed += 1
                     except Exception as exc:
                         if not logged_error_for_rate:
@@ -961,7 +895,6 @@ class BenchmarkTracker:
                                 )
                         errored += 1
 
-                # Dispatch waves up to per_rate_budget seconds
                 while (time.perf_counter() - start_wall) < per_rate_budget:
                     await asyncio.gather(*[_single_stream_call() for _ in range(conc)])
                     if errored >= conc and completed == 0:

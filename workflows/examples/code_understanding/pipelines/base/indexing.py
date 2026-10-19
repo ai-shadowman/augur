@@ -119,29 +119,19 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         except Exception as e:
             logging.debug("BenchmarkTracker handling in indexing: %s", e)
 
-        # Immediately preserve prior durations.json, tokens.json, project_metrics.json, and benchmarks.json in graphrag_source_path
-        if dur_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+        # Preserve prior telemetry files across GraphRAG directories
+        snapshots = [
+            (dur_tracker, "durations.json", [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]),
+            (token_tracker, "tokens.json", [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]),
+            (code_tracker if code_tracker and code_tracker.total_repo_files > 0 else None, "project_metrics.json", [graphrag_source_path, f"{graphrag_source_path}/output"]),
+            (bench_tracker if bench_tracker and bench_tracker.profiles else None, "benchmarks.json", [graphrag_source_path, f"{graphrag_source_path}/output"]),
+        ]
+        for tracker, filename, target_dirs in snapshots:
+            if tracker is None:
+                continue
+            for d in target_dirs:
                 try:
-                    dur_tracker.save_to_file(os.path.join(d, "durations.json"))
-                except Exception:
-                    pass
-        if token_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
-                try:
-                    token_tracker.save_to_file(os.path.join(d, "tokens.json"))
-                except Exception:
-                    pass
-        if code_tracker and code_tracker.total_repo_files > 0:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
-                try:
-                    code_tracker.save_to_file(os.path.join(d, "project_metrics.json"))
-                except Exception:
-                    pass
-        if bench_tracker and bench_tracker.profiles:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
-                try:
-                    bench_tracker.save_to_file(os.path.join(d, "benchmarks.json"))
+                    tracker.save_to_file(os.path.join(d, filename))
                 except Exception:
                     pass
 
