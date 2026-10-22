@@ -24,6 +24,12 @@ is held to the oracle: on the 187 celery files both read, tree-sitter and
 ``ast`` return the same 4,781 names with no disagreement anywhere. So the two
 paths differ in which files they can answer and not in what they say.
 
+``ast`` stops at Python, and the same parser reads the other languages
+:mod:`provenance.dialects` registers. :func:`declarations_in` therefore takes
+the dialect rather than assuming one, and the inventory scanners pick it from
+the suffix, so a Java or Ruby checkout contributes its declarations instead of
+being skipped as unreadable.
+
 This module also resolves the leading dots on a relative import. The extraction
 prompt tells the model to keep them, because the package a document sits in is
 a calculation on the header path rather than something to infer from a chunk.
@@ -39,17 +45,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .corpus import dotted_key, parse_header
-from .dialects import PYTHON
+from .dialects import PYTHON, Dialect, dialect_for, suffixes
 from .models import Finding, FindingKind, RepoFacts
 from .treesitter import declarations_in_tree
 
 logger = logging.getLogger(__name__)
-
-#: Suffixes whose contents this module knows how to read. A requirements file
-#: or a setup.cfg is in the corpus too, and reading one as Python would turn
-#: every ``key = value`` into an apparent declaration. Taken from the dialect
-#: rather than restated, so the parser and the filter cannot drift apart.
-PYTHON_SUFFIXES = PYTHON.suffixes
 
 #: Entity types that name something a file declares. ``variable`` is absent
 #: because it is outside the prompt's configured vocabulary; the stitch reports
@@ -124,18 +124,25 @@ def declarations_in_source(source: str) -> set[str]:
     return found
 
 
-def declarations_in(source: str) -> tuple[set[str], bool]:
+def declarations_in(source: str, dialect: Dialect) -> tuple[set[str], bool]:
     """Declarations in one source string, and whether ``ast`` refused it.
 
-    The flag is kept after the fallback stopped being lossy, because it is
-    still the honest record of which parser answered and the header reports it
-    as evidence. It no longer implies a quality difference: the two paths were
-    measured equal on every file both can read.
+    ``ast`` is reserved for Python, where it is the language's own definition
+    of the syntax. Every other dialect goes straight to tree-sitter and comes
+    back ``False``, which is the honest record rather than a quality grade:
+    there is no second reader for Java to disagree with.
+
+    The dialect is required rather than defaulted to :data:`PYTHON`. A default
+    would read a ``.java`` file as Python at whichever call site forgot to
+    pass one, and returning nothing confidently is the failure mode the whole
+    ``unsupported-language`` path exists to prevent.
     """
-    try:
-        return declarations_in_source(source), True
-    except (SyntaxError, ValueError, RecursionError):
-        return declarations_in_tree(source, PYTHON), False
+    if dialect is PYTHON:
+        try:
+            return declarations_in_source(source), True
+        except (SyntaxError, ValueError, RecursionError):
+            pass  # Python 2, or nested past the recursion limit.
+    return declarations_in_tree(source, dialect), False
 
 
 # --------------------------------------------------------------------------
@@ -147,6 +154,10 @@ def _unparsed_warning(unparsed: list[str], subject: str) -> list[str]:
 
     A Python 2 repository produces hundreds of these and the count is the
     useful part, so they are summarised rather than logged one by one.
+
+    Only Python files are ever counted. A Java file has no ``ast`` path to
+    fall back from, so reporting every one of them as a parse failure would
+    turn the normal case into a warning and bury the real ones.
     """
     if not unparsed:
         return []
@@ -158,16 +169,22 @@ def _unparsed_warning(unparsed: list[str], subject: str) -> list[str]:
 
 
 def scan_files(root: Path, paths: Iterable[Path]) -> tuple[dict[str, set[str]], list[str]]:
-    """Map every Python file under ``root`` to the names it declares.
+    """Map every readable source file under ``root`` to the names it declares.
 
     Takes the paths rather than walking, so a caller that already has the file
     list does not pay for a second traversal of the tree.
+
+    A file in a language no dialect is registered for is skipped rather than
+    read with the nearest parser. A requirements file or a ``setup.cfg`` is in
+    the checkout too, and reading one as Python would turn every
+    ``key = value`` into an apparent declaration.
     """
     symbols: dict[str, set[str]] = {}
     unparsed: list[str] = []
 
     for path in paths:
-        if not path.name.lower().endswith(PYTHON_SUFFIXES):
+        dialect = dialect_for(path.name)
+        if dialect is None:
             continue
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
@@ -175,8 +192,8 @@ def scan_files(root: Path, paths: Iterable[Path]) -> tuple[dict[str, set[str]], 
             logger.debug("could not read %s: %s", path, exc)
             continue
         relative = path.relative_to(root).as_posix()
-        found, parsed = declarations_in(source)
-        if not parsed:
+        found, parsed = declarations_in(source, dialect)
+        if dialect is PYTHON and not parsed:
             unparsed.append(relative)
         if found:
             symbols.setdefault(module_key(relative), set()).update(found)
@@ -192,6 +209,18 @@ def scan_corpus(documents) -> dict[str, set[str]]:
     document whose header says ``celery/worker/state.py``. A document whose
     header will not parse is skipped, since there is nothing to attribute its
     declarations to.
+
+    The document text carries the AUGUR header, and every dialect parses it:
+    the delimiters are per-language, so a Java document opens with ``/*`` and
+    a Ruby one with ``=begin``, and the symbols found are the same with the
+    header as without it.
+
+    The key is :func:`module_key`, which folds the path. For Java that is the
+    Maven directory rather than the declared package, so a model spelling
+    ``org.apache.commons.lang3.StringUtils`` does not join here yet. Nothing
+    is misattributed by it today, because the fold gate in
+    :mod:`provenance.graph` still drops those files; the second key lands with
+    the gate.
     """
     symbols: dict[str, set[str]] = {}
     if documents is None or "text" not in documents:
@@ -200,10 +229,10 @@ def scan_corpus(documents) -> dict[str, set[str]]:
     unparsed: list[str] = []
     for text in documents["text"]:
         header = parse_header(text)
-        if header is None or not header.path.lower().endswith(PYTHON_SUFFIXES):
+        if header is None or (dialect := dialect_for(header.path)) is None:
             continue
-        found, parsed = declarations_in(str(text))
-        if not parsed:
+        found, parsed = declarations_in(str(text), dialect)
+        if dialect is PYTHON and not parsed:
             unparsed.append(header.path)
         if found:
             symbols.setdefault(module_key(header.path), set()).update(found)
@@ -219,11 +248,18 @@ def module_key(path: str) -> str:
     ``celery/worker/state.py`` is ``celery.worker.state``, and
     ``celery/app/__init__.py`` is ``celery.app``, because that is the name an
     import statement uses for it.
+
+    The suffixes stripped are the registered dialects', longest first, so
+    ``.mts`` is taken before the ``.ts`` it ends with. Deliberately not
+    :func:`provenance.languages.source_suffixes`, which is the wider question
+    of what the corpus key folding handles: it carries ``.cfg``, ``.toml`` and
+    ``.txt``, and stripping those here would turn ``setup.cfg`` into
+    ``setup`` and collide it with ``setup.py``.
     """
     posix = PurePosixPath(str(path))
     parent = posix.parent.as_posix()
     stem = posix.name
-    for suffix in PYTHON_SUFFIXES:
+    for suffix in suffixes():
         if stem.lower().endswith(suffix):
             stem = stem[: -len(suffix)]
             break

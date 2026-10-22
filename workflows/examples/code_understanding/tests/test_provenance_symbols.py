@@ -116,7 +116,7 @@ class TestAstClassification(unittest.TestCase):
     def test_each_rule_classifies_as_described(self):
         for label, (source, expected) in self.CASES.items():
             with self.subTest(case=label):
-                found = symbols.symbols_in(source)
+                found = symbols.symbols_in(source, PYTHON)
                 self.assertTrue(found.used_ast, "sample should parse as Python 3")
                 for kind in ("classes", "functions", "methods", "bindings"):
                     self.assertEqual(
@@ -147,7 +147,7 @@ class TestTreeSitterFallback(unittest.TestCase):
     """What the header gets when ``ast`` refuses the file."""
 
     def test_tree_sitter_classifies_when_ast_refuses(self):
-        found = symbols.symbols_in(PY2)
+        found = symbols.symbols_in(PY2, PYTHON)
 
         self.assertFalse(found.used_ast, "Python 2 source should force the fallback")
         self.assertEqual(("Worker",), found.classes)
@@ -164,7 +164,7 @@ class TestTreeSitterFallback(unittest.TestCase):
         resolve. ``treesitter._walk`` declines it for the same reason
         ``_walk_ast`` does, which is the point of mirroring the traversal.
         """
-        found = symbols.symbols_in("def outer():\n    def inner():\n        pass\n    raise X, y\n")
+        found = symbols.symbols_in("def outer():\n    def inner():\n        pass\n    raise X, y\n", PYTHON)
 
         self.assertFalse(found.used_ast)
         self.assertEqual((), found.methods)
@@ -172,14 +172,14 @@ class TestTreeSitterFallback(unittest.TestCase):
 
     def test_a_duplicate_folded_name_keeps_the_first_kind(self):
         """``def f`` then ``f = wrap(f)`` is one name to the oracle."""
-        found = symbols.symbols_in("def f():\n    pass\nf = wrap(f)\n")
+        found = symbols.symbols_in("def f():\n    pass\nf = wrap(f)\n", PYTHON)
 
         self.assertEqual(("f",), found.functions)
         self.assertEqual((), found.bindings)
         self.assertEqual({"f"}, found.names)
 
     def test_an_empty_file_declares_nothing_and_is_falsy(self):
-        found = symbols.symbols_in("")
+        found = symbols.symbols_in("", PYTHON)
 
         self.assertTrue(found.used_ast, "an empty file parses; it just says nothing")
         self.assertFalse(found)
@@ -190,7 +190,7 @@ class TestImportsCombinator(unittest.TestCase):
     """The pair ``declarations_in`` always had and ``imports`` did not."""
 
     def test_ast_answers_and_says_so(self):
-        found, used_ast = imports_in("import os\nfrom kombu.pools import get\n")
+        found, used_ast = imports_in("import os\nfrom kombu.pools import get\n", PYTHON)
 
         self.assertTrue(used_ast)
         self.assertEqual({"os", "kombu"}, found)
@@ -200,7 +200,7 @@ class TestImportsCombinator(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             imports_in_source(PY2)
 
-        found, used_ast = imports_in(PY2)
+        found, used_ast = imports_in(PY2, PYTHON)
 
         self.assertFalse(used_ast)
         self.assertEqual(imports_in_tree(PY2, PYTHON), found)
@@ -213,7 +213,7 @@ class TestImportsCombinator(unittest.TestCase):
         tree and not the other would break that check for a cosmetic gain.
         Phase 5 owns it.
         """
-        found, _ = imports_in("from __future__ import absolute_import\n")
+        found, _ = imports_in("from __future__ import absolute_import\n", PYTHON)
 
         self.assertEqual({"__future__"}, found)
 
@@ -233,8 +233,8 @@ class TestKindsAgreeWithTheOracleOnEveryFile(unittest.TestCase):
             warnings.simplefilter("ignore", SyntaxWarning)
             cls.cases = {
                 str(path.relative_to(CHECKOUT)): (
-                    declarations_in(source := read(path)),
-                    symbols.symbols_in(source),
+                    declarations_in(source := read(path), PYTHON),
+                    symbols.symbols_in(source, PYTHON),
                 )
                 for path in FILES
             }

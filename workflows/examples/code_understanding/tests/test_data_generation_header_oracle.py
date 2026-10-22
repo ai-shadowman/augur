@@ -104,12 +104,12 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
                     external_metadata=None, git_repo="https://github.com/celery/celery",
                     git_slug="celery-v2-5-5", language="python", multi_repo=False,
                 )
-                declared, _ = declarations_in(source)
+                declared, _ = declarations_in(source, PYTHON)
                 cls.cases[relative] = {
                     "metadata": metadata,
                     "rendered": parse_sections(header),
                     "declared": declared,
-                    "bindings": {n.lower() for n in symbols.symbols_in(source).bindings},
+                    "bindings": {n.lower() for n in symbols.symbols_in(source, PYTHON).bindings},
                     "imports": oracle_imports(source),
                 }
 

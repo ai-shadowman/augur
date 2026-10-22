@@ -159,7 +159,7 @@ class TestTheOracleFeedsThatFormatterUnchanged(unittest.TestCase):
     """What Phase 3 wires up, proven at the formatter boundary without wiring it."""
 
     def test_parser_output_renders_through_the_existing_formatter(self):
-        declarations, used_ast = declarations_in(SOURCE)
+        declarations, used_ast = declarations_in(SOURCE, PYTHON)
         self.assertTrue(used_ast)
 
         result = comment({
@@ -194,7 +194,7 @@ class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
 
     def test_declarations_in_attaches_no_kind_so_one_call_cannot_fill_three_sections(self):
         """The premise that did not survive Phase 1: a flat set, not a classification."""
-        declarations, _ = declarations_in(SOURCE)
+        declarations, _ = declarations_in(SOURCE, PYTHON)
 
         self.assertEqual(
             {"localcache", "localcache.__init__", "localcache.get", "revoke", "software"},
@@ -208,7 +208,7 @@ class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
 
     def test_imports_in_source_raises_on_python_2_where_declarations_in_falls_back(self):
         """``declarations_in`` pairs the two scanners; imports has no such pair."""
-        declarations, used_ast = declarations_in(PYTHON_2_SOURCE)
+        declarations, used_ast = declarations_in(PYTHON_2_SOURCE, PYTHON)
         self.assertFalse(used_ast)
         self.assertEqual({"main", "worker", "worker.start"}, declarations)
 
@@ -314,7 +314,7 @@ class TestWhichParserRanChangesNothingTheHeaderSays(unittest.TestCase):
 
     def test_the_recovered_names_really_were_there_to_write(self):
         """Guards against the cases above passing because the parser found nothing."""
-        found = symbols.symbols_in(PYTHON_2_SOURCE)
+        found = symbols.symbols_in(PYTHON_2_SOURCE, PYTHON)
 
         self.assertFalse(found.used_ast)
         self.assertEqual(("Worker",), found.classes)

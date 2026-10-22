@@ -117,7 +117,7 @@ class TestBothParsers(unittest.TestCase):
             declarations.declarations_in_source(PY2_SOURCE)
 
     def test_python2_source_falls_back(self):
-        found, parsed = declarations.declarations_in(PY2_SOURCE)
+        found, parsed = declarations.declarations_in(PY2_SOURCE, PYTHON)
         self.assertFalse(parsed)
         self.assertEqual(
             found,

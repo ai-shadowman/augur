@@ -30,12 +30,11 @@ from dataclasses import dataclass
 
 from . import treesitter
 from .declarations import (
-    PYTHON_SUFFIXES,
     _assigned_names,
     _nested_bodies,
     module_key,
 )
-from .dialects import PYTHON
+from .dialects import PYTHON, Dialect, dialect_for
 from .imports import imports_in
 
 # The whole point of this module is to agree with ``declarations``, so its
@@ -137,29 +136,35 @@ def symbols_in_source(source: str) -> Symbols:
     return _classify(found, used_ast=True)
 
 
-def symbols_in_tree(source: str) -> Symbols:
-    """Classify by parsing with tree-sitter, the recovered answer. Never raises.
+def symbols_in_tree(source: str, dialect: Dialect) -> Symbols:
+    """Classify by parsing with tree-sitter. Never raises.
 
-    The counterpart of :func:`symbols_in_source` for a file it refuses, which
-    on this corpus means Python 2. Public so the two parsers can be run
-    against the same source and compared without reaching past an underscore;
-    ``tests/test_provenance_treesitter_agreement.py`` is what that seam exists
-    for, and it is the only reason the equality is a measurement rather than a
-    hope.
+    For Python this is the recovered answer, the counterpart of
+    :func:`symbols_in_source` for a file it refuses. Public so the two parsers
+    can be run against the same source and compared without reaching past an
+    underscore; ``tests/test_provenance_treesitter_agreement.py`` is what that
+    seam exists for, and it is the only reason the equality is a measurement
+    rather than a hope.
+
+    For every other dialect it is the only answer there is.
     """
-    return _classify(treesitter.symbols_in_tree(source, PYTHON), used_ast=False)
+    return _classify(treesitter.symbols_in_tree(source, dialect), used_ast=False)
 
 
-def symbols_in(source: str) -> Symbols:
-    """Classify everything one Python source string declares.
+def symbols_in(source: str, dialect: Dialect) -> Symbols:
+    """Classify everything one source string declares.
 
-    Parses with ``ast`` when it can and with tree-sitter when it cannot, the
-    same pairing :func:`declarations.declarations_in` makes.
+    For Python, parses with ``ast`` when it can and with tree-sitter when it
+    cannot, the same pairing :func:`declarations.declarations_in` makes.
+    ``ast`` is Python's own definition of its syntax and reads nothing else,
+    so every other dialect goes straight to the grammar.
     """
-    try:
-        return symbols_in_source(source)
-    except (SyntaxError, ValueError, RecursionError):
-        return symbols_in_tree(source)
+    if dialect is PYTHON:
+        try:
+            return symbols_in_source(source)
+        except (SyntaxError, ValueError, RecursionError):
+            pass  # Python 2, or nested past the recursion limit.
+    return symbols_in_tree(source, dialect)
 
 
 # --------------------------------------------------------------------------
@@ -192,10 +197,32 @@ def is_supported(path: str) -> bool:
 
     The suffix decides, not the pipeline's ``language`` argument.
     ``assets/mappings/language_mappings.json`` maps extensions to languages
-    many-to-many and is not a classifier; ``declarations.PYTHON_SUFFIXES`` is
-    the list this module can actually parse.
+    many-to-many and is not a classifier;
+    :data:`provenance.dialects.DIALECTS` is the narrower question of what
+    there is a grammar and a measurement for.
     """
-    return str(path).lower().endswith(PYTHON_SUFFIXES)
+    return dialect_for(path) is not None
+
+
+def package_for(path: str, source: str, dialect: Dialect) -> str:
+    """The dotted name the ``Package:`` line addresses the file by.
+
+    The path is the authority wherever a file's location is its name, which
+    is Python's rule and the one :func:`declarations.module_key` implements.
+    Java states its package in the file and Maven puts the file somewhere
+    else, so the source is asked first and the fold is what a file in the
+    unnamed package falls back to, since it states nothing to read.
+
+    Real casing is kept. ``Package: org.apache.commons.lang3.StringUtils`` is
+    how the source spells it and how a model reading the header will spell it
+    back; ``corpus.dotted_key`` folds case at comparison time, so nothing
+    downstream needs it lowered here.
+    """
+    if dialect.package_of is not None:
+        root = treesitter.parse(source, dialect).root_node
+        if declared := dialect.package_of(path, root):
+            return declared
+    return module_key(path)
 
 
 def sections_for(path: str, source: str) -> dict:
@@ -207,28 +234,35 @@ def sections_for(path: str, source: str) -> dict:
     byte-identically; declarations keep source order, which is how the model
     used to emit them and how the harness reproduces them.
 
-    A file in a language no parser here reads gets the two evidence keys and
-    nothing else. Declining is deliberate: claiming a ``Classes:`` section
-    from a reader tuned for a different language would put invented names in
-    front of the extraction model. Registering a dialect in
-    :data:`provenance.dialects.DIALECTS` is what lifts this, one language at
-    a time and each with its own measurement.
+    The suffix picks the dialect, so this reads the four languages
+    :data:`provenance.dialects.DIALECTS` registers and declines everything
+    else with the two evidence keys and nothing more. Declining is
+    deliberate: claiming a ``Classes:`` section from a reader tuned for a
+    different language would put invented names in front of the extraction
+    model. Registering a dialect is what lifts it, one language at a time and
+    each arriving with its own measurement.
 
-    Every kind a parser reports is now written, whichever parser ran. There
-    used to be a precision gate here that withheld a kind from a recovered
-    file, because the fallback was a regex line scan and some of what it
-    reported was invented. The fallback is a parser now and measured exact, so
-    the gate had nothing left to withhold and was removed rather than left
+    Only Python can report ``ast`` evidence. The other three have one reader,
+    so their files land in ``tree-sitter`` or ``tree-sitter-empty`` and never
+    in the ``ast`` pair, which is how a header reader can tell a recovered
+    Python 2 file from a Java one that was simply parsed.
+
+    Every kind a parser reports is written, whichever parser ran. There used
+    to be a precision gate here that withheld a kind from a recovered file,
+    because the fallback was a regex line scan and some of what it reported
+    was invented. The fallback is a parser now and measured exact, so the
+    gate had nothing left to withhold and was removed rather than left
     standing as an inert filter.
     """
-    if not is_supported(path):
+    dialect = dialect_for(path)
+    if dialect is None:
         return {"symbol_evidence": UNSUPPORTED, "import_evidence": UNSUPPORTED}
 
-    found = symbols_in(source)
-    imported, imports_used_ast = imports_in(source)
+    found = symbols_in(source, dialect)
+    imported, imports_used_ast = imports_in(source, dialect)
 
     return {
-        "package": module_key(path),
+        "package": package_for(path, source, dialect),
         "imports": sorted(imported),
         "classes": list(found.classes),
         "functions": list(found.functions),

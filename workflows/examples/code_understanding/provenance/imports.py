@@ -29,7 +29,7 @@ import ast
 import logging
 from pathlib import Path
 
-from .dialects import PYTHON
+from .dialects import PYTHON, Dialect, dialect_for
 from .treesitter import imports_in_tree
 
 logger = logging.getLogger(__name__)
@@ -60,26 +60,43 @@ def imports_in_source(source: str) -> set[str]:
     return names
 
 
-def imports_in(source: str) -> tuple[set[str], bool]:
+def imports_in(source: str, dialect: Dialect) -> tuple[set[str], bool]:
     """Imports in one source string, and whether ``ast`` refused it.
 
     The pair :func:`declarations.declarations_in` has had all along. Without
     it every caller holding a single source string has to spell the fallback
     itself, and the one that forgets crashes on roughly a third of a Python 2
     repository rather than degrading to the parser.
+
+    ``ast`` is Python's, so every other dialect is read by tree-sitter and
+    reports ``False``. The dialect is required for the reason it is required
+    there: a default would quietly read a ``.rb`` file as Python.
+
+    What an import *names* is per-language and not comparable across them.
+    Python's is the distribution (``kombu``), Java's is the fully-qualified
+    type (``java.io.IOException``), TypeScript's is the npm package and
+    Ruby's is the load path. Each dialect's docstring says why.
     """
-    try:
-        return imports_in_source(source), True
-    except (SyntaxError, ValueError, RecursionError):
-        return imports_in_tree(source, PYTHON), False
+    if dialect is PYTHON:
+        try:
+            return imports_in_source(source), True
+        except (SyntaxError, ValueError, RecursionError):
+            pass  # Python 2, or nested past the recursion limit.
+    return imports_in_tree(source, dialect), False
 
 
 def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str]]:
     """Collect every imported top-level name in a tree.
 
-    Returns the names and a single warning summarising files that needed the
-    fallback parser, rather than one warning per file: a Python 2 repository
-    produces hundreds and the count is the useful part.
+    Every registered dialect's files are read, and the names they contribute
+    are pooled into one set. The grounding check that consumes this asks only
+    whether a package entity names something the checkout imports, so a
+    broader pool can move an entity from ``invented`` to ``undeclared`` and
+    cannot move one the other way.
+
+    Returns the names and a single warning summarising Python files that
+    needed the fallback parser, rather than one warning per file: a Python 2
+    repository produces hundreds and the count is the useful part.
     """
     import os
 
@@ -89,7 +106,8 @@ def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.endswith(".egg-info")]
         for filename in filenames:
-            if not filename.endswith(".py"):
+            dialect = dialect_for(filename)
+            if dialect is None:
                 continue
             path = Path(dirpath) / filename
             try:
@@ -97,9 +115,9 @@ def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str
             except OSError as exc:
                 logger.debug("could not read %s: %s", path, exc)
                 continue
-            found, used_ast = imports_in(source)
+            found, used_ast = imports_in(source, dialect)
             names |= found
-            if not used_ast:
+            if dialect is PYTHON and not used_ast:
                 unparsed.append(str(path.relative_to(root)))
 
     warnings = []

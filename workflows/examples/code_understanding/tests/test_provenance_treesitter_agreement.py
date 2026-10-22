@@ -107,7 +107,7 @@ def tally():
         warnings.simplefilter("ignore", SyntaxWarning)
         for path in FILES:
             source = path.read_text(encoding="utf-8", errors="replace")
-            found = symbols.symbols_in_tree(source)
+            found = symbols.symbols_in_tree(source, PYTHON)
             imported = imports_in_tree(source, PYTHON)
 
             try:
@@ -273,7 +273,7 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             symbols.symbols_in_source(self.PY2)
 
-        recovered = symbols.symbols_in_tree(self.PY2)
+        recovered = symbols.symbols_in_tree(self.PY2, PYTHON)
 
         self.assertEqual(("Worker",), recovered.classes)
         self.assertEqual(("Worker.start",), recovered.methods)
@@ -283,8 +283,8 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
         """``symbols_in`` must stay exactly 'parse, else tree-sitter'."""
         parseable = "class A(object):\n    def m(self):\n        pass\n"
 
-        self.assertEqual(symbols.symbols_in_source(parseable), symbols.symbols_in(parseable))
-        self.assertEqual(symbols.symbols_in_tree(self.PY2), symbols.symbols_in(self.PY2))
+        self.assertEqual(symbols.symbols_in_source(parseable), symbols.symbols_in(parseable, PYTHON))
+        self.assertEqual(symbols.symbols_in_tree(self.PY2, PYTHON), symbols.symbols_in(self.PY2, PYTHON))
 
     def test_the_two_paths_agree_about_function_locals(self):
         """The rule the traversals share, and the reason one mirrors the other.
@@ -298,7 +298,7 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
         source = "def make():\n    class Inner(object):\n        def go(self):\n            pass\n"
 
         parsed = symbols.symbols_in_source(source)
-        recovered = symbols.symbols_in_tree(source)
+        recovered = symbols.symbols_in_tree(source, PYTHON)
 
         self.assertEqual((), parsed.classes)
         self.assertEqual(("make",), parsed.functions)
@@ -322,7 +322,7 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
             "        pass\n"
         )
 
-        recovered = symbols.symbols_in_tree(source)
+        recovered = symbols.symbols_in_tree(source, PYTHON)
 
         self.assertEqual(("Old", "New"), recovered.classes)
         self.assertEqual(("Old.go",), recovered.methods)
@@ -336,14 +336,14 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
         """
         source = "@task(ignore_result=True)\ndef add(x, y):\n    return x + y\n"
 
-        self.assertEqual(("add",), symbols.symbols_in_tree(source).functions)
+        self.assertEqual(("add",), symbols.symbols_in_tree(source, PYTHON).functions)
 
     def test_a_malformed_file_yields_what_the_grammar_understood(self):
         """Error recovery is reported, not acted on, and it still returns names."""
         source = "class Good(object):\n    pass\n\nclass ((( :\n"
 
         self.assertTrue(treesitter.has_error(source, PYTHON))
-        self.assertEqual(("Good",), symbols.symbols_in_tree(source).classes)
+        self.assertEqual(("Good",), symbols.symbols_in_tree(source, PYTHON).classes)
 
 
 if __name__ == "__main__":
