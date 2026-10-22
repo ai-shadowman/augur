@@ -3,18 +3,13 @@
     You are a Senior Software Engineer with expertise in many programming languages, including {{language}}.
     Review the provided file and use it to generate a structured JSON object with the following schema:
 
-    1. **file_path**: {{file_path}}
-    2. **git_repo**: {{git_repo}}
-    3. **git_slug**: {{git_slug}}
-    4. **language**: {{language}}
-    5. **multi_repo**: {{multi_repo}}
-    6. **purpose**: "Brief high-level summary of the purpose of the file"
-    7. **package**: "Fully qualified language-specific namespace or
+    1. **purpose**: "Brief high-level summary of the purpose of the file"
+    2. **package**: "Fully qualified language-specific namespace or
     directory that groups related modules or classes, or file path for Javascript/Typescript"
-    8. **imports**: [List of external dependencies declared in this file,
+    3. **imports**: [List of external dependencies declared in this file,
     using the form appropriate for the language]
-    9. **classes**: [List of fully qualified names of classes in the file]
-    10. **methods**: List of key-value objects with the following fields:
+    4. **classes**: [List of fully qualified names of classes in the file]
+    5. **methods**: List of key-value objects with the following fields:
           **method_name**: "Fully qualified name of the method or function"
           **code**: "The full code associated with the method or function"
           **callers**: [List of fully qualified names of methods that call this method]

@@ -34,13 +34,14 @@ blocks:
   - block_type: PromptBuilderBlock
     block_config:
       block_name: code_to_metadata_prompt
+      # Only what the template still interpolates. git_repo, git_slug,
+      # file_path and multi_repo are written into the header from the row by
+      # generate_code_comment, so the prompt neither receives them nor is
+      # asked for them back. They stay in required_columns above because the
+      # surrounding pipeline still needs them on the dataframe.
       input_cols:
-      - git_repo
-      - git_slug
-      - file_path
       - language
       - code
-      - multi_repo
       output_cols: extract_metadata_prompt
       prompt_config_path: prompts/data_from_code.yaml
       format_as_messages: true

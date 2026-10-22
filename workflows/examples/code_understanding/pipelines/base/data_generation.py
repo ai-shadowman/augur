@@ -324,8 +324,20 @@ def load_external_data(source_path: str, ignore_policy=None) -> dict:
     return result
 
 
-def generate_code_comment(metadata: dict, file_path: str, config=False, external_metadata: dict = None):
-    """Builds a structured text comment from a code file's metadata dictionary."""
+def generate_code_comment(metadata: dict, file_path: str, config=False, external_metadata: dict = None,
+                          *, git_repo: str, git_slug: str, language: str, multi_repo: bool = False):
+    """Builds a structured text comment from a code file's metadata dictionary.
+
+    The five identity fields are arguments, not lookups into ``metadata``. The
+    caller knows all five before the model runs, so reading them back out of
+    the model's answer can only lose: a wrong value is undetectable here, and
+    two consumers reject it downstream. ``provenance.corpus.HEADER`` requires
+    ``multi_repo`` to be exactly ``true`` or ``false`` or the whole header
+    fails to parse, and ``get_comment_delimiters_for_language`` raises on a
+    language it has no mapping for.
+
+    Everything still read from ``metadata`` is a genuine model answer.
+    """
     import os
     from utils import code_utils
 
@@ -335,10 +347,10 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
 
         lines = []
 
-        header = (f"This file is located at {metadata.get('file_path')} "
-                  f"from repository url {metadata.get('git_repo')}, "
-                  f"repository slug {metadata.get('git_slug')}, "
-                  f"multi_repo {str(metadata.get('multi_repo', False)).lower()}")
+        header = (f"This file is located at {file_path} "
+                  f"from repository url {git_repo}, "
+                  f"repository slug {git_slug}, "
+                  f"multi_repo {str(multi_repo).lower()}")
 
         runtime_stack = external_metadata.get('runtime_stack') or []
         if runtime_stack:
@@ -398,7 +410,7 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
             extension = os.path.splitext(file_path)[1]
             begin, end = code_utils.get_comment_delimiters_for_file_extension(extension)
         else:
-            begin, end = code_utils.get_comment_delimiters_for_language(metadata.get('language'))
+            begin, end = code_utils.get_comment_delimiters_for_language(language)
 
         return begin + '\n'.join(lines) + end
 
@@ -459,28 +471,27 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
             if not metadata:
                 logging.info(f"No LLM metadata found for file {rel_file_path}. Using fallback metadata.")
-                metadata = {
-                    "file_path": rel_file_path,
-                    "language": language,
-                    "git_repo": git_repo,
-                    "git_slug": git_slug,
-                    "multi_repo": str(row.get("multi_repo", False)).lower(),
-                }
+                metadata = {}
 
-            if not metadata.get('language'):
-                metadata['language'] = language
-            if not metadata.get('file_path'):
-                metadata['file_path'] = rel_file_path
-            if not metadata.get('git_repo'):
-                metadata['git_repo'] = git_repo
-            if not metadata.get('git_slug'):
-                metadata['git_slug'] = git_slug
+            # Unconditional, not a backfill. These five are known before the
+            # model is called, so whatever it returned for them is overwritten
+            # rather than consulted. The empty-only guards this replaces caught
+            # a model that answered nothing and let one that answered wrongly
+            # straight through, which is the failure an echoed field produces.
+            multi_repo = bool(row.get("multi_repo", False))
+            metadata['file_path'] = rel_file_path
+            metadata['git_repo'] = git_repo
+            metadata['git_slug'] = git_slug
+            metadata['language'] = language
+            metadata['multi_repo'] = multi_repo
 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 
             code_header_comment = generate_code_comment(
                 metadata=metadata, file_path=rel_file_path, config=config,
                 external_metadata=external_metadata,
+                git_repo=git_repo, git_slug=git_slug, language=language,
+                multi_repo=multi_repo,
             ) or ""
 
             os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
