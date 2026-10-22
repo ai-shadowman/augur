@@ -17,12 +17,17 @@ codebase's current parsers, which is why :data:`PARSEABLE` and :data:`PARSED`
 are separate: Java's ``throws`` clause is decidable today and unparsed today,
 and conflating the two would read as an argument for asking a model.
 
-The table is deliberately short. It records the three languages there is
+The table is deliberately short. It records the five languages there is
 grounded reason to make a claim about, and returns :data:`UNRECORDED` for
 everything else, so an unassessed pair cannot be mistaken for a permissive
 one. :mod:`provenance.languages` takes the same shape for the same reason: it
 names the two languages whose paths the key folding handles out of the 28 the
 mapping lists, rather than guessing at the other 26.
+
+Four of the five have a registered dialect in :mod:`provenance.dialects`, and
+every count a reason cites comes from the checkout
+``tests/test_provenance_dialects.py`` names and re-measures on each run. A
+number here that drifts from one there is a row that stopped being true.
 """
 
 from __future__ import annotations
@@ -287,36 +292,260 @@ _JAVA = {
         "decidable half is the whole gain",
     ),
     PACKAGE: (
-        PARSEABLE,
-        "the package declaration",
+        PARSED,
+        "provenance.dialects.java.package_of",
         "declared in the file, so it is better evidence than the path "
-        "heuristic Python needs; the two disagree whenever the directory "
-        "layout is wrong",
+        "heuristic Python needs, and the gap is not hypothetical: the "
+        "declared name differs from the folded path on all 629 commons-lang "
+        "files, because Maven puts the tree under src/main/java",
     ),
     IMPORTS: (
-        PARSEABLE,
-        "import declarations",
-        "syntax, and unlike Python's they are all at the top of the file and "
-        "fully qualified, so there is no relative form to resolve",
+        PARSED,
+        "provenance.imports.imports_in",
+        "3,569 names off 629 files, and unlike Python's they are all at the "
+        "top of the file and fully qualified, so there is no relative form to "
+        "resolve. What the name does not give is the artifact: "
+        "org.apache.commons.lang3 ships in commons-lang3 and "
+        "org.apache.commons.io in commons-io, which is a lookup rather than a "
+        "transform and is not claimed here",
     ),
     CLASSES: (
-        PARSEABLE,
-        "type declaration nodes",
-        "syntax, and the file name constrains it further: a public type has "
-        "to match the file it is in. Phase 6 lands the parser",
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "1,139 named types off 629 files. The section holds every named type "
+        "rather than only the class keyword: an interface, an enum, a record "
+        "and an @interface each declare a name and hold methods, the header "
+        "offers four buckets and this is the closest, and omitting them would "
+        "drop most of what a Java repository declares",
     ),
     FUNCTIONS: (
         NOT_APPLICABLE,
         "",
         "Java has no free functions. Every method belongs to a type, so a "
-        "Functions: section on a Java file would be empty or invented",
+        "Functions: section on a Java file would be empty or invented, and "
+        "the parser agrees: zero across all 629 commons-lang files",
     ),
     METHODS: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "9,160 qualified names off 629 files, constructors among them, since "
+        "a constructor is part of the API the inventory vouches for. Always "
+        "nested in a type, so the qualifier the header writes arrives from "
+        "the grammar rather than being reconstructed from indentation",
+    ),
+}
+
+#: TypeScript is the language where the same question has two answers
+#: depending on which half of the file you ask. A named declaration is close
+#: to Java; an inline arrow function is close to untyped JavaScript. Rows that
+#: turn on that split cite both populations rather than averaging them, since
+#: the average describes neither.
+_TYPESCRIPT = {
+    PURPOSE: (
+        UNDECIDABLE,
+        "",
+        "a TSDoc block and a decorator argument both state something an "
+        "author chose to write down, which is a claim about the code sitting "
+        "next to the code rather than the thing itself",
+    ),
+    METHOD_CODE: (
         PARSEABLE,
-        "method declaration nodes",
-        "syntax, and always nested in a type, so the qualifier the header "
-        "writes arrives for free rather than being reconstructed from "
-        "indentation. Phase 6 lands the parser",
+        "a tree-sitter method_definition or arrow_function node's byte range",
+        "on disk already, and the inline forms make it worse to ask for: an "
+        "arrow function body is frequently one expression, so a model has "
+        "every opportunity to return something that looks right",
+    ),
+    CALLERS: (
+        NOT_IN_FILE,
+        "",
+        "cross-file, and the module graph is not even fixed by the source: "
+        "path mapping in tsconfig, barrel re-exports and dynamic import() "
+        "all decide at build or run time which file a specifier reaches",
+    ),
+    PARAMETERS: (
+        PARTIAL,
+        "the formal parameter list, which carries a type where one is written",
+        "the names are exact everywhere and the types are not: 92.8% of the "
+        "6,097 parameters on nest's named declarations are typed, against "
+        "41.8% of the 3,386 on its arrow functions. Both numbers are rates "
+        "rather than guarantees, so the field cannot be treated as settled "
+        "the way Java's can",
+    ),
+    TEMPLATE_PARAMETERS: (
+        PARSEABLE,
+        "the type_parameters node on the declaration",
+        "generics are written in the signature, 552 of them in nest, and the "
+        "constraint and default clauses are in the same node",
+    ),
+    ANNOTATIONS: (
+        PARSEABLE,
+        "decorator nodes on the declaration",
+        "a TypeScript decorator is the form the prompt's 'annotations' names, "
+        "and nest leans on them: 3,566 occurrences, which is how the "
+        "framework spells almost every structural fact about itself",
+    ),
+    RETURN_VALUE: (
+        PARTIAL,
+        "the declared return type, where the signature carries one",
+        "declaring it is optional and inference covers the rest, so the "
+        "habit splits: 42.7% of nest's 5,296 named declarations annotate a "
+        "return, against 0.6% of its 16,161 arrow functions. Recovering the "
+        "inferred type needs the type checker and the whole program, which is "
+        "neither this parser nor a model shown one file",
+    ),
+    EXCEPTIONS: (
+        NOT_IN_FILE,
+        "",
+        "there is no throws clause to read and the type system deliberately "
+        "declines to track it. A throw may carry any value rather than an "
+        "Error, and a rejected promise is a throw at an await somewhere else "
+        "entirely, so the lexical throws in a body are a subset twice over",
+    ),
+    PACKAGE: (
+        PARSED,
+        "provenance.declarations.module_key",
+        "the path is the module's identity here rather than a convention "
+        "about it: an import specifier resolves to a file, so the folded path "
+        "is the name the module system itself uses",
+    ),
+    IMPORTS: (
+        PARSED,
+        "provenance.imports.imports_in",
+        "2,946 names off 2,141 files across the four forms a specifier takes: "
+        "import, export-from, dynamic import() and require(). The last two "
+        "are call expressions rather than statements, which is why matching "
+        "only the import keyword would have missed 50 of them in nest",
+    ),
+    CLASSES: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "2,054 off 2,141 files, counting interfaces, enums and type aliases "
+        "for the reason Java's interfaces are counted. A type alias earns its "
+        "place twice over, since it is frequently the only declaration a "
+        "types-only module makes",
+    ),
+    FUNCTIONS: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "552 top-level declarations off 2,141 files, which is the structural "
+        "difference from Java rather than a difference of degree: the "
+        "language has free functions and a header that omitted the section "
+        "would be lying about the file",
+    ),
+    METHODS: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "3,654 qualified names off 2,141 files. Overload signatures repeat a "
+        "name the implementation also declares and are collapsed onto it, so "
+        "the count is of methods rather than of declarations",
+    ),
+}
+
+#: Ruby is the one here with no type syntax at all, and the rows say so once
+#: rather than five times. Where Python's annotations are optional and
+#: TypeScript's are usual, Ruby's live in a separate .rbs file or nowhere;
+#: jekyll ships neither an .rbs nor a Sorbet signature, so there is nothing in
+#: the files this parser reads for a type question to be answered from.
+_RUBY = {
+    PURPOSE: (
+        UNDECIDABLE,
+        "",
+        "the one row where a reader beats a parser, and Ruby makes the gap "
+        "wider than most: a block-heavy DSL reads as English and compiles to "
+        "method calls, so what the syntax says and what the file is for are "
+        "further apart than usual",
+    ),
+    METHOD_CODE: (
+        PARSEABLE,
+        "a tree-sitter method or singleton_method node's byte range",
+        "bytes between def and end, delimited by the grammar. The echo "
+        "argument holds whatever the language: a slice taken is a slice, and "
+        "a slice asked for is a reconstruction",
+    ),
+    CALLERS: (
+        NOT_IN_FILE,
+        "",
+        "cross-file, and Ruby keeps the door open after load: method_missing, "
+        "send, define_method and reopening a class all create call sites that "
+        "no amount of reading the whole program would have shown",
+    ),
+    PARAMETERS: (
+        PARTIAL,
+        "the method_parameters node: names, defaults, splat, block and keyword forms",
+        "every form a signature can take is syntax and is read exactly. The "
+        "prompt also asks for types, and a .rb file carries none, so there "
+        "the undecidable remainder is the whole of the type question rather "
+        "than the thin edge of it",
+    ),
+    TEMPLATE_PARAMETERS: (
+        NOT_APPLICABLE,
+        "",
+        "Ruby has no generics. A collection is not parameterised by a type, "
+        "so there is no type parameter to be right or wrong about",
+    ),
+    ANNOTATIONS: (
+        NOT_APPLICABLE,
+        "",
+        "no decorator syntax. The nearest thing is a class-level method call "
+        "such as validates or before_action, which is an ordinary call in the "
+        "body and is already an entry in Methods: wherever it is defined",
+    ),
+    RETURN_VALUE: (
+        NOT_IN_FILE,
+        "",
+        "nothing declares one, and the implicit return makes the answer the "
+        "last expression evaluated, which is usually a call into another "
+        "file. Reading this file gives the shape of the final expression and "
+        "not what it evaluates to, so an answer here is a confident guess "
+        "about code the model was not shown",
+    ),
+    EXCEPTIONS: (
+        NOT_IN_FILE,
+        "",
+        "raise takes any object that responds to exception, the class is "
+        "frequently built at the raise site, and rescue matches by ancestry "
+        "at run time. The transitive problem Python has, with a dynamic class "
+        "on top of it",
+    ),
+    PACKAGE: (
+        PARSED,
+        "provenance.declarations.module_key",
+        "the folded path is the document's address and is what the header "
+        "states. The constant path a file declares, Jekyll::Site, is a "
+        "different fact that need not match the directory at all, and it is "
+        "already carried in Classes: rather than being asserted here",
+    ),
+    IMPORTS: (
+        PARSED,
+        "provenance.imports.imports_in",
+        "135 names off 160 files, from require, load and autoload. All three "
+        "are ordinary method calls rather than statements, so the method name "
+        "is what is matched; require_relative is excluded on purpose, since "
+        "it names a path in this repository and not a dependency",
+    ),
+    CLASSES: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "330 off 160 files, modules included. A module both namespaces and "
+        "mixes in, so it is the nearest of the four buckets, and leaving it "
+        "out would make Jekyll itself absent from a repository where it "
+        "encloses nearly everything",
+    ),
+    FUNCTIONS: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "32 off 160 files. A def at the top level is a private method on "
+        "Object rather than a free function in the C sense, and it is "
+        "addressable by bare name from anywhere that loads the file, which is "
+        "what the section is for",
+    ),
+    METHODS: (
+        PARSED,
+        "provenance.symbols.symbols_in",
+        "1,027 qualified names off 160 files, including the bodies of "
+        "class << self, which the walk reaches by declining to treat a "
+        "singleton class as a named scope. What define_method builds at load "
+        "time is not here and is not claimed",
     ),
 }
 
@@ -359,6 +588,8 @@ _ANSIBLE = {
 TABLE: dict[str, dict[str, tuple[str, str, str]]] = {
     "python": _PYTHON,
     "java": _JAVA,
+    "typescript": _TYPESCRIPT,
+    "ruby": _RUBY,
     "ansible": _ANSIBLE,
 }
 

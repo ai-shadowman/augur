@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from provenance import decidability as d
+from provenance.dialects import DIALECTS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 PROMPT = ASSETS / "sdghub" / "code_generation" / "prompts" / "data_from_code.yaml"
@@ -90,19 +91,28 @@ class TestTheTableIsWellFormed(unittest.TestCase):
 
         self.assertEqual([], shared, f"{len(shared)} reason(s) reused: {shared}")
 
-    def test_every_question_the_prompt_asks_is_assessed_for_python(self):
-        """Python is the only language with a parser here, so it decides the prompt."""
-        for question in d.PROMPTED:
-            with self.subTest(question=question):
-                self.assertNotEqual(d.UNRECORDED, d.decide("python", question).verdict)
+    def test_every_question_the_prompt_asks_is_assessed_for_every_language(self):
+        """An unassessed pair would make ``model_justified`` raise at run time."""
+        for language in d.LANGUAGES:
+            for question in d.PROMPTED:
+                with self.subTest(language=language, question=question):
+                    self.assertNotEqual(d.UNRECORDED, d.decide(language, question).verdict)
 
 
 class TestTheParsedRowsPointAtRealCode(unittest.TestCase):
     """``parsed`` is a claim about this repository, so it is checkable here.
 
     ``parseable`` deliberately is not: it says the syntax decides the question
-    and nothing here reads it yet, which is the gap Phase 6 closes.
+    and nothing here reads it. Java's ``throws`` clause is the live example,
+    and it is why the two verdicts stayed separate through Phase 6: the five
+    Java header rows flipped to ``parsed`` when the dialect landed, and that
+    one did not.
     """
+
+    #: What a header has to be able to say about a file before the symbol
+    #: layer will write sections for it. The Phase 6 Definition of Done, as
+    #: the set of questions it has to be able to answer.
+    HEADER_QUESTIONS = (d.PACKAGE, d.IMPORTS, d.CLASSES, d.FUNCTIONS, d.METHODS)
 
     def test_each_parsed_row_names_a_callable_that_exists(self):
         parsed = [e for e in rows() if e.verdict == d.PARSED]
@@ -115,8 +125,33 @@ class TestTheParsedRowsPointAtRealCode(unittest.TestCase):
 
                 self.assertTrue(callable(getattr(module, attribute)))
 
+    def test_a_registered_dialect_answers_every_header_question(self):
+        """The registry and the table have to agree about what reads.
+
+        Registering a dialect and leaving the rows at ``parseable`` would
+        describe a gap that had already closed, which is how the table drifts
+        into being prose again. ``not-applicable`` passes because a language
+        without free functions has nothing for a parser to miss.
+        """
+        for language in DIALECTS:
+            for question in self.HEADER_QUESTIONS:
+                with self.subTest(language=language, question=question):
+                    self.assertIn(
+                        d.decide(language, question).verdict,
+                        (d.PARSED, d.NOT_APPLICABLE),
+                        f"{language} has a dialect, so the header fields are not open",
+                    )
+
     def test_nothing_is_marked_parsed_for_a_language_with_no_parser(self):
-        for language in ("java", "ansible"):
+        """The negative half, which is what stops the test above being free.
+
+        Ansible is the live case: it is in the table, nothing parses it, and
+        no row claims otherwise.
+        """
+        unparsed = [lang for lang in d.LANGUAGES if lang not in DIALECTS]
+
+        self.assertIn("ansible", unparsed)
+        for language in unparsed:
             with self.subTest(language=language):
                 verdicts = {d.decide(language, q).verdict for q in d.TABLE[language]}
 
@@ -155,6 +190,11 @@ class TestLookupBehaviour(unittest.TestCase):
             ("python", d.IMPORTS): False,      # parsed today
             ("java", d.EXCEPTIONS): False,     # partial: parse the throws clause instead
             ("java", d.FUNCTIONS): False,      # the language has no free functions
+            ("java", d.PACKAGE): False,        # parsed since Phase 6 landed the dialect
+            ("typescript", d.PURPOSE): True,   # undecidable, as in every language here
+            ("typescript", d.PARAMETERS): False,  # partial: a typed rate, not a guarantee
+            ("ruby", d.RETURN_VALUE): False,   # not-in-file: nothing declares one
+            ("ruby", d.ANNOTATIONS): False,    # the language has no decorator syntax
             ("ansible", d.EXCEPTIONS): False,  # nothing to be right or wrong about
         }
         for (language, question), expected in cases.items():
@@ -162,10 +202,27 @@ class TestLookupBehaviour(unittest.TestCase):
                 self.assertEqual(expected, d.model_justified(language, question))
 
     def test_purpose_is_the_only_field_the_prompt_still_has_a_case_for(self):
-        """The epic's claim, as an assertion rather than a sentence in a manifest."""
-        justified = {q for q in d.PROMPTED if d.model_justified("python", q)}
+        """The epic's claim, as an assertion rather than a sentence in a manifest.
 
-        self.assertEqual({d.PURPOSE}, justified)
+        Asserted over every language rather than over Python alone, because
+        that is what ``PROMPTED`` being a one-element tuple actually rests on:
+        one language answering ``undecidable`` for some other field would make
+        the prompt defensible there and the tuple wrong.
+
+        Over the recorded questions per language, not all of
+        ``QUESTIONS``. Ansible omits ``package`` and ``imports`` on purpose,
+        and ``model_justified`` refuses an unassessed pair rather than
+        answering it, which is the behaviour a sweep must not route around.
+        """
+        for language in d.LANGUAGES:
+            with self.subTest(language=language):
+                justified = {q for q in d.TABLE[language] if d.model_justified(language, q)}
+
+                self.assertLessEqual(justified, {d.PURPOSE})
+
+        self.assertEqual(
+            {d.PURPOSE}, {q for q in d.PROMPTED if d.model_justified("python", q)}
+        )
 
 
 class TestTheExceptionsArgument(unittest.TestCase):
