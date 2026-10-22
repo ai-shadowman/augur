@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ..treesitter import Dialect, node_text
+from ..treesitter import BINDING, Dialect, node_text
 
 if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from tree_sitter import Node
@@ -28,8 +28,11 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
 _PATTERNS = frozenset({"pattern_list", "list_pattern", "tuple_pattern"})
 
 
-def _bound_names(statement: Node) -> Iterator[str]:
+def _bound_names(statement: Node) -> Iterator[tuple[str, str]]:
     """Mirror of ``declarations._assigned_names`` over one statement.
+
+    Always ``BINDING``. ``f = lambda x: x`` binds a callable, and the oracle
+    counts it as an assignment rather than a function, so this has to as well.
 
     ``x: int = 0`` and ``x: int`` are both ``assignment`` with a ``type``
     child, matching ``ast.AnnAssign``, which the oracle counts. ``x += 1`` is
@@ -55,11 +58,11 @@ def _bound_names(statement: Node) -> Iterator[str]:
             if left is None:
                 break
             if left.type == "identifier":
-                yield node_text(left)
+                yield BINDING, node_text(left)
             elif left.type in _PATTERNS:
                 for element in left.named_children:
                     if element.type == "identifier":
-                        yield node_text(element)
+                        yield BINDING, node_text(element)
             node = node.child_by_field_name("right")
 
 

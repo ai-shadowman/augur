@@ -76,10 +76,19 @@ class Dialect:
     bindings: frozenset[str]
     #: Node type to the field holding the definition it decorates or wraps.
     unwrap: Mapping[str, str]
-    #: Names bound by one node of a type in :attr:`bindings`.
-    bound_names: Callable[[Node], Iterator[str]]
+    #: ``(kind, name)`` for each name bound by one node of a type in
+    #: :attr:`bindings`. The kind is nearly always ``BINDING``; a language
+    #: where a callable is declared by binding one, as TypeScript's
+    #: ``const f = () => {}`` is, says ``FUNCTION`` and the walk applies the
+    #: same enclosing-scope rule it applies to a ``def``.
+    bound_names: Callable[[Node], Iterator[tuple[str, str]]]
     #: Top-level module names imported by one node, called on every node.
     imported_names: Callable[[Node], Iterator[str]]
+    #: The dotted name the file is addressed by, read from the source rather
+    #: than computed from the path. ``None`` where the path is the authority,
+    #: as it is in Python; Java states the package in the file and its
+    #: directory layout says something else entirely.
+    package_of: Callable[[str, Node], str | None] | None = None
 
     @cached_property
     def namespaces(self) -> frozenset[str]:
@@ -190,8 +199,21 @@ def _walk(node: Node, prefix: tuple[str, ...], dialect: Dialect, out: list[tuple
             if (name := child.child_by_field_name("name")) is not None:
                 out.append((METHOD if prefix else FUNCTION, ".".join((*prefix, node_text(name)))))
         elif child.type in dialect.bindings:
-            for bound in dialect.bound_names(child):
-                out.append((BINDING, ".".join((*prefix, bound))))
+            for kind, bound in dialect.bound_names(child):
+                # A binding whose value is a function is a function, and the
+                # same rule decides whether it is a method: enclosed by a
+                # class, it is one. Settled here rather than in the dialect
+                # because only the walk knows the prefix.
+                if kind == FUNCTION and prefix:
+                    kind = METHOD
+                out.append((kind, ".".join((*prefix, bound))))
+        elif child.type in dialect.blocks:
+            # A block directly under a walked node, which :func:`_blocks`
+            # cannot reach because it inspects grandchildren. Java puts
+            # ``enum_body_declarations`` here, so without this an enum's
+            # methods are unreachable. Never fires for Python, where a block
+            # is only ever a body field.
+            _walk(child, prefix, dialect, out)
         else:
             for block in _blocks(child, dialect):
                 _walk(block, prefix, dialect, out)

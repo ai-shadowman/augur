@@ -15,14 +15,26 @@ for.
 from __future__ import annotations
 
 from ..treesitter import Dialect
+from .java import JAVA
 from .python import PYTHON
+from .ruby import RUBY
+from .typescript import TYPESCRIPT
 
 #: In registration order. :func:`dialect_for` scans it, so a suffix claimed by
 #: two dialects would resolve to whichever is listed first; none overlap today
 #: and ``tests/test_provenance_dialects.py`` asserts that stays true.
-DIALECTS: dict[str, Dialect] = {d.name: d for d in (PYTHON,)}
+DIALECTS: dict[str, Dialect] = {d.name: d for d in (PYTHON, JAVA, TYPESCRIPT, RUBY)}
 
-__all__ = ["DIALECTS", "PYTHON", "Dialect", "dialect_for", "suffixes"]
+__all__ = [
+    "DIALECTS",
+    "JAVA",
+    "PYTHON",
+    "RUBY",
+    "TYPESCRIPT",
+    "Dialect",
+    "dialect_for",
+    "suffixes",
+]
 
 
 def dialect_for(path: str) -> Dialect | None:
