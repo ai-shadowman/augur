@@ -95,9 +95,13 @@ class TestLineScan(unittest.TestCase):
         # A comparison is not a binding.
         ("if x == 1: pass", set()),
         ("# def commented_out(): pass", set()),
-        # A local inside a function is not importable, so it is dropped while
-        # a class attribute at the same indent is kept.
+        # Nothing inside a function body is importable, so a local, a nested
+        # def and a nested class are all dropped, while a class attribute at
+        # the same indent is kept. The AST path never descends into a function
+        # either; this is where the two were made to agree.
         ("def outer():\n    local = 1\n", {"outer"}),
+        ("def outer():\n    def inner(): pass\n", {"outer"}),
+        ("def make():\n    class Inner:\n        def go(self): pass\n", {"make"}),
         ("class C:\n    attr = 1\n", {"c", "c.attr"}),
         # Dedenting back to module level closes the class scope.
         ("class C:\n    def m(self): pass\nTOP = 1\n", {"c", "c.m", "top"}),

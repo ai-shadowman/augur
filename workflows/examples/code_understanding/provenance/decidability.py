@@ -219,19 +219,18 @@ _PYTHON = {
     CLASSES: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast. Withheld on files ast refuses, where the line scan "
-        "measured 0.834; see provenance.symbols.SCAN_EMITS",
+        "exact under ast, and emitted on the line-scan fallback too at 0.997 "
+        "precision; see provenance.symbols.SCAN_EMITS",
     ),
     FUNCTIONS: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast. Withheld on files ast refuses, where the line scan "
-        "measured 0.683",
+        "exact under ast, and emitted on the line-scan fallback too at 0.995",
     ),
     METHODS: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast, and emitted on the fallback too at 0.957",
+        "exact under ast, and emitted on the line-scan fallback too at 0.999",
     ),
 }
 

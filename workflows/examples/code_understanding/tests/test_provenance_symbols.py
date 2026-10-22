@@ -31,7 +31,11 @@ EXCLUDE_PARTS = {".git", "__pycache__"}
 #: has exactly this many files, so a different candidate still gets the
 #: equality checks without failing on a figure that was never about it.
 EXPECTED_FILES = 237
-EXPECTED = {"ast": 187, "line_scan": 50, "zero_declarations": 14, "declarations": 4885}
+#: 4,885 before Phase 5 taught the line scan to skip function bodies. The 104
+#: it lost are names the AST never counted either: real declarations inside a
+#: closure, which nothing outside the function can import. Only the 50
+#: line-scanned files can move this number, and the 187 parsed ones did not.
+EXPECTED = {"ast": 187, "line_scan": 50, "zero_declarations": 14, "declarations": 4781}
 
 
 def candidate_files():
@@ -148,13 +152,20 @@ class TestLineScanFallback(unittest.TestCase):
         self.assertEqual(("bootstrap",), found.functions)
         self.assertEqual(("DEFAULTS",), found.bindings)
 
-    def test_a_nested_def_is_a_function_not_a_method(self):
-        """Indentation can see what the AST path never descends into."""
+    def test_a_nested_def_is_declined_as_the_ast_path_declines_it(self):
+        """Indentation can see into a function body; since Phase 5 it looks away.
+
+        ``inner`` is a real name and the scan is not inventing it, but it is
+        not addressable from outside ``outer``, so emitting it as
+        ``outer.inner`` put a symbol in front of the extraction model that no
+        import could reach. ``_walk_ast`` never descended here; the scan now
+        matches it.
+        """
         found = symbols.symbols_in("def outer():\n    def inner():\n        pass\n    raise X, y\n")
 
         self.assertFalse(found.used_ast)
         self.assertEqual((), found.methods)
-        self.assertEqual(("outer", "outer.inner"), found.functions)
+        self.assertEqual(("outer",), found.functions)
 
     def test_a_duplicate_folded_name_keeps_the_first_kind(self):
         """``def f`` then ``f = wrap(f)`` is one name to the oracle."""

@@ -98,9 +98,12 @@ def _walk_ast(nodes, prefix: tuple[str, ...], out: list[tuple[str, str]]) -> Non
 def _scan_lines(source: str) -> list[tuple[str, str]]:
     """Mirror of ``declarations.declarations_in_lines``, recording the kind.
 
-    Scope comes from indentation, so unlike the AST path this one can see a
-    ``def`` inside a ``def``. Such a name is a nested function, not a method,
-    so the rule is the enclosing frame rather than the mere presence of one.
+    Scope comes from indentation, so unlike the AST path this one can see
+    inside a function body. Everything it finds there is dropped, which is
+    what :func:`_walk_ast` does by never descending, and is where nearly all
+    of the scan's measured imprecision used to come from: a real
+    ``inner_create_task_cls`` arriving qualified as ``app.task.inner_...``
+    reads to the extraction model as a method of a class that does not exist.
     """
     out: list[tuple[str, str]] = []
     #: (indent, name, is_class) for each enclosing block, outermost first.
@@ -118,8 +121,12 @@ def _scan_lines(source: str) -> list[tuple[str, str]]:
         name = match.group("name")
         is_class = match.re is _CLASS_LINE
         is_block = is_class or match.re is _DEF_LINE
-        if not is_block and any(not frame[2] for frame in stack):
-            continue  # a binding inside a function body
+        if any(not frame[2] for frame in stack):
+            # Inside a function body. Skipping before the push is safe: the
+            # enclosing function frame has a smaller indent than anything
+            # nested in it, so it stays on the stack and catches the deeper
+            # levels too.
+            continue
         if is_class:
             kind = CLASS
         elif is_block:
@@ -215,7 +222,15 @@ UNSUPPORTED = "unsupported-language"
 #: extraction model sees, so a 400-name file should not weigh the same as a
 #: 3-name one. ``tests/test_provenance_scan_fidelity.py`` recomputes these and
 #: fails if the scanner drifts away from the figures the gate was set on.
-SCAN_PRECISION = {"classes": 0.834, "functions": 0.683, "methods": 0.957, "bindings": 0.925}
+#:
+#: ``bindings`` did not move when the three rendered kinds did — 799 true, 65
+#: false and 25 missed, before and after, to the name — which is the evidence
+#: that its errors are a different mechanism. They are: a keyword argument
+#: inside a multi-line call, ``Column("id", Integer,\n    primary_key=True)``,
+#: which ``_BIND_LINE`` reads as an assignment because the scan tracks
+#: indentation and not bracket depth. Nothing renders ``bindings``, so this
+#: costs no header anything, and it is why one kind is still below the bar.
+SCAN_PRECISION = {"classes": 0.997, "functions": 0.995, "methods": 0.999, "bindings": 0.925}
 
 #: A kind at or above this is emitted on line-scanned files exactly as it is on
 #: parsed ones; a kind below it is withheld there. Precision decides rather than
@@ -224,19 +239,24 @@ SCAN_PRECISION = {"classes": 0.834, "functions": 0.683, "methods": 0.957, "bindi
 #: absent, which is the failure this pipeline already tolerates everywhere else.
 PRECISION_BAR = 0.95
 
-#: The kinds that clear the bar. Only ``methods`` does, and narrowly — it has
-#: the same 74 false positives as ``classes`` against 23 times more true names,
-#: so it passes on denominator rather than on being structurally safer, and it
-#: would fail at 0.96.
+#: The kinds that clear the bar: every kind a header renders, and not
+#: ``bindings``, which no section renders anyway. Phase 4 measured 0.834 /
+#: 0.683 / 0.957 here and emitted ``methods`` alone.
 #:
-#: Nearly all of the loss is one mechanism: ``_walk_ast`` never descends into a
-#: function body, deliberately, while ``_scan_lines`` tracks scope by
-#: indentation and so reports what it finds there. Those names are real
-#: declarations rather than inventions, but they arrive qualified as
-#: ``app.task.inner_create_task_cls``, which in front of the extraction model
-#: reads as a method of a class ``app.task``. Suppressing them in the scan
-#: would lift all three kinds past 0.99; that is a change to
-#: ``declarations_in_lines`` as well, and it is not this phase's to make.
+#: What moved is the scanner, not the bar. Nearly all of Phase 4's loss was one
+#: mechanism — ``_walk_ast`` never descends into a function body, deliberately,
+#: while ``_scan_lines`` tracked scope by indentation and reported what it
+#: found there, so a real ``inner_create_task_cls`` arrived qualified as
+#: ``app.task.inner_create_task_cls`` and read to the extraction model as a
+#: method of a class that does not exist. Phase 5 made the scan skip function
+#: bodies too, and 245 of the 249 false positives in the three rendered kinds
+#: went with it.
+#:
+#: So the gate now withholds nothing the renderer would have written. It is
+#: kept because it is what makes that a measurement rather than an assumption:
+#: ``tests/test_provenance_scan_fidelity.py`` recomputes these figures from
+#: source every run, and a kind that regresses below the bar stops being
+#: emitted without anyone having to notice.
 SCAN_EMITS = frozenset(kind for kind, p in SCAN_PRECISION.items() if p >= PRECISION_BAR)
 
 #: Imports are scanned by :mod:`provenance.imports`, not by ``_scan_lines``,

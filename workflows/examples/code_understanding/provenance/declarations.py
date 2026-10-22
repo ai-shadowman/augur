@@ -133,9 +133,12 @@ def declarations_in_lines(source: str) -> set[str]:
     """Declarations recovered without parsing, for Python 2 sources.
 
     Scope is tracked by indentation, which is enough to qualify a method with
-    its class. Bindings inside a function are dropped: a local is not a
-    declaration anyone can import, and admitting them would let any loop
-    variable vouch for a name the model invented.
+    its class. *Anything* inside a function body is dropped, whether it is a
+    binding, a ``def`` or a ``class``: none of them is addressable from outside
+    the function, so admitting them would let a loop variable or a closure
+    vouch for a name the model invented. This matches :func:`_collect`, which
+    never descends into a function body, so the two paths agree about scope and
+    not only about spelling.
     """
     found: set[str] = set()
     #: (indent, name, is_class) for each enclosing block, outermost first.
@@ -153,8 +156,12 @@ def declarations_in_lines(source: str) -> set[str]:
         name = match.group("name")
         is_class = match.re is _CLASS_LINE
         is_block = is_class or match.re is _DEF_LINE
-        if not is_block and any(not frame[2] for frame in stack):
-            continue  # a binding inside a function body
+        if any(not frame[2] for frame in stack):
+            # Inside a function body. Skipping before the push is safe: the
+            # enclosing function frame has a smaller indent than anything
+            # nested in it, so it stays on the stack and catches the deeper
+            # levels too.
+            continue
         found.add(".".join([*(frame[1] for frame in stack), name]).lower())
         if is_block:
             stack.append((indent, name, is_class))

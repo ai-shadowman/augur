@@ -19,6 +19,7 @@ import types
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
@@ -431,12 +432,18 @@ EVIDENCE_FIXTURES = {
 
 
 class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
-    """Phase 4: a kind the line scan gets wrong too often is not written.
+    """A kind the line scan gets wrong too often is not written.
 
     The bar is precision measured against the AST on the 187 celery files both
-    parsers answer, and only ``methods`` cleared it. The asymmetry is the whole
-    argument: a name the scan invents reaches the extraction model as a symbol,
-    and a name it misses is merely absent.
+    parsers answer. The asymmetry is the whole argument: a name the scan
+    invents reaches the extraction model as a symbol, and a name it misses is
+    merely absent.
+
+    Phase 4 set the gate when only ``methods`` cleared it. Phase 5 fixed the
+    mechanism behind the failures — declarations nested inside a function —
+    and all three rendered kinds now measure above 0.99, so the gate withholds
+    nothing. It is kept as a regression detector, which means the withholding
+    path needs a test of its own now that no real kind exercises it.
     """
 
     def test_only_the_kinds_that_passed_are_declared_emittable(self):
@@ -445,7 +452,7 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
             {kind for kind, p in symbols.SCAN_PRECISION.items() if p >= symbols.PRECISION_BAR},
             set(symbols.SCAN_EMITS),
         )
-        self.assertEqual({"methods"}, set(symbols.SCAN_EMITS))
+        self.assertEqual({"classes", "functions", "methods"}, set(symbols.SCAN_EMITS))
 
     def test_a_parsed_file_keeps_every_section(self):
         """The gate touches line-scanned files only; parsing is still exact."""
@@ -456,40 +463,54 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
         self.assertEqual(["revoke"], metadata["functions"])
         self.assertEqual(["LocalCache.__init__", "LocalCache.get"], metadata["methods"])
 
-    def test_a_line_scanned_file_withholds_the_kinds_that_failed(self):
+    def test_a_line_scanned_file_now_keeps_every_section_too(self):
+        """What Phase 5 bought, at the level the extraction model sees.
+
+        These are the three sections Phase 4's gate dropped from 36 of the
+        116 indexed documents. They are back because the scan earned them,
+        not because the bar moved.
+        """
         metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
 
         self.assertEqual(symbols.SCAN, metadata["symbol_evidence"])
+        self.assertEqual(["Worker"], metadata["classes"])
+        self.assertEqual(["main"], metadata["functions"])
+        self.assertEqual(["Worker.start"], metadata["methods"])
+
+    def test_a_kind_below_the_bar_is_absent_rather_than_empty(self):
+        """The withholding path, exercised now that no real kind triggers it.
+
+        The renderer drops a section by key, so a withheld kind has to be
+        missing from the metadata; an empty list renders as a heading with
+        nothing under it, which reads as 'the parser looked and found none'.
+        That distinction survived Phase 5 untested until this case, because
+        every rendered kind now clears the bar.
+        """
+        with mock.patch.object(symbols, "SCAN_EMITS", frozenset({"methods"})):
+            metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
+
         self.assertEqual(["Worker.start"], metadata["methods"])
         for withheld in ("classes", "functions"):
             with self.subTest(kind=withheld):
-                self.assertNotIn(
-                    withheld,
-                    metadata,
-                    "a withheld kind must be absent, not empty: the renderer drops a "
-                    "section by key, and an empty list would read as 'none found'",
-                )
+                self.assertNotIn(withheld, metadata)
 
-    def test_the_withheld_names_really_were_there_to_write(self):
-        """Guards against the gate passing because the scan found nothing.
+        self.assertIn("classes", symbols.sections_for(PATH, PYTHON_2_SOURCE))
 
-        ``Worker`` and ``main`` are what the scan recovers and what the header
-        now declines to carry. If this ever reports an empty scan, the test
-        above is vacuous.
-        """
+    def test_the_scanned_names_really_were_there_to_write(self):
+        """Guards against the cases above passing because the scan found nothing."""
         found = symbols.symbols_in(PYTHON_2_SOURCE)
 
         self.assertFalse(found.used_ast)
         self.assertEqual(("Worker",), found.classes)
         self.assertEqual(("main",), found.functions)
 
-    def test_a_line_scanned_header_omits_the_headings_entirely(self):
-        """Byte-level: no empty ``Classes:`` heading survives the withholding."""
+    def test_a_line_scanned_header_carries_the_headings(self):
+        """Byte-level, since the renderer is what the extraction model reads."""
         header = comment(dict(symbols.sections_for(PATH, PYTHON_2_SOURCE)))
 
+        self.assertIn("\n Classes:\n- Worker", header)
+        self.assertIn("\n Functions:\n- main", header)
         self.assertIn("\n Methods:\n- Worker.start", header)
-        self.assertNotIn("Classes:", header)
-        self.assertNotIn("Functions:", header)
         self.assertIn("\nDependencies:\n- [import] sys", header)
 
     def test_dependencies_survive_the_gate_because_imports_measured_clean(self):
@@ -517,11 +538,18 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
             # Parsed and declares nothing is a confident answer, so the keys
             # are present and empty rather than withheld.
             symbols.AST_EMPTY: {"classes": [], "functions": [], "methods": []},
-            # Recovered: only the kind that cleared the bar is present at all.
-            symbols.SCAN: {"methods": ["Worker.start"]},
+            # Recovered: every kind, since Phase 5 lifted all three past the
+            # bar. Before that only ``methods`` was present at all.
+            symbols.SCAN: {
+                "classes": ["Worker"],
+                "functions": ["main"],
+                "methods": ["Worker.start"],
+            },
             # No answer: the scan ran and found nothing, which is why this is
-            # kept apart from ``ast-empty``.
-            symbols.SCAN_EMPTY: {"methods": []},
+            # kept apart from ``ast-empty``. The sections are present and
+            # empty, as for ``ast-empty``; ``symbol_evidence`` is what keeps
+            # the two distinguishable, and that is asserted below.
+            symbols.SCAN_EMPTY: {"classes": [], "functions": [], "methods": []},
         }
 
         for evidence, source in EVIDENCE_FIXTURES.items():
