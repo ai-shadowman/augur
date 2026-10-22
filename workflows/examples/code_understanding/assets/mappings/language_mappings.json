@@ -11,6 +11,7 @@
     "c++":              "c++",
     "c":                "c",
     "javascript":       "javascript",
+    "typescript":       "javascript",
     "sql":              "sql",
     "ruby":             "ruby",
     "shell":            "shell",

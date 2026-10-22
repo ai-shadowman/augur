@@ -15,22 +15,30 @@ space, and an empty list is omitted rather than left headed. Java exercises
 that last rule, since it declares no free functions and so gets no
 ``Functions:`` heading.
 
-One wart is pinned rather than hidden. A ``.ts`` file is rendered here with
-``language="javascript"`` because ``comment_delimiters_by_language`` in
-``assets/mappings/language_mappings.json`` has no ``typescript`` entry and
-``get_comment_delimiters_for_language`` raises on a language it has no mapping
-for. The delimiters are the right ones either way, and a mixed checkout
-detects ``javascript`` and reaches them; a pure-TypeScript checkout does not
-get that far, because ``pygments_mappings`` has no ``typescript`` entry either
-and the language is dropped before data generation runs a pass over it. That
-is a gap in the mapping, not in the parser, and it is the one thing standing
-between this and an indexed TypeScript repository.
+A ``.ts`` file is rendered here with ``language="javascript"``, and that is
+the real language key rather than a stand-in. ``pygments_mappings`` folds the
+``TypeScript`` lexer onto ``javascript`` the way it already folds ``bash``
+onto ``shell``, so a pure-TypeScript checkout detects one language whose
+extension list already claims ``.ts``, whose excluded directories already
+name ``node_modules`` and ``dist``, and whose delimiters are already ``/* */``.
+The alternative, a ``typescript`` key of its own, would have both language
+keys claiming ``.ts`` and so walk every such file twice, calling the
+extraction model twice and leaving ``metadata['language']`` decided by set
+iteration order. ``TestAPureTypeScriptCheckoutDetects`` below pins the fold.
+
+Which language key a file is ingested under does not decide which grammar
+reads it. ``sections_for`` gates on the suffix, so the ``.ts`` files in that
+pass get the TypeScript dialect and the ``.js`` files beside them get
+``unsupported-language``.
 """
 
 import os
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
@@ -48,6 +56,7 @@ from pipelines.base.data_generation import generate_code_comment  # noqa: E402  
 from provenance import graph, symbols  # noqa: E402
 from provenance.corpus import Corpus, parse_header  # noqa: E402
 from provenance.declarations import module_key  # noqa: E402
+from utils import code_utils  # noqa: E402
 
 #: ``conftest.real_dataframes`` swaps the MagicMock pandas out for the real one
 #: on request. The grounding tests at the bottom of this module call
@@ -320,6 +329,105 @@ class TestTheBucketingDecisionsEachLanguageForces(unittest.TestCase):
             {"symbol_evidence": symbols.UNSUPPORTED, "import_evidence": symbols.UNSUPPORTED},
             symbols.sections_for("src/main/kotlin/Main.kt", "fun main() {}\n"),
         )
+
+
+class TestAPureTypeScriptCheckoutDetects(unittest.TestCase):
+    """Upstream of every parser, and the last thing between here and an index.
+
+    A grammar that reads ``.ts`` perfectly is worth nothing if the file never
+    reaches it. ``detect_languages`` raises outright on a repository where no
+    file produces a mapped language, so before the ``typescript`` entry landed
+    a checkout of nothing but ``.ts`` failed at the first stage with ``No
+    languages detected``. A mixed checkout escaped it by accident: one ``.js``
+    file detected ``javascript``, whose extension list already claims ``.ts``.
+    The entry makes that accident the rule.
+
+    Every assertion here is about the mapping rather than about pygments, so
+    the lexer is patched the way the sibling ignore-policy tests patch it. The
+    one claim that does depend on pygments is pinned separately and skipped
+    where the stub at the top of this module is what got imported.
+    """
+
+    #: The three questions ``generate_raw_dataset`` asks of a detected
+    #: language, in the order it asks them. Each raises ``ValueError`` on a
+    #: language the corresponding mapping section omits, so a key that
+    #: detection emits and these cannot answer is worse than no key at all:
+    #: it turns a silent zero into a crash.
+    INGESTION_QUESTIONS = (
+        ("exclude_dirs", code_utils.get_exclude_dirs_for_language),
+        ("file_extensions", code_utils.get_file_extensions_for_language),
+        ("comment_delimiters", code_utils.get_comment_delimiters_for_language),
+    )
+
+    def detect(self, *filenames, lexer_name):
+        with tempfile.TemporaryDirectory() as directory:
+            for name in filenames:
+                Path(directory, name).write_text("export const X = 1;\n", encoding="utf-8")
+            with patch("utils.code_utils.guess_lexer_for_filename") as lexer:
+                lexer.return_value.name = lexer_name
+                return code_utils.get_detected_languages_for_repo(directory)
+
+    def test_the_typescript_lexer_folds_onto_the_javascript_key(self):
+        """``bash`` folds onto ``shell`` and ``transact-sql`` onto ``sql``.
+
+        Folding a lexer name onto another language key is what this section
+        is for, and six entries already did it before this one.
+        """
+        self.assertEqual(["javascript"], self.detect("a.ts", lexer_name="TypeScript"))
+
+    def test_a_mixed_checkout_detects_the_same_single_language(self):
+        """Which is why no file is walked twice and no model call is doubled.
+
+        A ``typescript`` key of its own would collide with ``javascript`` over
+        ``.ts``, and the pipeline runs one pass per detected language.
+        """
+        self.assertEqual(
+            ["javascript"], self.detect("a.ts", "b.js", lexer_name="TypeScript"),
+        )
+
+    def test_the_detected_key_answers_what_ingestion_asks_next(self):
+        for section, ask in self.INGESTION_QUESTIONS:
+            with self.subTest(section):
+                ask("javascript")
+
+        self.assertIn(".ts", code_utils.get_file_extensions_for_language("javascript"))
+        self.assertIn("node_modules", code_utils.get_exclude_dirs_for_language("javascript"))
+        self.assertEqual(("/*", "*/"), code_utils.get_comment_delimiters_for_language("javascript"))
+
+    def test_the_key_the_fold_avoids_would_answer_none_of_them(self):
+        """The negative control, and the reason the fold is the cheaper fix.
+
+        ``config_file_extensions`` is the single section that does name
+        ``typescript``, which is how the omission stayed invisible: the config
+        pass over such a repository would have worked.
+        """
+        for section, ask in self.INGESTION_QUESTIONS:
+            with self.subTest(section), self.assertRaises(ValueError):
+                ask("typescript")
+
+        self.assertEqual(
+            [".json", ".yaml", ".yml"],
+            code_utils.get_config_file_extensions_for_language("typescript"),
+        )
+
+    def test_pygments_names_the_lexer_what_the_mapping_keys_on(self):
+        """The one claim above that is not ours to decide.
+
+        ``.mts`` has no lexer at all, which is why those files stay out of
+        ``file_extensions``: detection could not see a repository made only of
+        them, so claiming the extension would promise more than this delivers.
+        """
+        from pygments.lexers import guess_lexer_for_filename
+        from pygments.util import ClassNotFound
+
+        if guess_lexer_for_filename("a.ts", "") is None:
+            self.skipTest("pygments is stubbed in this run, so the lexer name is ours")
+
+        self.assertEqual(
+            "typescript", guess_lexer_for_filename("a.ts", "").name.lower(),
+        )
+        with self.assertRaises(ClassNotFound):
+            guess_lexer_for_filename("a.mts", "")
 
 
 def ground(titles, *languages):
