@@ -212,24 +212,28 @@ _PYTHON = {
     IMPORTS: (
         PARSED,
         "provenance.imports.imports_in",
-        "import statements are syntax. Measured 0.992 precision even on the "
-        "line-scan fallback",
+        "import statements are syntax. ast and tree-sitter return the same 621 "
+        "names on the 187 celery files both read",
     ),
     CLASSES: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast, and emitted on the line-scan fallback too at 0.997 "
-        "precision; see provenance.symbols.SCAN_EMITS",
+        "a class statement is syntax. The two parsers return the same 371 "
+        "classes on the 187 celery files both read, and tree-sitter reads the "
+        "other 50; see tests/test_provenance_treesitter_agreement.py",
     ),
     FUNCTIONS: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast, and emitted on the line-scan fallback too at 0.995",
+        "the same 226 module-level functions under both parsers, including the "
+        "rule that a closure's locals are not addressable and are not emitted",
     ),
     METHODS: (
         PARSED,
         "provenance.symbols.symbols_in",
-        "exact under ast, and emitted on the line-scan fallback too at 0.999",
+        "the same 1,661 qualified method names under both parsers. What a class "
+        "declares is in the file; what it inherits is a different question and "
+        "is not claimed here",
     ),
 }
 

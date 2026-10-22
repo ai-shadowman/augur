@@ -13,15 +13,16 @@ somewhere else in the project, which is the module layer's misattribution one
 level down and is repairable by the same kind of join.
 
 Nothing here executes project code. Files that will not parse as Python 3 fall
-back to a line scan, as in :mod:`provenance.imports` and for the same reason:
-celery 2.5.5 is Python 2, and 10 of the 22 documents a run indexes are syntax
-errors to a modern ``ast``. Dropping them would leave half the corpus with no
-declarations recorded and turn real symbols into apparent inventions.
+back to :mod:`provenance.treesitter`, as in :mod:`provenance.imports` and for
+the same reason: celery 2.5.5 is Python 2, and 10 of the 22 documents a run
+indexes are syntax errors to a modern ``ast``. Dropping them would leave half
+the corpus with no declarations recorded and turn real symbols into apparent
+inventions.
 
-The line scan cannot tell source from a string literal, so a ``def`` quoted
-inside a docstring counts. That bias is deliberate and matches
-:mod:`provenance.imports`: the result decides whether a model invented a name,
-and calling a real name invented is the worse error.
+The fallback is a parser rather than the regex line scan it replaced, and it
+is held to the oracle: on the 187 celery files both read, tree-sitter and
+``ast`` return the same 4,781 names with no disagreement anywhere. So the two
+paths differ in which files they can answer and not in what they say.
 
 This module also resolves the leading dots on a relative import. The extraction
 prompt tells the model to keep them, because the package a document sits in is
@@ -33,20 +34,22 @@ from __future__ import annotations
 
 import ast
 import logging
-import re
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import treesitter
 from .corpus import dotted_key, parse_header
 from .models import Finding, FindingKind, RepoFacts
+from .treesitter import declarations_in_tree
 
 logger = logging.getLogger(__name__)
 
 #: Suffixes whose contents this module knows how to read. A requirements file
-#: or a setup.cfg is in the corpus too, and running the line scan over one
-#: would turn every ``key = value`` into an apparent declaration.
-PYTHON_SUFFIXES = (".py", ".pyx", ".pyi")
+#: or a setup.cfg is in the corpus too, and reading one as Python would turn
+#: every ``key = value`` into an apparent declaration. Taken from the dialect
+#: rather than restated, so the parser and the filter cannot drift apart.
+PYTHON_SUFFIXES = treesitter.PYTHON.suffixes
 
 #: Entity types that name something a file declares. ``variable`` is absent
 #: because it is outside the prompt's configured vocabulary; the stitch reports
@@ -121,59 +124,18 @@ def declarations_in_source(source: str) -> set[str]:
     return found
 
 
-#: A ``class``, ``def`` or module-level binding at the start of a line. The
-#: negative lookahead on ``=`` keeps a comparison from reading as a binding,
-#: and the optional annotation clause admits ``count: int = 0``.
-_CLASS_LINE = re.compile(r"^(?P<indent>[ ]*)class\s+(?P<name>\w+)")
-_DEF_LINE = re.compile(r"^(?P<indent>[ ]*)(?:async\s+)?def\s+(?P<name>\w+)")
-_BIND_LINE = re.compile(r"^(?P<indent>[ ]*)(?P<name>[A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)")
-
-
-def declarations_in_lines(source: str) -> set[str]:
-    """Declarations recovered without parsing, for Python 2 sources.
-
-    Scope is tracked by indentation, which is enough to qualify a method with
-    its class. *Anything* inside a function body is dropped, whether it is a
-    binding, a ``def`` or a ``class``: none of them is addressable from outside
-    the function, so admitting them would let a loop variable or a closure
-    vouch for a name the model invented. This matches :func:`_collect`, which
-    never descends into a function body, so the two paths agree about scope and
-    not only about spelling.
-    """
-    found: set[str] = set()
-    #: (indent, name, is_class) for each enclosing block, outermost first.
-    stack: list[tuple[int, str, bool]] = []
-
-    for raw in source.expandtabs(8).splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        match = _CLASS_LINE.match(raw) or _DEF_LINE.match(raw) or _BIND_LINE.match(raw)
-        if not match:
-            continue
-        indent = len(match.group("indent"))
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
-        name = match.group("name")
-        is_class = match.re is _CLASS_LINE
-        is_block = is_class or match.re is _DEF_LINE
-        if any(not frame[2] for frame in stack):
-            # Inside a function body. Skipping before the push is safe: the
-            # enclosing function frame has a smaller indent than anything
-            # nested in it, so it stays on the stack and catches the deeper
-            # levels too.
-            continue
-        found.add(".".join([*(frame[1] for frame in stack), name]).lower())
-        if is_block:
-            stack.append((indent, name, is_class))
-    return found
-
-
 def declarations_in(source: str) -> tuple[set[str], bool]:
-    """Declarations in one source string, and whether ``ast`` refused it."""
+    """Declarations in one source string, and whether ``ast`` refused it.
+
+    The flag is kept after the fallback stopped being lossy, because it is
+    still the honest record of which parser answered and the header reports it
+    as evidence. It no longer implies a quality difference: the two paths were
+    measured equal on every file both can read.
+    """
     try:
         return declarations_in_source(source), True
     except (SyntaxError, ValueError, RecursionError):
-        return declarations_in_lines(source), False
+        return declarations_in_tree(source, treesitter.PYTHON), False
 
 
 # --------------------------------------------------------------------------
@@ -191,7 +153,7 @@ def _unparsed_warning(unparsed: list[str], subject: str) -> list[str]:
     sample = ", ".join(sorted(unparsed)[:3])
     return [
         f"{len(unparsed)} {subject} did not parse as Python 3; their declared "
-        f"names came from a line scan instead (for example: {sample})"
+        f"names came from tree-sitter instead (for example: {sample})"
     ]
 
 

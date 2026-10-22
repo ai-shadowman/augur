@@ -4,10 +4,11 @@ from pathlib import Path
 
 from provenance import declarations
 from provenance.models import RepoFacts
+from provenance.treesitter import PYTHON
 
 #: Python 2 source. ``except ... , e`` and the print statement both make this a
-#: syntax error to a Python 3 parser, which is the case the line scan exists
-#: for: 10 of the 22 documents a celery 2.5.5 run indexes look like this.
+#: syntax error to a Python 3 parser, which is the case the fallback parser
+#: exists for: 10 of the 22 documents a celery 2.5.5 run indexes look like this.
 PY2_SOURCE = """\
 TASK_STATES = frozenset(["PENDING"])
 
@@ -48,7 +49,17 @@ def document_frame(rows):
     ])
 
 
-class TestAstScan(unittest.TestCase):
+class TestBothParsers(unittest.TestCase):
+    """One table of cases, asserted against both readers.
+
+    There used to be two tables, because the fallback was a regex line scan
+    that got a different answer on half of them and had its own weaker
+    expectations. Both readers are parsers now and were measured identical on
+    every file the oracle accepts, so a single table is the honest shape: a
+    case either describes what a declaration is or it does not, and the answer
+    cannot depend on which one ran.
+    """
+
     CASES = [
         ("def noop(): pass", {"noop"}),
         ("async def fetch(): pass", {"fetch"}),
@@ -57,6 +68,12 @@ class TestAstScan(unittest.TestCase):
         ("TASK_STATES = frozenset()", {"task_states"}),
         ("count: int = 0", {"count"}),
         ("READY, FAILED = 1, 2", {"ready", "failed"}),
+        # ``a = b = 1`` carries two targets on one ast node and nests rightward
+        # in the grammar. Both spellings have to reach the same pair.
+        ("a = b = 1", {"a", "b"}),
+        # Augmented assignment rebinds a name that was already bound, so it is
+        # not a declaration to either reader.
+        ("x += 1", set()),
         # A decorator leaves a FunctionDef in place, so nothing special is needed.
         ("@task\ndef add(x): pass\n", {"add"}),
         # Compatibility branches declare real names, and a Python 2 codebase is
@@ -64,53 +81,40 @@ class TestAstScan(unittest.TestCase):
         ("try:\n    class Queue: pass\nexcept ImportError:\n    Queue = None\n",
          {"queue"}),
         ("if True:\n    def maybe(): pass\n", {"maybe"}),
-        # A closure is not addressable from outside, so it must not vouch for
-        # a name the model invented.
+        # Nothing inside a function body is importable, so a local, a nested
+        # def and a nested class are all dropped, while a class attribute at
+        # the same indent is kept. A closure must never vouch for a name the
+        # model invented.
         ("def outer():\n    def inner(): pass\n    local = 1\n", {"outer"}),
+        ("def make():\n    class Inner:\n        def go(self): pass\n", {"make"}),
+        ("class C:\n    attr = 1\n", {"c", "c.attr"}),
+        ("class C:\n    def m(self): pass\nTOP = 1\n", {"c", "c.m", "top"}),
         # An attribute target binds no module-level name.
         ("self.conf = {}", set()),
         ("import os", set()),
+        # A comparison is not a binding.
+        ("if x == 1: pass", set()),
+        ("# def commented_out(): pass", set()),
+        # The case no line scan could ever get right: it had no way to know it
+        # was inside a string.
+        ('"""Docstring mentioning class Foo and def bar."""', set()),
     ]
 
-    def test_declared_names_are_recovered(self):
+    def test_ast_recovers_the_declared_names(self):
         for source, expected in self.CASES:
             with self.subTest(source=source):
                 self.assertEqual(declarations.declarations_in_source(source), expected)
 
-    def test_python2_source_is_a_syntax_error(self):
-        # Pins the premise of the fallback. If this ever stops raising, the
-        # line scan is dead code and should go.
-        with self.assertRaises(SyntaxError):
-            declarations.declarations_in_source(PY2_SOURCE)
-
-
-class TestLineScan(unittest.TestCase):
-    CASES = [
-        ("def noop(): pass", {"noop"}),
-        ("async def fetch(): pass", {"fetch"}),
-        ("class LocalCache: pass", {"localcache"}),
-        ("class LocalCache:\n    def get(self): pass\n", {"localcache", "localcache.get"}),
-        ("TASK_STATES = frozenset()", {"task_states"}),
-        ("count: int = 0", {"count"}),
-        # A comparison is not a binding.
-        ("if x == 1: pass", set()),
-        ("# def commented_out(): pass", set()),
-        # Nothing inside a function body is importable, so a local, a nested
-        # def and a nested class are all dropped, while a class attribute at
-        # the same indent is kept. The AST path never descends into a function
-        # either; this is where the two were made to agree.
-        ("def outer():\n    local = 1\n", {"outer"}),
-        ("def outer():\n    def inner(): pass\n", {"outer"}),
-        ("def make():\n    class Inner:\n        def go(self): pass\n", {"make"}),
-        ("class C:\n    attr = 1\n", {"c", "c.attr"}),
-        # Dedenting back to module level closes the class scope.
-        ("class C:\n    def m(self): pass\nTOP = 1\n", {"c", "c.m", "top"}),
-    ]
-
-    def test_declared_names_are_recovered(self):
+    def test_tree_sitter_recovers_the_same_names(self):
         for source, expected in self.CASES:
             with self.subTest(source=source):
-                self.assertEqual(declarations.declarations_in_lines(source), expected)
+                self.assertEqual(declarations.declarations_in_tree(source, PYTHON), expected)
+
+    def test_python2_source_is_a_syntax_error(self):
+        # Pins the premise of the fallback. If this ever stops raising, the
+        # fallback is dead code and should go.
+        with self.assertRaises(SyntaxError):
+            declarations.declarations_in_source(PY2_SOURCE)
 
     def test_python2_source_falls_back(self):
         found, parsed = declarations.declarations_in(PY2_SOURCE)

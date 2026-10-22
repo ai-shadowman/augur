@@ -211,9 +211,9 @@ class TestSaveOverwritesRatherThanBackfills(SaveHarness):
                 self.assertEqual(ROW[field], metadata[field])
 
 
-#: Three Python files that between them exercise both scanners and every
-#: section. The Python 2 one is line-scanned, which is roughly a third of
-#: celery 2.5.5 and the case where the header is assembled without an AST.
+#: Three Python files that between them exercise both parsers and every
+#: section. The Python 2 one is read by tree-sitter, which is roughly a third
+#: of celery 2.5.5 and the case where the header is assembled without an AST.
 SOURCES = {
     "one binding": ROW["code"],
     "python 3": (
@@ -229,7 +229,7 @@ SOURCES = {
         "def revoke(task_id):\n"
         "    return current_app.control.revoke(task_id)\n"
     ),
-    "python 2, line-scanned": (
+    "python 2, tree-sitter": (
         "import sys\n"
         "\n"
         "class Worker(object):\n"

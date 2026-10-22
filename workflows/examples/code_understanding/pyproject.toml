@@ -12,6 +12,15 @@ dependencies = [
     # arrives transitively via litellm today, so an install that drops or
     # unpins litellm breaks asset loading with a bare ModuleNotFoundError.
     "pyyaml>=6,<7",
+    # provenance/treesitter.py reads the files ``ast`` refuses, which is a
+    # third of a Python 2 repository. Core rather than an optional extra
+    # because data_generation calls symbols.sections_for unconditionally on
+    # every file it writes a header for, so an install without this cannot
+    # produce a corpus. One pack rather than a wheel per grammar: 4.8 MB for
+    # about 165 languages against 6.4 MB for the five Phase 6 needs, and it
+    # carries tsx, which the separate wheels do not.
+    "tree-sitter>=0.23,<0.27",
+    "tree-sitter-language-pack>=1.22,<2",
 ]
 
 [project.optional-dependencies]

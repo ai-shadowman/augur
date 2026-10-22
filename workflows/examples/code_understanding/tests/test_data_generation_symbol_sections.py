@@ -19,7 +19,6 @@ import types
 import unittest
 import warnings
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
@@ -36,7 +35,8 @@ if "pygments" not in sys.modules:
 from pipelines.base.data_generation import generate_code_comment  # noqa: E402  stubs first
 from provenance import symbols  # noqa: E402
 from provenance.declarations import declarations_in, module_key  # noqa: E402
-from provenance.imports import imports_in_lines, imports_in_source  # noqa: E402
+from provenance.imports import imports_in_source, imports_in_tree  # noqa: E402
+from provenance.treesitter import PYTHON  # noqa: E402
 
 PROMPT = Path(BASE_DIR) / "assets" / "sdghub" / "code_generation" / "prompts" / "data_from_code.yaml"
 
@@ -223,7 +223,7 @@ class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
         # tree and so cannot be called on one source string. Phase 3 needs the
         # combinator declarations_in already has, or it crashes on roughly a
         # third of celery 2.5.5.
-        self.assertEqual({"sys"}, imports_in_lines(PYTHON_2_SOURCE))
+        self.assertEqual({"sys"}, imports_in_tree(PYTHON_2_SOURCE, PYTHON))
 
     def test_future_is_returned_as_an_import_though_it_is_not_a_dependency(self):
         """A language directive would render as ``- [import] __future__``."""
@@ -270,7 +270,7 @@ FILES = candidate_files()
 #: 187 files ``ast`` accepts are these two classes together: 173 that declare
 #: something and 14 that parse cleanly and declare nothing.
 EXPECTED_FILES = 237
-EXPECTED_SPLIT = {"ast": 173, "ast-empty": 14, "line-scan": 50, "line-scan-empty": 0}
+EXPECTED_SPLIT = {"ast": 173, "ast-empty": 14, "tree-sitter": 50, "tree-sitter-empty": 0}
 
 
 def parse_sections(header: str) -> dict:
@@ -307,7 +307,7 @@ def oracle_imports(source: str) -> list:
     try:
         return sorted(imports_in_source(source))
     except SyntaxError:
-        return sorted(imports_in_lines(source))
+        return sorted(imports_in_tree(source, PYTHON))
 
 
 @unittest.skipIf(not FILES, f"no candidate checkout at {CHECKOUT}")
@@ -354,12 +354,13 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
         that has to be added back before the comparison. Without them this
         would be a subset check and a dropped class would pass it.
 
-        Only the parsed files carry the equality. On a line-scanned file the
-        Phase 4 gate withholds the kinds that measured below
-        ``symbols.PRECISION_BAR``, so the header is a deliberate strict subset
-        and the claim that survives is the one-directional one: nothing
-        reaches the header that the scan did not find. Which kinds are kept
-        there is pinned in :class:`TestThePrecisionGateOnLineScannedFiles`.
+        All 237 files carry the equality now. It used to hold on the 187
+        parsed ones and weaken to a one-directional claim on the rest, because
+        a precision gate withheld whichever kinds the line scan got wrong
+        often enough, leaving a deliberate strict subset in the header. The
+        fallback is a parser and the gate is gone, so the recovered files are
+        held to the same equality as the parsed ones rather than to a weaker
+        promise.
         """
         for relative, case in self.cases.items():
             with self.subTest(file=relative):
@@ -370,23 +371,16 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
                     for name in case["rendered"][section]
                 }
                 invented = in_header - declared
+                missing = declared - in_header - bindings
 
-                if case["metadata"]["symbol_evidence"] in (symbols.AST, symbols.AST_EMPTY):
-                    self.assertEqual(
-                        declared,
-                        in_header | bindings,
-                        f"{len(invented)} name(s) in the header the oracle does "
-                        f"not declare ({sorted(invented)[:5]}), "
-                        f"{len(declared - in_header - bindings)} declared but not written "
-                        f"({sorted(declared - in_header - bindings)[:5]})",
-                    )
-                else:
-                    self.assertEqual(
-                        set(),
-                        invented,
-                        f"{len(invented)} name(s) reached a line-scanned header that the "
-                        f"scan never found ({sorted(invented)[:5]})",
-                    )
+                self.assertEqual(
+                    declared,
+                    in_header | bindings,
+                    f"{case['metadata']['symbol_evidence']}: "
+                    f"{len(invented)} name(s) in the header the oracle does "
+                    f"not declare ({sorted(invented)[:5]}), "
+                    f"{len(missing)} declared but not written ({sorted(missing)[:5]})",
+                )
 
     def test_the_dependencies_section_is_exactly_what_the_file_imports(self):
         for relative, case in self.cases.items():
@@ -399,12 +393,7 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
                 self.assertEqual(module_key(relative), case["rendered"]["package"])
 
     def test_the_sections_reach_the_header_in_source_order(self):
-        """Source order, not sorted order. The harness reproduces it that way.
-
-        A kind the gate withholds is absent from the metadata rather than
-        empty, and the renderer drops a section it has no key for, so the two
-        sides still have to agree: ``[]`` against ``[]``.
-        """
+        """Source order, not sorted order. The harness reproduces it that way."""
         for relative, case in self.cases.items():
             with self.subTest(file=relative):
                 for section in ("classes", "functions", "methods"):
@@ -427,42 +416,33 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
 
 
 #: One source per outcome class, so the header each produces is pinned rather
-#: than inferred. ``line-scan-empty`` is unoccupied on celery 2.5.5 and so has
-#: no corpus file to point at; it is constructed here instead, which is the
+#: than inferred. ``tree-sitter-empty`` is unoccupied on celery 2.5.5 and so
+#: has no corpus file to point at; it is constructed here instead, which is the
 #: reason the class is carried at all.
 EVIDENCE_FIXTURES = {
     symbols.AST: SOURCE,
     symbols.AST_EMPTY: '"""Re-export shim, kept for the 2.4 import path."""\n',
-    symbols.SCAN: PYTHON_2_SOURCE,
-    symbols.SCAN_EMPTY: 'import sys\n\nprint "celery 2.5.5"\nsys.exit(0)\n',
+    symbols.TREE_SITTER: PYTHON_2_SOURCE,
+    symbols.TREE_SITTER_EMPTY: 'import sys\n\nprint "celery 2.5.5"\nsys.exit(0)\n',
 }
 
 
-class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
-    """A kind the line scan gets wrong too often is not written.
+class TestWhichParserRanChangesNothingTheHeaderSays(unittest.TestCase):
+    """Both readers write all three sections, and the same three.
 
-    The bar is precision measured against the AST on the 187 celery files both
-    parsers answer. The asymmetry is the whole argument: a name the scan
-    invents reaches the extraction model as a symbol, and a name it misses is
-    merely absent.
+    There used to be a precision gate here. The fallback was a regex line scan
+    that invented names, and the asymmetry justified withholding a kind it got
+    wrong too often: an invented name reaches the extraction model as a symbol,
+    while a missed one is merely absent. Phase 4 withheld two of the three
+    kinds on that basis and Phase 5 earned them back.
 
-    Phase 4 set the gate when only ``methods`` cleared it. Phase 5 fixed the
-    mechanism behind the failures — declarations nested inside a function —
-    and all three rendered kinds now measure above 0.99, so the gate withholds
-    nothing. It is kept as a regression detector, which means the withholding
-    path needs a test of its own now that no real kind exercises it.
+    Replacing the scan with a parser removed the premise rather than relaxing
+    the bar. There is no kind to withhold and nothing to measure, so what is
+    left to pin is the thing a header reader cares about: which outcome class
+    a file lands in, and that the class does not change what gets written.
     """
 
-    def test_only_the_kinds_that_passed_are_declared_emittable(self):
-        """The gate is read off the measurement, not written out by hand."""
-        self.assertEqual(
-            {kind for kind, p in symbols.SCAN_PRECISION.items() if p >= symbols.PRECISION_BAR},
-            set(symbols.SCAN_EMITS),
-        )
-        self.assertEqual({"classes", "functions", "methods"}, set(symbols.SCAN_EMITS))
-
     def test_a_parsed_file_keeps_every_section(self):
-        """The gate touches line-scanned files only; parsing is still exact."""
         metadata = symbols.sections_for(PATH, SOURCE)
 
         self.assertEqual(symbols.AST, metadata["symbol_evidence"])
@@ -470,48 +450,24 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
         self.assertEqual(["revoke"], metadata["functions"])
         self.assertEqual(["LocalCache.__init__", "LocalCache.get"], metadata["methods"])
 
-    def test_a_line_scanned_file_now_keeps_every_section_too(self):
-        """What Phase 5 bought, at the level the extraction model sees.
-
-        These are the three sections Phase 4's gate dropped from 36 of the
-        116 indexed documents. They are back because the scan earned them,
-        not because the bar moved.
-        """
+    def test_a_recovered_file_keeps_every_section_too(self):
+        """The 36 of 116 indexed documents Phase 4's gate wrote partial headers for."""
         metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
 
-        self.assertEqual(symbols.SCAN, metadata["symbol_evidence"])
+        self.assertEqual(symbols.TREE_SITTER, metadata["symbol_evidence"])
         self.assertEqual(["Worker"], metadata["classes"])
         self.assertEqual(["main"], metadata["functions"])
         self.assertEqual(["Worker.start"], metadata["methods"])
 
-    def test_a_kind_below_the_bar_is_absent_rather_than_empty(self):
-        """The withholding path, exercised now that no real kind triggers it.
-
-        The renderer drops a section by key, so a withheld kind has to be
-        missing from the metadata; an empty list renders as a heading with
-        nothing under it, which reads as 'the parser looked and found none'.
-        That distinction survived Phase 5 untested until this case, because
-        every rendered kind now clears the bar.
-        """
-        with mock.patch.object(symbols, "SCAN_EMITS", frozenset({"methods"})):
-            metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
-
-        self.assertEqual(["Worker.start"], metadata["methods"])
-        for withheld in ("classes", "functions"):
-            with self.subTest(kind=withheld):
-                self.assertNotIn(withheld, metadata)
-
-        self.assertIn("classes", symbols.sections_for(PATH, PYTHON_2_SOURCE))
-
-    def test_the_scanned_names_really_were_there_to_write(self):
-        """Guards against the cases above passing because the scan found nothing."""
+    def test_the_recovered_names_really_were_there_to_write(self):
+        """Guards against the cases above passing because the parser found nothing."""
         found = symbols.symbols_in(PYTHON_2_SOURCE)
 
         self.assertFalse(found.used_ast)
         self.assertEqual(("Worker",), found.classes)
         self.assertEqual(("main",), found.functions)
 
-    def test_a_line_scanned_header_carries_the_headings(self):
+    def test_a_recovered_header_carries_the_headings(self):
         """Byte-level, since the renderer is what the extraction model reads."""
         header = comment(dict(symbols.sections_for(PATH, PYTHON_2_SOURCE)))
 
@@ -520,18 +476,17 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
         self.assertIn("\n Methods:\n- Worker.start", header)
         self.assertIn("\nDependencies:\n- [import] sys", header)
 
-    def test_dependencies_survive_the_gate_because_imports_measured_clean(self):
-        """``imports_in_lines`` is a different scanner and a different number.
+    def test_dependencies_render_on_a_recovered_file_and_say_which_parser_ran(self):
+        """Imports are a separate scanner and carry their own evidence key.
 
-        It measured 0.992 precision and 1.000 recall on the same 187 files, so
-        ``Dependencies:`` renders on a Python 2 file unchanged. Recorded as a
-        test so the symbol gate is not later widened over it by analogy.
+        They were never gated, because the import line scan measured 0.992
+        precision where the symbol scan did not. Keeping the assertion means a
+        later change that routes imports differently from symbols fails here
+        rather than silently in a corpus.
         """
-        self.assertGreaterEqual(symbols.SCAN_IMPORT_PRECISION, symbols.PRECISION_BAR)
-
         metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
 
-        self.assertEqual(symbols.SCAN, metadata["import_evidence"])
+        self.assertEqual(symbols.TREE_SITTER, metadata["import_evidence"])
         self.assertEqual(["sys"], metadata["imports"])
 
     def test_each_outcome_class_produces_the_header_it_should(self):
@@ -543,20 +498,20 @@ class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
                 "methods": ["LocalCache.__init__", "LocalCache.get"],
             },
             # Parsed and declares nothing is a confident answer, so the keys
-            # are present and empty rather than withheld.
+            # are present and empty rather than absent.
             symbols.AST_EMPTY: {"classes": [], "functions": [], "methods": []},
-            # Recovered: every kind, since Phase 5 lifted all three past the
-            # bar. Before that only ``methods`` was present at all.
-            symbols.SCAN: {
+            # Recovered. Identical in shape to the parsed case, which is the
+            # claim: only ``symbol_evidence`` records that ast refused.
+            symbols.TREE_SITTER: {
                 "classes": ["Worker"],
                 "functions": ["main"],
                 "methods": ["Worker.start"],
             },
-            # No answer: the scan ran and found nothing, which is why this is
-            # kept apart from ``ast-empty``. The sections are present and
+            # No answer: the parser ran and found nothing, which is why this
+            # is kept apart from ``ast-empty``. The sections are present and
             # empty, as for ``ast-empty``; ``symbol_evidence`` is what keeps
             # the two distinguishable, and that is asserted below.
-            symbols.SCAN_EMPTY: {"classes": [], "functions": [], "methods": []},
+            symbols.TREE_SITTER_EMPTY: {"classes": [], "functions": [], "methods": []},
         }
 
         for evidence, source in EVIDENCE_FIXTURES.items():

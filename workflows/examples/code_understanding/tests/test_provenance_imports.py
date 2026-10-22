@@ -3,12 +3,13 @@ import unittest
 from pathlib import Path
 
 from provenance import imports
+from provenance.treesitter import PYTHON
 
 SKIP_DIRS = frozenset({".git", "build"})
 
 #: Python 2 source. ``except ... , e`` and the print statement both make this a
-#: syntax error to a Python 3 parser, which is the case the line scan exists
-#: for: celery 2.5.5 is full of them.
+#: syntax error to a Python 3 parser, which is the case the fallback parser
+#: exists for: celery 2.5.5 is full of them.
 PY2_SOURCE = """\
 import os
 try:
@@ -39,33 +40,42 @@ class TestAstScan(unittest.TestCase):
 
     def test_python2_source_is_a_syntax_error(self):
         # Pins the premise of the fallback. If this ever stops raising, the
-        # line scan is dead code and should go.
+        # fallback is dead code and should go.
         with self.assertRaises(SyntaxError):
             imports.imports_in_source(PY2_SOURCE)
 
 
-class TestLineScan(unittest.TestCase):
+class TestTreeSitterFallback(unittest.TestCase):
+    """The same questions the retired line scan answered, answered by a parser.
+
+    The last four cases are the ones the regex got wrong. A comment, an
+    identifier containing the word and a docstring sentence all used to read as
+    imports, and no amount of tightening the pattern fixes the docstring,
+    because the scanner had no idea it was inside a string.
+    """
+
     CASES = [
         ("import os", {"os"}),
         ("import os, sys", {"os", "sys"}),
-        ("    import pyinotify", {"pyinotify"}),
+        ("def f():\n    import billiard\n", {"billiard"}),
         ("import kombu.pools as pools", {"kombu"}),
         ("from kombu.pools import get", {"kombu"}),
         ("from . import sibling", set()),
         ("from .relative import thing", set()),
+        ("from __future__ import with_statement", {"__future__"}),
         ("import os  # trailing comment", {"os"}),
         ("# import commented_out", set()),
         ("result = importlib.import_module('x')", set()),
-        ("Use this to import data from a file.", set()),
+        ('"""Use this to import data from a file."""', set()),
     ]
 
-    def test_lines_are_classified_without_parsing(self):
+    def test_sources_are_classified_by_the_grammar(self):
         for source, expected in self.CASES:
             with self.subTest(source=source):
-                self.assertEqual(imports.imports_in_lines(source), expected)
+                self.assertEqual(imports.imports_in_tree(source, PYTHON), expected)
 
     def test_python2_source_still_yields_its_imports(self):
-        self.assertEqual(imports.imports_in_lines(PY2_SOURCE), {"os", "pyinotify"})
+        self.assertEqual(imports.imports_in_tree(PY2_SOURCE, PYTHON), {"os", "pyinotify"})
 
 
 class TestScanTree(unittest.TestCase):
@@ -109,7 +119,7 @@ class TestScanTree(unittest.TestCase):
         self.assertEqual(names, {"os", "pyinotify", "kombu"})
         self.assertEqual(len(warnings), 1)
         self.assertIn("2 Python file(s)", warnings[0])
-        self.assertIn("line scan", warnings[0])
+        self.assertIn("tree-sitter", warnings[0])
 
 
 if __name__ == "__main__":

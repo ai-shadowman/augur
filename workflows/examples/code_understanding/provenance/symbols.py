@@ -28,10 +28,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from . import treesitter
 from .declarations import (
-    _BIND_LINE,
-    _CLASS_LINE,
-    _DEF_LINE,
     PYTHON_SUFFIXES,
     _assigned_names,
     _nested_bodies,
@@ -39,11 +37,14 @@ from .declarations import (
 )
 from .imports import imports_in
 
-#: The whole point of this module is to agree with ``declarations``, so its
-#: traversal rules are reused rather than re-derived. Copying them would be two
-#: copies of the subtle part: which nodes open a namespace, which are descended
-#: into with the prefix unchanged, and which targets an assignment binds.
-CLASS, FUNCTION, METHOD, BINDING = "class", "function", "method", "binding"
+# The whole point of this module is to agree with ``declarations``, so its
+# traversal rules are reused rather than re-derived. Copying them would be two
+# copies of the subtle part: which nodes open a namespace, which are descended
+# into with the prefix unchanged, and which targets an assignment binds. The
+# kind names come from ``treesitter`` for the same reason: it is the module
+# that assigns them on the fallback path, and defining them here instead would
+# be a cycle.
+from .treesitter import BINDING, CLASS, FUNCTION, METHOD
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,9 @@ class Symbols:
     functions: tuple[str, ...] = ()
     methods: tuple[str, ...] = ()
     bindings: tuple[str, ...] = ()
-    #: False when ``ast`` refused the file and the line scan answered instead.
+    #: False when ``ast`` refused the file and tree-sitter answered instead.
+    #: A record of which parser ran, not of how much to trust the answer: the
+    #: two were measured identical on every file both can read.
     used_ast: bool = True
 
     @property
@@ -95,50 +98,6 @@ def _walk_ast(nodes, prefix: tuple[str, ...], out: list[tuple[str, str]]) -> Non
                 _walk_ast(body, prefix, out)
 
 
-def _scan_lines(source: str) -> list[tuple[str, str]]:
-    """Mirror of ``declarations.declarations_in_lines``, recording the kind.
-
-    Scope comes from indentation, so unlike the AST path this one can see
-    inside a function body. Everything it finds there is dropped, which is
-    what :func:`_walk_ast` does by never descending, and is where nearly all
-    of the scan's measured imprecision used to come from: a real
-    ``inner_create_task_cls`` arriving qualified as ``app.task.inner_...``
-    reads to the extraction model as a method of a class that does not exist.
-    """
-    out: list[tuple[str, str]] = []
-    #: (indent, name, is_class) for each enclosing block, outermost first.
-    stack: list[tuple[int, str, bool]] = []
-
-    for raw in source.expandtabs(8).splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        match = _CLASS_LINE.match(raw) or _DEF_LINE.match(raw) or _BIND_LINE.match(raw)
-        if not match:
-            continue
-        indent = len(match.group("indent"))
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
-        name = match.group("name")
-        is_class = match.re is _CLASS_LINE
-        is_block = is_class or match.re is _DEF_LINE
-        if any(not frame[2] for frame in stack):
-            # Inside a function body. Skipping before the push is safe: the
-            # enclosing function frame has a smaller indent than anything
-            # nested in it, so it stays on the stack and catches the deeper
-            # levels too.
-            continue
-        if is_class:
-            kind = CLASS
-        elif is_block:
-            kind = METHOD if (stack and stack[-1][2]) else FUNCTION
-        else:
-            kind = BINDING
-        out.append((kind, ".".join([*(frame[1] for frame in stack), name])))
-        if is_block:
-            stack.append((indent, name, is_class))
-    return out
-
-
 def _classify(found: list[tuple[str, str]], used_ast: bool) -> Symbols:
     """Bucket ``(kind, name)`` pairs, collapsing duplicates on the folded name.
 
@@ -165,113 +124,66 @@ def _classify(found: list[tuple[str, str]], used_ast: bool) -> Symbols:
 
 
 def symbols_in_source(source: str) -> Symbols:
-    """Classify by parsing, the exact answer. Raises if ``ast`` refuses.
+    """Classify by parsing with ``ast``, the exact answer. Raises if it refuses.
 
     The counterpart of :func:`declarations.declarations_in_source`, and the
-    oracle the line scan is measured against: for Python the AST is ground
-    truth, so a disagreement is the line scan's.
+    oracle the fallback is measured against: for Python 3 the stdlib AST is
+    the language's own definition of the syntax, so a disagreement is the
+    other parser's.
     """
     found: list[tuple[str, str]] = []
     _walk_ast(ast.parse(source).body, (), found)
     return _classify(found, used_ast=True)
 
 
-def symbols_in_lines(source: str) -> Symbols:
-    """Classify by indentation, the recovered answer. Never raises.
+def symbols_in_tree(source: str) -> Symbols:
+    """Classify by parsing with tree-sitter, the recovered answer. Never raises.
 
-    The counterpart of :func:`declarations.declarations_in_lines`. Public so
-    the two paths can be run against the same file and compared without
-    reaching past an underscore; the fidelity table in
-    ``tests/test_provenance_scan_fidelity.py`` is what that seam exists for.
+    The counterpart of :func:`symbols_in_source` for a file it refuses, which
+    on this corpus means Python 2. Public so the two parsers can be run
+    against the same source and compared without reaching past an underscore;
+    ``tests/test_provenance_treesitter_agreement.py`` is what that seam exists
+    for, and it is the only reason the equality is a measurement rather than a
+    hope.
     """
-    return _classify(_scan_lines(source), used_ast=False)
+    return _classify(treesitter.symbols_in_tree(source, treesitter.PYTHON), used_ast=False)
 
 
 def symbols_in(source: str) -> Symbols:
     """Classify everything one Python source string declares.
 
-    Parses when it can and falls back to the line scan when it cannot, the
+    Parses with ``ast`` when it can and with tree-sitter when it cannot, the
     same pairing :func:`declarations.declarations_in` makes.
     """
     try:
         return symbols_in_source(source)
     except (SyntaxError, ValueError, RecursionError):
-        return symbols_in_lines(source)
+        return symbols_in_tree(source)
 
 
 # --------------------------------------------------------------------------
 # The header sections
 # --------------------------------------------------------------------------
 
-#: How a section's contents were obtained. ``ast`` is exact, ``line-scan`` is
-#: the indentation fallback and can be fooled by a docstring, and the
-#: ``-empty`` pair are kept apart on purpose: a file that parsed and declared
-#: nothing is a confident answer, a file that would not parse and yielded
-#: nothing is no answer at all. Phase 4 decides what a header should say about
-#: each; this pass only has to keep them distinguishable.
-AST, AST_EMPTY, SCAN, SCAN_EMPTY = "ast", "ast-empty", "line-scan", "line-scan-empty"
+#: How a section's contents were obtained. Both parsers are exact and were
+#: measured equal, so the distinction is a record of which one ran rather than
+#: a quality grade. The ``-empty`` pair are kept apart on purpose: a file that
+#: parsed and declared nothing is a confident answer, and the distinction is
+#: what lets a reader tell silence from absence.
+AST, AST_EMPTY = "ast", "ast-empty"
+TREE_SITTER, TREE_SITTER_EMPTY = "tree-sitter", "tree-sitter-empty"
 
 #: No parser in this tree reads the language, so nothing is claimed about the
 #: file. Not an error and not an empty answer, which is why it is neither
-#: ``line-scan-empty`` nor absent.
+#: ``tree-sitter-empty`` nor absent.
 UNSUPPORTED = "unsupported-language"
-
-#: Precision of :func:`symbols_in_lines` against :func:`symbols_in_source`,
-#: measured on the 187 celery 2.5.5 files both parsers answer. Micro-averaged:
-#: the question is what fraction of emitted names are real, which is what the
-#: extraction model sees, so a 400-name file should not weigh the same as a
-#: 3-name one. ``tests/test_provenance_scan_fidelity.py`` recomputes these and
-#: fails if the scanner drifts away from the figures the gate was set on.
-#:
-#: ``bindings`` did not move when the three rendered kinds did — 799 true, 65
-#: false and 25 missed, before and after, to the name — which is the evidence
-#: that its errors are a different mechanism. They are: a keyword argument
-#: inside a multi-line call, ``Column("id", Integer,\n    primary_key=True)``,
-#: which ``_BIND_LINE`` reads as an assignment because the scan tracks
-#: indentation and not bracket depth. Nothing renders ``bindings``, so this
-#: costs no header anything, and it is why one kind is still below the bar.
-SCAN_PRECISION = {"classes": 0.997, "functions": 0.995, "methods": 0.999, "bindings": 0.925}
-
-#: A kind at or above this is emitted on line-scanned files exactly as it is on
-#: parsed ones; a kind below it is withheld there. Precision decides rather than
-#: recall because the two failures are not symmetric: a name the scan invents
-#: reaches the extraction model as a symbol, and a name it misses is merely
-#: absent, which is the failure this pipeline already tolerates everywhere else.
-PRECISION_BAR = 0.95
-
-#: The kinds that clear the bar: every kind a header renders, and not
-#: ``bindings``, which no section renders anyway. Phase 4 measured 0.834 /
-#: 0.683 / 0.957 here and emitted ``methods`` alone.
-#:
-#: What moved is the scanner, not the bar. Nearly all of Phase 4's loss was one
-#: mechanism — ``_walk_ast`` never descends into a function body, deliberately,
-#: while ``_scan_lines`` tracked scope by indentation and reported what it
-#: found there, so a real ``inner_create_task_cls`` arrived qualified as
-#: ``app.task.inner_create_task_cls`` and read to the extraction model as a
-#: method of a class that does not exist. Phase 5 made the scan skip function
-#: bodies too, and 245 of the 249 false positives in the three rendered kinds
-#: went with it.
-#:
-#: So the gate now withholds nothing the renderer would have written. It is
-#: kept because it is what makes that a measurement rather than an assumption:
-#: ``tests/test_provenance_scan_fidelity.py`` recomputes these figures from
-#: source every run, and a kind that regresses below the bar stops being
-#: emitted without anyone having to notice.
-SCAN_EMITS = frozenset(kind for kind, p in SCAN_PRECISION.items() if p >= PRECISION_BAR)
-
-#: Imports are scanned by :mod:`provenance.imports`, not by ``_scan_lines``,
-#: and were measured the same way: precision 0.992, recall 1.000, 5 false
-#: positives in 626 names. ``Dependencies:`` therefore renders on line-scanned
-#: files unchanged. Recorded here because the gate's claim is about every
-#: section a line scan fills, not only the declaration kinds.
-SCAN_IMPORT_PRECISION = 0.992
 
 
 def evidence(used_ast: bool, found: bool) -> str:
     """Which of the four outcome classes one section landed in."""
     if used_ast:
         return AST if found else AST_EMPTY
-    return SCAN if found else SCAN_EMPTY
+    return TREE_SITTER if found else TREE_SITTER_EMPTY
 
 
 def is_supported(path: str) -> bool:
@@ -295,17 +207,18 @@ def sections_for(path: str, source: str) -> dict:
     used to emit them and how the harness reproduces them.
 
     A file in a language no parser here reads gets the two evidence keys and
-    nothing else. Declining is deliberate: writing a ``Classes:`` section from
-    a line scan tuned for Python would put invented names in front of the
-    extraction model, and the gate belongs with the parser rather than with
-    the caller. tree-sitter lifts this per language in Phase 6.
+    nothing else. Declining is deliberate: claiming a ``Classes:`` section
+    from a reader tuned for a different language would put invented names in
+    front of the extraction model. Registering a dialect in
+    :data:`provenance.treesitter.DIALECTS` is what lifts this, one language at
+    a time and each with its own measurement.
 
-    A file the line scan recovered gets the same treatment one kind at a time:
-    only the kinds in :data:`SCAN_EMITS` are returned, because the rest
-    measured below :data:`PRECISION_BAR` on the files both parsers answer. A
-    withheld kind is absent rather than empty, which is what the renderer
-    needs to drop the section, and ``symbol_evidence`` still records that the
-    scan is what ran.
+    Every kind a parser reports is now written, whichever parser ran. There
+    used to be a precision gate here that withheld a kind from a recovered
+    file, because the fallback was a regex line scan and some of what it
+    reported was invented. The fallback is a parser now and measured exact, so
+    the gate had nothing left to withhold and was removed rather than left
+    standing as an inert filter.
     """
     if not is_supported(path):
         return {"symbol_evidence": UNSUPPORTED, "import_evidence": UNSUPPORTED}
@@ -313,18 +226,12 @@ def sections_for(path: str, source: str) -> dict:
     found = symbols_in(source)
     imported, imports_used_ast = imports_in(source)
 
-    declared = {
-        "classes": list(found.classes),
-        "functions": list(found.functions),
-        "methods": list(found.methods),
-    }
-    if not found.used_ast:
-        declared = {kind: names for kind, names in declared.items() if kind in SCAN_EMITS}
-
     return {
         "package": module_key(path),
         "imports": sorted(imported),
-        **declared,
+        "classes": list(found.classes),
+        "functions": list(found.functions),
+        "methods": list(found.methods),
         "symbol_evidence": evidence(found.used_ast, bool(found)),
         "import_evidence": evidence(imports_used_ast, bool(imported)),
     }

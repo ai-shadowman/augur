@@ -19,7 +19,8 @@ from pathlib import Path
 
 from provenance import symbols
 from provenance.declarations import declarations_in
-from provenance.imports import imports_in, imports_in_lines, imports_in_source
+from provenance.imports import imports_in, imports_in_source, imports_in_tree
+from provenance.treesitter import PYTHON
 
 CANDIDATES = Path(
     os.environ.get("AUGUR_CANDIDATES", Path.home() / "Developer" / "augur-test" / "candidates")
@@ -31,11 +32,13 @@ EXCLUDE_PARTS = {".git", "__pycache__"}
 #: has exactly this many files, so a different candidate still gets the
 #: equality checks without failing on a figure that was never about it.
 EXPECTED_FILES = 237
-#: 4,885 before Phase 5 taught the line scan to skip function bodies. The 104
-#: it lost are names the AST never counted either: real declarations inside a
-#: closure, which nothing outside the function can import. Only the 50
-#: line-scanned files can move this number, and the 187 parsed ones did not.
-EXPECTED = {"ast": 187, "line_scan": 50, "zero_declarations": 14, "declarations": 4781}
+#: Only the 50 recovered files can move the declaration count, and the history
+#: of that number is the history of what reads them. 4,885 under the line scan,
+#: then 4,781 once Phase 5 taught it to skip function bodies, shedding 104
+#: closure locals the AST never counted either. 4,789 now that tree-sitter
+#: reads them: the scan was missing 25 real names and inventing 17, and +8 is
+#: the net. The 187 parsed files have never moved it.
+EXPECTED = {"ast": 187, "tree_sitter": 50, "zero_declarations": 14, "declarations": 4789}
 
 
 def candidate_files():
@@ -124,7 +127,7 @@ class TestAstClassification(unittest.TestCase):
 
 
 #: ``except X, e`` is a syntax error under Python 3, which is what forces the
-#: line scan on roughly a third of the indexed corpus.
+#: fallback parser on roughly a third of the indexed corpus.
 PY2 = (
     "class Worker(object):\n"
     "    def start(self):\n"
@@ -140,26 +143,26 @@ PY2 = (
 )
 
 
-class TestLineScanFallback(unittest.TestCase):
+class TestTreeSitterFallback(unittest.TestCase):
     """What the header gets when ``ast`` refuses the file."""
 
-    def test_the_line_scan_classifies_when_ast_refuses(self):
+    def test_tree_sitter_classifies_when_ast_refuses(self):
         found = symbols.symbols_in(PY2)
 
-        self.assertFalse(found.used_ast, "Python 2 source should force the line scan")
+        self.assertFalse(found.used_ast, "Python 2 source should force the fallback")
         self.assertEqual(("Worker",), found.classes)
         self.assertEqual(("Worker.start",), found.methods)
         self.assertEqual(("bootstrap",), found.functions)
         self.assertEqual(("DEFAULTS",), found.bindings)
 
     def test_a_nested_def_is_declined_as_the_ast_path_declines_it(self):
-        """Indentation can see into a function body; since Phase 5 it looks away.
+        """A closure's locals are not addressable, so neither reader emits them.
 
-        ``inner`` is a real name and the scan is not inventing it, but it is
-        not addressable from outside ``outer``, so emitting it as
-        ``outer.inner`` put a symbol in front of the extraction model that no
-        import could reach. ``_walk_ast`` never descended here; the scan now
-        matches it.
+        ``inner`` is a real name and nothing is inventing it, but no import can
+        reach it from outside ``outer``, so emitting it as ``outer.inner``
+        would put a symbol in front of the extraction model that does not
+        resolve. ``treesitter._walk`` declines it for the same reason
+        ``_walk_ast`` does, which is the point of mirroring the traversal.
         """
         found = symbols.symbols_in("def outer():\n    def inner():\n        pass\n    raise X, y\n")
 
@@ -200,7 +203,7 @@ class TestImportsCombinator(unittest.TestCase):
         found, used_ast = imports_in(PY2)
 
         self.assertFalse(used_ast)
-        self.assertEqual(imports_in_lines(PY2), found)
+        self.assertEqual(imports_in_tree(PY2, PYTHON), found)
 
     def test_future_is_still_reported_as_an_import(self):
         """A language directive, not a dependency. Deliberately not filtered.
@@ -243,8 +246,8 @@ class TestKindsAgreeWithTheOracleOnEveryFile(unittest.TestCase):
                     oracle_used_ast,
                     found.used_ast,
                     f"parser disagreement: symbols used "
-                    f"{'ast' if found.used_ast else 'line scan'}, declarations used "
-                    f"{'ast' if oracle_used_ast else 'line scan'}",
+                    f"{'ast' if found.used_ast else 'tree-sitter'}, declarations used "
+                    f"{'ast' if oracle_used_ast else 'tree-sitter'}",
                 )
                 self.assertEqual(
                     oracle,
@@ -277,7 +280,7 @@ class TestKindsAgreeWithTheOracleOnEveryFile(unittest.TestCase):
         found = [classified for _oracle, classified in self.cases.values()]
         measured = {
             "ast": sum(1 for s in found if s.used_ast),
-            "line_scan": sum(1 for s in found if not s.used_ast),
+            "tree_sitter": sum(1 for s in found if not s.used_ast),
             "zero_declarations": sum(1 for s in found if not s),
             "declarations": sum(s.declared for s in found),
         }
