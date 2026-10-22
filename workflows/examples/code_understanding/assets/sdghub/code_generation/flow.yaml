@@ -51,7 +51,18 @@ blocks:
       block_name: get_code_metadata
       input_cols: extract_metadata_prompt
       output_cols: extracted_code_metadata
-      max_tokens: 64000
+      # data_from_code.yaml asks for one field, a brief summary of the file,
+      # so the answer is a few sentences wrapped in JSON: tens of tokens, not
+      # thousands. 1,024 is headroom rather than a measurement, since no run
+      # on this machine has an endpoint behind it. The one way it can be too
+      # small is a model that reasons in the content channel; if truncated
+      # JSON shows up, that is the cause, and the fix is to raise this line
+      # rather than to re-add fields to the prompt.
+      #
+      # This is the only place the budget is set. data_generation.py used to
+      # pass max_tokens=32_000 to set_model_config, and sdg_hub writes that
+      # straight onto the block, so the 64,000 written here never took effect.
+      max_tokens: 1024
       async_mode: true
       n: 1
 

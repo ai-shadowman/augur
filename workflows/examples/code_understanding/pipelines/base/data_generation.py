@@ -251,13 +251,18 @@ def get_parsed_code_metadata(df, language, config=False):
 
         flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
 
+        # max_tokens is deliberately absent. sdg_hub's set_model_config writes
+        # straight onto the LLM block, so passing it here silently overrode the
+        # max_tokens each flow.yaml declares next to its own prompt and made
+        # one number govern two flows that ask for different amounts of text.
+        # The output budget belongs with the question; everything below is a
+        # property of the endpoint rather than of what is being asked.
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",
             api_base=os.getenv("GRAPHRAG_LLM_API_BASE"),
             api_key=os.getenv("GRAPHRAG_LLM_TOKEN"),
             temperature=0,
             n=1,
-            max_tokens=32_000,
             response_format={"type": "json_object"},
             top_k=1,
             timeout=llm_timeout,

@@ -19,7 +19,15 @@ if str(BASE_DIR) not in sys.path:
 from pipelines.base.data_generation import get_parsed_code_metadata
 
 
-class TestMetadataChatParameters(unittest.TestCase):
+class MetadataChatHarness(unittest.TestCase):
+    """Stubs enough of sdg_hub to run a flow end to end with no endpoint.
+
+    The ``Flow`` stub below reads the LLMChatBlock's config out of the real
+    ``flow.yaml`` and lets ``set_model_config`` write over it, which is the
+    precedence the library has, so what reaches ``chat_completion`` is what
+    would reach the model.
+    """
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -44,7 +52,13 @@ class TestMetadataChatParameters(unittest.TestCase):
                     writer.writeheader()
                     writer.writerows(self.records)
 
+        #: Every kwarg set that reached the chat client, in call order. The
+        #: flow.yaml value and the set_model_config value land in the same
+        #: dict, so this is where "which one governs" is answerable.
+        self.reached_client = []
+
         def chat_completion(**kwargs):
+            self.reached_client.append(dict(kwargs))
             # Reproduce the SDK rejection observed in the production logs.
             if "best_of" in kwargs:
                 raise TypeError(
@@ -107,11 +121,71 @@ class TestMetadataChatParameters(unittest.TestCase):
         })
         self.assertEqual(len(list(self.root.glob("data_java_*.csv"))), 1)
 
+
+class TestMetadataChatParameters(MetadataChatHarness):
     def test_java_source_metadata_reaches_chat_client_without_unsupported_parameter(self):
         self.assert_metadata_extracted(config=False)
 
     def test_java_config_metadata_reaches_chat_client_without_unsupported_parameter(self):
         self.assert_metadata_extracted(config=True)
+
+
+class TestOneNumberGovernsTheOutputBudget(MetadataChatHarness):
+    """``max_tokens`` was written in three places and read from one.
+
+    Both ``flow.yaml`` files said 64,000 and neither took effect, because
+    ``get_parsed_code_metadata`` passed ``max_tokens=32_000`` to
+    ``set_model_config``, and sdg_hub's ``apply_config_to_blocks`` setattrs
+    straight onto the LLM block. A number that is written next to the prompt
+    and silently discarded is worse than no number: the next person tunes the
+    one they can see. The code override is gone, so each flow's YAML now owns
+    its own budget, and these tests read what reached the client rather than
+    what any one file says.
+
+    The reduction is measured against what ran, not against what was written:
+    32,000 effective to 1,024 is 31.25x. Against the dead 64,000 it would read
+    62.5x, which would be claiming credit for a number nothing ever sent.
+    """
+
+    #: Effective before Phase 5, for both flows, from the code override.
+    WAS = 32_000
+
+    def budget_for(self, config):
+        self.assert_metadata_extracted(config=config)
+        self.assertEqual(1, len(self.reached_client), "expected exactly one chat call")
+        return self.reached_client[0]["max_tokens"]
+
+    def test_the_code_no_longer_overrides_what_the_flow_declares(self):
+        source = (BASE_DIR / "pipelines" / "base" / "data_generation.py").read_text(
+            encoding="utf-8"
+        )
+        call = source.split("flow.set_model_config(")[1].split(")")[0]
+
+        self.assertNotIn("max_tokens", call, "the override is back; the YAMLs are dead again")
+
+    def test_the_one_field_prompt_gets_a_summary_sized_budget(self):
+        budget = self.budget_for(config=False)
+
+        self.assertEqual(1_024, budget)
+        self.assertEqual(31.25, self.WAS / budget)
+
+    def test_the_config_flow_keeps_what_it_actually_ran_with(self):
+        """Removing the override must not silently double a budget.
+
+        ``config_generation``'s YAML said 64,000 and it ran at 32,000. Left
+        alone it would have jumped to 64,000 on this commit, which is a
+        behaviour change nobody asked for and no measurement supports: that
+        prompt still asks for a list of every library in the file, and
+        nothing here has measured how long that gets.
+        """
+        self.assertEqual(self.WAS, self.budget_for(config=True))
+
+    def test_the_two_flows_are_free_to_disagree_which_is_the_point(self):
+        for config in (False, True):
+            get_parsed_code_metadata(self.frame, language="java", config=config)
+        code, configuration = (call["max_tokens"] for call in self.reached_client)
+
+        self.assertLess(code, configuration)
 
 
 if __name__ == "__main__":

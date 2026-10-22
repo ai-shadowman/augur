@@ -1,11 +1,13 @@
 """Which questions about code a parser can settle, per language.
 
-``assets/sdghub/code_generation/prompts/data_from_code.yaml`` asks a model for
-six things about every method and one about every file. Some of them a parser
-answers exactly, some it answers partly, and some are not decidable from one
-file by anything. The epic's operating rule turns on that distinction: name the
-deterministic thing that could answer the same question, and if one exists, use
-it and delete the prompt.
+``assets/sdghub/code_generation/prompts/data_from_code.yaml`` used to ask a
+model for six things about every method and one about every file. Some of them
+a parser answers exactly, some it answers partly, and some are not decidable
+from one file by anything. The epic's operating rule turns on that
+distinction: name the deterministic thing that could answer the same question,
+and if one exists, use it and delete the prompt. The prompt now asks for the
+one field that survived, and this table is the record of why the other six did
+not.
 
 That argument kept getting made in prose, in a commit message or a planning
 file, where it cannot be checked and has to be re-derived every time someone
@@ -108,21 +110,18 @@ QUESTIONS = (
     METHODS,
 )
 
-#: The questions ``data_from_code.yaml`` currently puts to a model. The rest of
-#: :data:`QUESTIONS` are fields the prompt no longer asks about: the five the
-#: header now stitches in, and :data:`EXCEPTIONS`, which Phase 4 deleted on the
-#: strength of the rows below. The table keeps assessing a deleted field on
-#: purpose, so that re-adding it has to argue past a verdict rather than past
-#: an absence.
-PROMPTED = (
-    PURPOSE,
-    METHOD_CODE,
-    CALLERS,
-    PARAMETERS,
-    TEMPLATE_PARAMETERS,
-    ANNOTATIONS,
-    RETURN_VALUE,
-)
+#: The questions ``data_from_code.yaml`` currently puts to a model, which since
+#: Phase 5 is one. Everything else in :data:`QUESTIONS` is a field the prompt
+#: no longer asks about: the five the header stitches in, :data:`EXCEPTIONS`,
+#: which Phase 4 deleted, and the rest of the ``methods[]`` object, which
+#: Phase 5 deleted on the strength of the same rows. The table keeps assessing
+#: all of them on purpose, so that re-adding one has to argue past a verdict
+#: rather than past an absence.
+#:
+#: :func:`model_justified` is what shrank this tuple, not an opinion about it:
+#: of the seven fields the prompt used to ask, ``purpose`` is the only one it
+#: returns True for in any language the table records.
+PROMPTED = (PURPOSE,)
 
 
 @dataclass(frozen=True)

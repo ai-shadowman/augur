@@ -7,17 +7,7 @@
   "package": "",
   "imports": [],
   "classes": [],
-  "methods": [
-    {
-      "method_name": "",
-      "code": "",
-      "callers": [],
-      "parameters": [],
-      "template_parameters": [],
-      "annotations": [],
-      "return value": ""
-    }
-  ],
+  "methods": [],
   "runtime_stack": [
     {
       "name": "",

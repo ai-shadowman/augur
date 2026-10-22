@@ -3,8 +3,9 @@
 A table of verdicts is only worth more than the prose it replaced if something
 fails when it drifts from the code. These tests do three jobs: keep the shape
 honest (a verdict names what settles it, or admits nothing does), keep the
-``parsed`` rows pointing at callables that exist, and pin the two claims the
-``methods[].exceptions`` decision rests on.
+``parsed`` rows pointing at callables that exist, and pin the claims the two
+prompt deletions rest on — ``methods[].exceptions`` in Phase 4 and the rest of
+the ``methods[]`` object in Phase 5.
 """
 
 import importlib
@@ -216,11 +217,14 @@ class TestTheExceptionsArgument(unittest.TestCase):
         self.assertFalse(d.model_justified("ansible", d.EXCEPTIONS))
 
 
-class TestTheFieldIsGoneFromBothPlacesItLived(unittest.TestCase):
+class TestTheFieldsAreGoneFromBothPlacesTheyLived(unittest.TestCase):
     """The table above is the argument; these are the edits it licensed.
 
-    Two artifacts, because deleting the prompt line alone leaves the field
-    reachable by a second route.
+    Two artifacts, because deleting the prompt line alone leaves a field
+    reachable by a second route. Phase 4 did this for
+    ``methods[].exceptions`` and Phase 5 did it for the rest of the object,
+    so what used to be an assertion about one field is now an assertion that
+    the object itself is gone.
     """
 
     #: A ``methods[]`` field in the prompt's schema block: an indented
@@ -228,39 +232,77 @@ class TestTheFieldIsGoneFromBothPlacesItLived(unittest.TestCase):
     #: top-level fields and deliberately do not match.
     METHOD_FIELD = re.compile(r"^\s+\*\*(?P<name>[^*]+)\*\*:", re.MULTILINE)
 
+    #: A numbered top-level field, which is the form the one survivor takes.
+    TOP_LEVEL_FIELD = re.compile(r"^\s*\d+\.\s+\*\*(?P<name>[^*]+)\*\*", re.MULTILINE)
+
+    def schema_block(self):
+        return PROMPT.read_text(encoding="utf-8").split("- role: user")[0]
+
     def asked_per_method(self):
-        schema = PROMPT.read_text(encoding="utf-8").split("- role: user")[0]
-        return [match.group("name") for match in self.METHOD_FIELD.finditer(schema)]
+        return [match.group("name") for match in self.METHOD_FIELD.finditer(self.schema_block())]
 
-    def test_the_prompt_no_longer_asks_a_model_for_exceptions(self):
-        asked = self.asked_per_method()
+    def test_the_prompt_asks_for_nothing_per_method_at_all(self):
+        """Phase 4 asserted ``exceptions`` was absent from this list. It is empty now.
 
-        self.assertTrue(asked, "no method fields parsed, so this test proves nothing")
-        self.assertNotIn(d.EXCEPTIONS, asked)
+        That makes the narrower assertion vacuous, so the replacement is the
+        stronger one it became: no per-method field survives, which covers
+        ``exceptions`` along with ``code``, ``callers`` and the other three.
+        """
+        self.assertEqual([], self.asked_per_method())
 
-    def test_the_metadata_schema_no_longer_carries_an_empty_default(self):
+    def test_the_only_thing_the_prompt_asks_for_is_purpose(self):
+        asked = [match.group("name") for match in self.TOP_LEVEL_FIELD.finditer(self.schema_block())]
+
+        self.assertEqual([d.PURPOSE], asked)
+
+    def test_the_metadata_schema_no_longer_carries_the_methods_template(self):
         """``code_metadata_schema.json`` is the second route.
 
         ``utils.json_utils._apply_defaults_to_json_keys`` walks the schema's
-        top level only, so it does not backfill per method. It does plant the
-        whole ``methods[]`` template whenever a model returns no ``methods``
-        key at all, and that template is written to ``*_metadata.txt``, copied
-        into GraphRAG's ``input/`` by ``indexing.py`` and indexed. A field
+        top level only, so it never backfilled per method. It did plant the
+        whole ``methods[]`` template whenever a model returned no ``methods``
+        key, and that template is written to ``*_metadata.txt``, copied into
+        GraphRAG's ``input/`` by ``indexing.py`` and indexed. Six fields
         nothing asks for should not arrive by that path.
-        """
-        template = json.loads(SCHEMA.read_text(encoding="utf-8"))["methods"][0]
 
-        self.assertNotIn(d.EXCEPTIONS, template)
+        The key itself stays, as an empty list. ``provenance.symbols`` fills
+        it for a language it reads and the renderer wants the same shape
+        either way; what goes is the object that mirrored the deleted prompt.
+        """
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+
+        self.assertEqual([], schema["methods"])
+        for key in ("classes", "imports"):
+            with self.subTest(key=key):
+                self.assertEqual([], schema[key], "the sibling list keys set the shape")
 
     def test_what_the_prompt_still_asks_is_what_the_table_says_it_asks(self):
-        """Pins the drift in both directions, which is the point of PROMPTED.
-
-        ``purpose`` is the one prompted question that is not a ``methods[]``
-        field, so removing it leaves exactly the per-method set.
-        """
+        """Pins the drift in both directions, which is the point of PROMPTED."""
         asked = {name.replace(" ", "_") for name in self.asked_per_method()}
+        asked |= {
+            match.group("name").replace(" ", "_")
+            for match in self.TOP_LEVEL_FIELD.finditer(self.schema_block())
+        }
 
-        self.assertEqual(set(d.PROMPTED) - {d.PURPOSE}, asked)
+        self.assertEqual(set(d.PROMPTED), asked)
+
+    def test_every_field_the_prompt_dropped_still_has_a_verdict_against_it(self):
+        """Deleting a field must not delete the argument that deleted it.
+
+        Six questions left the prompt in Phase 5 and one in Phase 4. All seven
+        stay in ``QUESTIONS``, and ``model_justified`` still refuses each of
+        them for Python, so re-adding one has to argue past a verdict.
+        """
+        dropped = (
+            d.METHOD_CODE, d.CALLERS, d.PARAMETERS, d.TEMPLATE_PARAMETERS,
+            d.ANNOTATIONS, d.RETURN_VALUE, d.EXCEPTIONS,
+        )
+
+        for question in dropped:
+            with self.subTest(question=question):
+                self.assertIn(question, d.QUESTIONS)
+                self.assertNotIn(question, d.PROMPTED)
+                self.assertFalse(d.model_justified("python", question))
 
 
 if __name__ == "__main__":

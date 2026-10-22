@@ -230,11 +230,18 @@ class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
         self.assertIn("__future__", imports_in_source(SOURCE))
 
     def test_the_prompt_no_longer_asks_for_what_the_parser_settles(self):
-        """Phase 3's deletion, asserted so a re-added field fails rather than wins."""
+        """Phase 3's deletion, asserted so a re-added field fails rather than wins.
+
+        Phase 5 took ``methods`` too, on the decidability table's verdicts
+        rather than on this file's evidence, so the expected list is now one
+        name long. ``tests/test_provenance_decidability.py`` is where that
+        argument lives; this stays because the four fields below are the ones
+        the sections above stitch in, and a re-added one belongs here.
+        """
         schema = PROMPT.read_text(encoding="utf-8").split("- role: user")[0]
         asked = re.findall(r"^\s*\d+\.\s+\*\*(?P<name>[^*]+)\*\*", schema, re.MULTILINE)
 
-        self.assertEqual(["purpose", "methods"], asked)
+        self.assertEqual(["purpose"], asked)
         for gone in ("**package**", "**imports**", "**classes**", "**method_name**"):
             with self.subTest(field=gone):
                 self.assertNotIn(gone, schema)

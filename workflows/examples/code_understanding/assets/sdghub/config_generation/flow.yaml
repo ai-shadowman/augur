@@ -50,7 +50,14 @@ blocks:
       block_name: get_code_metadata
       input_cols: extract_metadata_prompt
       output_cols: extracted_code_metadata
-      max_tokens: 64000
+      # 32,000 preserves what this flow actually ran with: the 64,000 written
+      # here never took effect, because pipelines/base/data_generation.py
+      # passed max_tokens=32_000 to set_model_config for both flows. That
+      # override is gone, so the number has to be stated rather than inherited.
+      # Unlike data_from_code.yaml this prompt still asks for a list — every
+      # library in the file, with its version and the line it came from — and
+      # nothing here has measured how long that gets. Not lowered on a guess.
+      max_tokens: 32000
       async_mode: true
       n: 1
 

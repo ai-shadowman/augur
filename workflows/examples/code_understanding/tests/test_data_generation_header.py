@@ -142,16 +142,18 @@ class TestHeaderIsAPureFunctionOfTheRow(unittest.TestCase):
                 self.assertEqual(ROW["git_slug"], match.group("slug"))
 
 
-class TestSaveOverwritesRatherThanBackfills(unittest.TestCase):
-    """The call site assigns the five unconditionally, so a wrong one cannot survive."""
+class SaveHarness(unittest.TestCase):
+    """One row through the real ``save_code_and_metadata_files``, no model."""
 
-    def save(self, extracted):
+    def save(self, extracted, code=None):
         """Runs one row through ``save_code_and_metadata_files``.
 
         Returns the annotated file's text and the metadata dict handed to the
         flattener, which is what reaches ``_metadata.txt``.
         """
         row = dict(ROW)
+        if code is not None:
+            row["code"] = code
         if extracted is not None:
             row["extracted_data"] = json.dumps(extracted)
 
@@ -179,6 +181,14 @@ class TestSaveOverwritesRatherThanBackfills(unittest.TestCase):
         written = Path(directory.name, "celery", "worker", "state.txt").read_text(encoding="utf-8")
         return written, captured
 
+    def header(self, extracted, code=None):
+        """The comment block alone, without the source appended below it."""
+        return self.save(extracted, code=code)[0].split('"""', 2)[1]
+
+
+class TestSaveOverwritesRatherThanBackfills(SaveHarness):
+    """The call site assigns the five unconditionally, so a wrong one cannot survive."""
+
     def test_a_wrong_model_answer_reaches_neither_the_header_nor_the_metadata_file(self):
         written, metadata = self.save(ECHOED | {"purpose": "Holds revoked task ids."})
 
@@ -199,6 +209,115 @@ class TestSaveOverwritesRatherThanBackfills(unittest.TestCase):
         for field in ("file_path", "git_repo", "git_slug", "language", "multi_repo"):
             with self.subTest(field=field):
                 self.assertEqual(ROW[field], metadata[field])
+
+
+#: Three Python files that between them exercise both scanners and every
+#: section. The Python 2 one is line-scanned, which is roughly a third of
+#: celery 2.5.5 and the case where the header is assembled without an AST.
+SOURCES = {
+    "one binding": ROW["code"],
+    "python 3": (
+        "import time\n"
+        "from celery import current_app\n"
+        "\n"
+        "SOFTWARE = 'celery'\n"
+        "\n"
+        "class LocalCache(dict):\n"
+        "    def get(self, key):\n"
+        "        return dict.get(self, key)\n"
+        "\n"
+        "def revoke(task_id):\n"
+        "    return current_app.control.revoke(task_id)\n"
+    ),
+    "python 2, line-scanned": (
+        "import sys\n"
+        "\n"
+        "class Worker(object):\n"
+        "    def start(self):\n"
+        "        try:\n"
+        "            self.run()\n"
+        "        except Exception, exc:\n"
+        "            print 'failed: %s' % exc\n"
+        "\n"
+        "def main():\n"
+        "    Worker().start()\n"
+    ),
+}
+
+#: What a model returns now that the prompt asks for one field.
+ANSWER = {"purpose": "Holds the set of revoked task ids."}
+
+#: What a model might volunteer anyway. Every key here is one the prompt used
+#: to ask for and no longer does, so each is a chance for an unasked answer to
+#: reach a header.
+VOLUNTEERED = ANSWER | {
+    "package": "celery.worker",
+    "imports": ["kombu", "billiard"],
+    "classes": ["TaskPool"],
+    "functions": ["maybe_shutdown"],
+    "methods": [{"method_name": "TaskPool.apply_async", "code": "def apply_async(self): ..."}],
+}
+
+
+class TestTheHeaderIsTheSameWhetherOrNotAModelRan(SaveHarness):
+    """Phase 5's definition of done, as an assertion rather than a claim.
+
+    The header has one line left that a model produces. Everything above and
+    below ``Purpose:`` is stitched from the row or settled by a parser, so a
+    run with no endpoint should differ from a run with one in exactly that
+    line. If it differs anywhere else, something in the header still depends
+    on a model answering, and the reduction in ``data_from_code.yaml`` was not
+    safe to make.
+    """
+
+    #: Each section is appended as one ``lines`` entry beginning with a
+    #: newline, so the blank line above ``Purpose:`` belongs to it and has to
+    #: come out with it. Leaving it behind would make an absent section look
+    #: like a formatting difference.
+    PURPOSE_BLOCK = re.compile(r"\n\n Purpose: [^\n]*")
+
+    def without_purpose(self, text):
+        return self.PURPOSE_BLOCK.sub("", text)
+
+    def test_only_the_purpose_line_depends_on_the_model(self):
+        for name, code in SOURCES.items():
+            with self.subTest(source=name):
+                stubbed = self.header(None, code=code)
+                answered = self.header(ANSWER, code=code)
+
+                self.assertNotEqual(stubbed, answered, "Purpose: did not render at all")
+                self.assertEqual(self.without_purpose(stubbed), self.without_purpose(answered))
+
+    def test_the_purpose_line_is_the_only_line_the_model_adds(self):
+        for name, code in SOURCES.items():
+            with self.subTest(source=name):
+                added = set(self.header(ANSWER, code=code).split("\n")) - set(
+                    self.header(None, code=code).split("\n")
+                )
+
+                self.assertEqual({f" Purpose: {ANSWER['purpose']}"}, added)
+
+    def test_a_field_the_prompt_stopped_asking_for_cannot_re_enter_by_being_volunteered(self):
+        """The prompt is an asset and a model is not bound by it.
+
+        ``save_code_and_metadata_files`` overwrites the parser-settled keys
+        after reading the answer, so a model that returns ``methods`` anyway
+        is ignored rather than trusted. That is what makes deleting the field
+        from the prompt a reduction in tokens and not a reduction in control.
+        """
+        for name, code in SOURCES.items():
+            with self.subTest(source=name):
+                self.assertEqual(
+                    self.header(ANSWER, code=code), self.header(VOLUNTEERED, code=code)
+                )
+
+    def test_the_volunteered_method_body_never_reaches_the_corpus(self):
+        """``methods[].code`` was the largest echo; it has to stay out by construction."""
+        written, metadata = self.save(VOLUNTEERED, code=SOURCES["python 3"])
+
+        self.assertNotIn("def apply_async", written)
+        self.assertNotIn("TaskPool", written)
+        self.assertTrue(all(isinstance(name, str) for name in metadata["methods"]))
 
 
 class TestThePromptNoLongerAsksForThem(unittest.TestCase):
