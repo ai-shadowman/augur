@@ -32,10 +32,16 @@ durations.json
 tokens.json
 **/tokens.json
 /flows/
+# Root-anchored above, which misses the one that actually gets written: the
+# SDG Hub flow is downloaded at runtime beside the pipeline, not at the root,
+# and its prompt copy shadows the asset under assets/sdghub/. Editing the
+# download has no effect and raises no error, so keep it out of the tree.
+workflows/examples/code_understanding/flows/
 
 # Local tooling artifacts
 .coverage
 htmlcov/
+mlflow.db
 .pytest_cache/
 .ruff_cache/
 
