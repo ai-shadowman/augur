@@ -19,8 +19,8 @@ from pathlib import Path
 
 from provenance import symbols
 from provenance.declarations import declarations_in
+from provenance.dialects import PYTHON
 from provenance.imports import imports_in, imports_in_source, imports_in_tree
-from provenance.treesitter import PYTHON
 
 CANDIDATES = Path(
     os.environ.get("AUGUR_CANDIDATES", Path.home() / "Developer" / "augur-test" / "candidates")

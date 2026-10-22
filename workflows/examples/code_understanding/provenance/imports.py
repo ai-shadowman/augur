@@ -29,7 +29,7 @@ import ast
 import logging
 from pathlib import Path
 
-from . import treesitter
+from .dialects import PYTHON
 from .treesitter import imports_in_tree
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def imports_in(source: str) -> tuple[set[str], bool]:
     try:
         return imports_in_source(source), True
     except (SyntaxError, ValueError, RecursionError):
-        return imports_in_tree(source, treesitter.PYTHON), False
+        return imports_in_tree(source, PYTHON), False
 
 
 def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str]]:

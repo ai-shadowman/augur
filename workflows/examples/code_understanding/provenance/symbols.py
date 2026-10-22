@@ -35,6 +35,7 @@ from .declarations import (
     _nested_bodies,
     module_key,
 )
+from .dialects import PYTHON
 from .imports import imports_in
 
 # The whole point of this module is to agree with ``declarations``, so its
@@ -146,7 +147,7 @@ def symbols_in_tree(source: str) -> Symbols:
     for, and it is the only reason the equality is a measurement rather than a
     hope.
     """
-    return _classify(treesitter.symbols_in_tree(source, treesitter.PYTHON), used_ast=False)
+    return _classify(treesitter.symbols_in_tree(source, PYTHON), used_ast=False)
 
 
 def symbols_in(source: str) -> Symbols:
@@ -210,7 +211,7 @@ def sections_for(path: str, source: str) -> dict:
     nothing else. Declining is deliberate: claiming a ``Classes:`` section
     from a reader tuned for a different language would put invented names in
     front of the extraction model. Registering a dialect in
-    :data:`provenance.treesitter.DIALECTS` is what lifts this, one language at
+    :data:`provenance.dialects.DIALECTS` is what lifts this, one language at
     a time and each with its own measurement.
 
     Every kind a parser reports is now written, whichever parser ran. There

@@ -35,8 +35,8 @@ if "pygments" not in sys.modules:
 from pipelines.base.data_generation import generate_code_comment  # noqa: E402  stubs first
 from provenance import symbols  # noqa: E402
 from provenance.declarations import declarations_in, module_key  # noqa: E402
+from provenance.dialects import PYTHON  # noqa: E402
 from provenance.imports import imports_in_source, imports_in_tree  # noqa: E402
-from provenance.treesitter import PYTHON  # noqa: E402
 
 PROMPT = Path(BASE_DIR) / "assets" / "sdghub" / "code_generation" / "prompts" / "data_from_code.yaml"
 

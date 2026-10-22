@@ -38,8 +38,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import treesitter
 from .corpus import dotted_key, parse_header
+from .dialects import PYTHON
 from .models import Finding, FindingKind, RepoFacts
 from .treesitter import declarations_in_tree
 
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 #: or a setup.cfg is in the corpus too, and reading one as Python would turn
 #: every ``key = value`` into an apparent declaration. Taken from the dialect
 #: rather than restated, so the parser and the filter cannot drift apart.
-PYTHON_SUFFIXES = treesitter.PYTHON.suffixes
+PYTHON_SUFFIXES = PYTHON.suffixes
 
 #: Entity types that name something a file declares. ``variable`` is absent
 #: because it is outside the prompt's configured vocabulary; the stitch reports
@@ -135,7 +135,7 @@ def declarations_in(source: str) -> tuple[set[str], bool]:
     try:
         return declarations_in_source(source), True
     except (SyntaxError, ValueError, RecursionError):
-        return declarations_in_tree(source, treesitter.PYTHON), False
+        return declarations_in_tree(source, PYTHON), False
 
 
 # --------------------------------------------------------------------------

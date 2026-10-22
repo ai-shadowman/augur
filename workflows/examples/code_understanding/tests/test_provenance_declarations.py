@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 
 from provenance import declarations
+from provenance.dialects import PYTHON
 from provenance.models import RepoFacts
-from provenance.treesitter import PYTHON
 
 #: Python 2 source. ``except ... , e`` and the print statement both make this a
 #: syntax error to a Python 3 parser, which is the case the fallback parser

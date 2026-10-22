@@ -38,6 +38,7 @@ import warnings
 from pathlib import Path
 
 from provenance import symbols, treesitter
+from provenance.dialects import PYTHON
 from provenance.imports import imports_in_source, imports_in_tree
 
 CANDIDATES = Path(
@@ -107,7 +108,7 @@ def tally():
         for path in FILES:
             source = path.read_text(encoding="utf-8", errors="replace")
             found = symbols.symbols_in_tree(source)
-            imported = imports_in_tree(source, treesitter.PYTHON)
+            imported = imports_in_tree(source, PYTHON)
 
             try:
                 truth = symbols.symbols_in_source(source)
@@ -232,7 +233,7 @@ class TestTheTwoReadersAgree(unittest.TestCase):
                 path.name
                 for path in FILES
                 if not _parses_as_python_3(source := _read(path))
-                and treesitter.has_error(source, treesitter.PYTHON)
+                and treesitter.has_error(source, PYTHON)
             ]
 
         self.assertEqual([], recovered_with_errors)
@@ -341,7 +342,7 @@ class TestTheSeamTheMeasurementNeeds(unittest.TestCase):
         """Error recovery is reported, not acted on, and it still returns names."""
         source = "class Good(object):\n    pass\n\nclass ((( :\n"
 
-        self.assertTrue(treesitter.has_error(source, treesitter.PYTHON))
+        self.assertTrue(treesitter.has_error(source, PYTHON))
         self.assertEqual(("Good",), symbols.symbols_in_tree(source).classes)
 
 

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from provenance import imports
-from provenance.treesitter import PYTHON
+from provenance.dialects import PYTHON
 
 SKIP_DIRS = frozenset({".git", "build"})
 
