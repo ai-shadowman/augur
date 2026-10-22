@@ -1,7 +1,7 @@
 """Which questions about code a parser can settle, per language.
 
 ``assets/sdghub/code_generation/prompts/data_from_code.yaml`` asks a model for
-eight things about every method and one about every file. Some of them a parser
+six things about every method and one about every file. Some of them a parser
 answers exactly, some it answers partly, and some are not decidable from one
 file by anything. The epic's operating rule turns on that distinction: name the
 deterministic thing that could answer the same question, and if one exists, use
@@ -71,8 +71,10 @@ UNRECORDED = "unrecorded"
 # Questions
 # --------------------------------------------------------------------------
 
-#: The nine fields ``data_from_code.yaml`` asks a model for. Spelled as the
-#: prompt spells them, except ``return value`` which is not an identifier.
+#: The fields ``data_from_code.yaml`` puts to a model, spelled as the prompt
+#: spells them except ``return value``, which is not an identifier.
+#: :data:`EXCEPTIONS` stays after Phase 4 deleted it from the prompt, so that
+#: the verdict against it outlives the field.
 PURPOSE = "purpose"
 METHOD_CODE = "code"
 CALLERS = "callers"
@@ -107,7 +109,11 @@ QUESTIONS = (
 )
 
 #: The questions ``data_from_code.yaml`` currently puts to a model. The rest of
-#: :data:`QUESTIONS` are header fields the prompt no longer asks about.
+#: :data:`QUESTIONS` are fields the prompt no longer asks about: the five the
+#: header now stitches in, and :data:`EXCEPTIONS`, which Phase 4 deleted on the
+#: strength of the rows below. The table keeps assessing a deleted field on
+#: purpose, so that re-adding it has to argue past a verdict rather than past
+#: an absence.
 PROMPTED = (
     PURPOSE,
     METHOD_CODE,
@@ -116,7 +122,6 @@ PROMPTED = (
     TEMPLATE_PARAMETERS,
     ANNOTATIONS,
     RETURN_VALUE,
-    EXCEPTIONS,
 )
 
 

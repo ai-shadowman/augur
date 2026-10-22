@@ -8,9 +8,16 @@ honest (a verdict names what settles it, or admits nothing does), keep the
 """
 
 import importlib
+import json
+import re
 import unittest
+from pathlib import Path
 
 from provenance import decidability as d
+
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
+PROMPT = ASSETS / "sdghub" / "code_generation" / "prompts" / "data_from_code.yaml"
+SCHEMA = ASSETS / "schemas" / "code_metadata_schema.json"
 
 VERDICTS = (
     d.PARSED,
@@ -207,6 +214,53 @@ class TestTheExceptionsArgument(unittest.TestCase):
 
         self.assertEqual(d.NOT_APPLICABLE, entry.verdict)
         self.assertFalse(d.model_justified("ansible", d.EXCEPTIONS))
+
+
+class TestTheFieldIsGoneFromBothPlacesItLived(unittest.TestCase):
+    """The table above is the argument; these are the edits it licensed.
+
+    Two artifacts, because deleting the prompt line alone leaves the field
+    reachable by a second route.
+    """
+
+    #: A ``methods[]`` field in the prompt's schema block: an indented
+    #: ``**name**:`` with no leading number. The numbered entries are
+    #: top-level fields and deliberately do not match.
+    METHOD_FIELD = re.compile(r"^\s+\*\*(?P<name>[^*]+)\*\*:", re.MULTILINE)
+
+    def asked_per_method(self):
+        schema = PROMPT.read_text(encoding="utf-8").split("- role: user")[0]
+        return [match.group("name") for match in self.METHOD_FIELD.finditer(schema)]
+
+    def test_the_prompt_no_longer_asks_a_model_for_exceptions(self):
+        asked = self.asked_per_method()
+
+        self.assertTrue(asked, "no method fields parsed, so this test proves nothing")
+        self.assertNotIn(d.EXCEPTIONS, asked)
+
+    def test_the_metadata_schema_no_longer_carries_an_empty_default(self):
+        """``code_metadata_schema.json`` is the second route.
+
+        ``utils.json_utils._apply_defaults_to_json_keys`` walks the schema's
+        top level only, so it does not backfill per method. It does plant the
+        whole ``methods[]`` template whenever a model returns no ``methods``
+        key at all, and that template is written to ``*_metadata.txt``, copied
+        into GraphRAG's ``input/`` by ``indexing.py`` and indexed. A field
+        nothing asks for should not arrive by that path.
+        """
+        template = json.loads(SCHEMA.read_text(encoding="utf-8"))["methods"][0]
+
+        self.assertNotIn(d.EXCEPTIONS, template)
+
+    def test_what_the_prompt_still_asks_is_what_the_table_says_it_asks(self):
+        """Pins the drift in both directions, which is the point of PROMPTED.
+
+        ``purpose`` is the one prompted question that is not a ``methods[]``
+        field, so removing it leaves exactly the per-method set.
+        """
+        asked = {name.replace(" ", "_") for name in self.asked_per_method()}
+
+        self.assertEqual(set(d.PROMPTED) - {d.PURPOSE}, asked)
 
 
 if __name__ == "__main__":

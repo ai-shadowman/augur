@@ -11,7 +11,6 @@
           **template_parameters**: [List of template parameters if applicable to the language]
           **annotations**: [List of annotations associated with the method or function if applicable, using the form appropriate for the language]
           **return value**: "Description of return value and its type"
-          **exceptions**: [List of exceptions thrown by this method]
 
     Try to stick to the specific fields in the schema.
     DO NOT make up values; leave unclear answers blank.
