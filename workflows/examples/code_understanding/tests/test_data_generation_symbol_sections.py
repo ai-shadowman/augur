@@ -345,6 +345,13 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
         Bindings are the one kind no section takes, so they are the one thing
         that has to be added back before the comparison. Without them this
         would be a subset check and a dropped class would pass it.
+
+        Only the parsed files carry the equality. On a line-scanned file the
+        Phase 4 gate withholds the kinds that measured below
+        ``symbols.PRECISION_BAR``, so the header is a deliberate strict subset
+        and the claim that survives is the one-directional one: nothing
+        reaches the header that the scan did not find. Which kinds are kept
+        there is pinned in :class:`TestThePrecisionGateOnLineScannedFiles`.
         """
         for relative, case in self.cases.items():
             with self.subTest(file=relative):
@@ -354,15 +361,24 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
                     for section in ("classes", "functions", "methods")
                     for name in case["rendered"][section]
                 }
+                invented = in_header - declared
 
-                self.assertEqual(
-                    declared,
-                    in_header | bindings,
-                    f"{len(in_header - declared)} name(s) in the header the oracle does "
-                    f"not declare ({sorted(in_header - declared)[:5]}), "
-                    f"{len(declared - in_header - bindings)} declared but not written "
-                    f"({sorted(declared - in_header - bindings)[:5]})",
-                )
+                if case["metadata"]["symbol_evidence"] in (symbols.AST, symbols.AST_EMPTY):
+                    self.assertEqual(
+                        declared,
+                        in_header | bindings,
+                        f"{len(invented)} name(s) in the header the oracle does "
+                        f"not declare ({sorted(invented)[:5]}), "
+                        f"{len(declared - in_header - bindings)} declared but not written "
+                        f"({sorted(declared - in_header - bindings)[:5]})",
+                    )
+                else:
+                    self.assertEqual(
+                        set(),
+                        invented,
+                        f"{len(invented)} name(s) reached a line-scanned header that the "
+                        f"scan never found ({sorted(invented)[:5]})",
+                    )
 
     def test_the_dependencies_section_is_exactly_what_the_file_imports(self):
         for relative, case in self.cases.items():
@@ -375,11 +391,18 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
                 self.assertEqual(module_key(relative), case["rendered"]["package"])
 
     def test_the_sections_reach_the_header_in_source_order(self):
-        """Source order, not sorted order. The harness reproduces it that way."""
+        """Source order, not sorted order. The harness reproduces it that way.
+
+        A kind the gate withholds is absent from the metadata rather than
+        empty, and the renderer drops a section it has no key for, so the two
+        sides still have to agree: ``[]`` against ``[]``.
+        """
         for relative, case in self.cases.items():
             with self.subTest(file=relative):
                 for section in ("classes", "functions", "methods"):
-                    self.assertEqual(case["metadata"][section], case["rendered"][section])
+                    self.assertEqual(
+                        case["metadata"].get(section, []), case["rendered"][section]
+                    )
 
     def test_the_parser_split_is_what_the_commit_message_published(self):
         if len(FILES) != EXPECTED_FILES:
@@ -393,6 +416,135 @@ class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
             split[case["metadata"]["symbol_evidence"]] += 1
 
         self.assertEqual(EXPECTED_SPLIT, split)
+
+
+#: One source per outcome class, so the header each produces is pinned rather
+#: than inferred. ``line-scan-empty`` is unoccupied on celery 2.5.5 and so has
+#: no corpus file to point at; it is constructed here instead, which is the
+#: reason the class is carried at all.
+EVIDENCE_FIXTURES = {
+    symbols.AST: SOURCE,
+    symbols.AST_EMPTY: '"""Re-export shim, kept for the 2.4 import path."""\n',
+    symbols.SCAN: PYTHON_2_SOURCE,
+    symbols.SCAN_EMPTY: 'import sys\n\nprint "celery 2.5.5"\nsys.exit(0)\n',
+}
+
+
+class TestThePrecisionGateOnLineScannedFiles(unittest.TestCase):
+    """Phase 4: a kind the line scan gets wrong too often is not written.
+
+    The bar is precision measured against the AST on the 187 celery files both
+    parsers answer, and only ``methods`` cleared it. The asymmetry is the whole
+    argument: a name the scan invents reaches the extraction model as a symbol,
+    and a name it misses is merely absent.
+    """
+
+    def test_only_the_kinds_that_passed_are_declared_emittable(self):
+        """The gate is read off the measurement, not written out by hand."""
+        self.assertEqual(
+            {kind for kind, p in symbols.SCAN_PRECISION.items() if p >= symbols.PRECISION_BAR},
+            set(symbols.SCAN_EMITS),
+        )
+        self.assertEqual({"methods"}, set(symbols.SCAN_EMITS))
+
+    def test_a_parsed_file_keeps_every_section(self):
+        """The gate touches line-scanned files only; parsing is still exact."""
+        metadata = symbols.sections_for(PATH, SOURCE)
+
+        self.assertEqual(symbols.AST, metadata["symbol_evidence"])
+        self.assertEqual(["LocalCache"], metadata["classes"])
+        self.assertEqual(["revoke"], metadata["functions"])
+        self.assertEqual(["LocalCache.__init__", "LocalCache.get"], metadata["methods"])
+
+    def test_a_line_scanned_file_withholds_the_kinds_that_failed(self):
+        metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
+
+        self.assertEqual(symbols.SCAN, metadata["symbol_evidence"])
+        self.assertEqual(["Worker.start"], metadata["methods"])
+        for withheld in ("classes", "functions"):
+            with self.subTest(kind=withheld):
+                self.assertNotIn(
+                    withheld,
+                    metadata,
+                    "a withheld kind must be absent, not empty: the renderer drops a "
+                    "section by key, and an empty list would read as 'none found'",
+                )
+
+    def test_the_withheld_names_really_were_there_to_write(self):
+        """Guards against the gate passing because the scan found nothing.
+
+        ``Worker`` and ``main`` are what the scan recovers and what the header
+        now declines to carry. If this ever reports an empty scan, the test
+        above is vacuous.
+        """
+        found = symbols.symbols_in(PYTHON_2_SOURCE)
+
+        self.assertFalse(found.used_ast)
+        self.assertEqual(("Worker",), found.classes)
+        self.assertEqual(("main",), found.functions)
+
+    def test_a_line_scanned_header_omits_the_headings_entirely(self):
+        """Byte-level: no empty ``Classes:`` heading survives the withholding."""
+        header = comment(dict(symbols.sections_for(PATH, PYTHON_2_SOURCE)))
+
+        self.assertIn("\n Methods:\n- Worker.start", header)
+        self.assertNotIn("Classes:", header)
+        self.assertNotIn("Functions:", header)
+        self.assertIn("\nDependencies:\n- [import] sys", header)
+
+    def test_dependencies_survive_the_gate_because_imports_measured_clean(self):
+        """``imports_in_lines`` is a different scanner and a different number.
+
+        It measured 0.992 precision and 1.000 recall on the same 187 files, so
+        ``Dependencies:`` renders on a Python 2 file unchanged. Recorded as a
+        test so the symbol gate is not later widened over it by analogy.
+        """
+        self.assertGreaterEqual(symbols.SCAN_IMPORT_PRECISION, symbols.PRECISION_BAR)
+
+        metadata = symbols.sections_for(PATH, PYTHON_2_SOURCE)
+
+        self.assertEqual(symbols.SCAN, metadata["import_evidence"])
+        self.assertEqual(["sys"], metadata["imports"])
+
+    def test_each_outcome_class_produces_the_header_it_should(self):
+        """One file per class, including the one celery 2.5.5 never produces."""
+        expected = {
+            symbols.AST: {
+                "classes": ["LocalCache"],
+                "functions": ["revoke"],
+                "methods": ["LocalCache.__init__", "LocalCache.get"],
+            },
+            # Parsed and declares nothing is a confident answer, so the keys
+            # are present and empty rather than withheld.
+            symbols.AST_EMPTY: {"classes": [], "functions": [], "methods": []},
+            # Recovered: only the kind that cleared the bar is present at all.
+            symbols.SCAN: {"methods": ["Worker.start"]},
+            # No answer: the scan ran and found nothing, which is why this is
+            # kept apart from ``ast-empty``.
+            symbols.SCAN_EMPTY: {"methods": []},
+        }
+
+        for evidence, source in EVIDENCE_FIXTURES.items():
+            with self.subTest(evidence=evidence):
+                metadata = symbols.sections_for(PATH, source)
+                self.assertEqual(evidence, metadata["symbol_evidence"])
+
+                rendered = parse_sections(comment(dict(metadata)))
+                for kind in ("classes", "functions", "methods"):
+                    self.assertEqual(
+                        expected[evidence].get(kind, []),
+                        rendered[kind],
+                        f"{kind} wrong for {evidence}",
+                    )
+
+    def test_an_unsupported_language_still_declines_everything(self):
+        """Phase 3's rule is unchanged: no suffix the parsers read, no sections."""
+        metadata = symbols.sections_for("README.md", "# celery\n")
+
+        self.assertEqual(
+            {"symbol_evidence": symbols.UNSUPPORTED, "import_evidence": symbols.UNSUPPORTED},
+            metadata,
+        )
 
 
 if __name__ == "__main__":

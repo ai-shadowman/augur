@@ -209,6 +209,43 @@ AST, AST_EMPTY, SCAN, SCAN_EMPTY = "ast", "ast-empty", "line-scan", "line-scan-e
 #: ``line-scan-empty`` nor absent.
 UNSUPPORTED = "unsupported-language"
 
+#: Precision of :func:`symbols_in_lines` against :func:`symbols_in_source`,
+#: measured on the 187 celery 2.5.5 files both parsers answer. Micro-averaged:
+#: the question is what fraction of emitted names are real, which is what the
+#: extraction model sees, so a 400-name file should not weigh the same as a
+#: 3-name one. ``tests/test_provenance_scan_fidelity.py`` recomputes these and
+#: fails if the scanner drifts away from the figures the gate was set on.
+SCAN_PRECISION = {"classes": 0.834, "functions": 0.683, "methods": 0.957, "bindings": 0.925}
+
+#: A kind at or above this is emitted on line-scanned files exactly as it is on
+#: parsed ones; a kind below it is withheld there. Precision decides rather than
+#: recall because the two failures are not symmetric: a name the scan invents
+#: reaches the extraction model as a symbol, and a name it misses is merely
+#: absent, which is the failure this pipeline already tolerates everywhere else.
+PRECISION_BAR = 0.95
+
+#: The kinds that clear the bar. Only ``methods`` does, and narrowly — it has
+#: the same 74 false positives as ``classes`` against 23 times more true names,
+#: so it passes on denominator rather than on being structurally safer, and it
+#: would fail at 0.96.
+#:
+#: Nearly all of the loss is one mechanism: ``_walk_ast`` never descends into a
+#: function body, deliberately, while ``_scan_lines`` tracks scope by
+#: indentation and so reports what it finds there. Those names are real
+#: declarations rather than inventions, but they arrive qualified as
+#: ``app.task.inner_create_task_cls``, which in front of the extraction model
+#: reads as a method of a class ``app.task``. Suppressing them in the scan
+#: would lift all three kinds past 0.99; that is a change to
+#: ``declarations_in_lines`` as well, and it is not this phase's to make.
+SCAN_EMITS = frozenset(kind for kind, p in SCAN_PRECISION.items() if p >= PRECISION_BAR)
+
+#: Imports are scanned by :mod:`provenance.imports`, not by ``_scan_lines``,
+#: and were measured the same way: precision 0.992, recall 1.000, 5 false
+#: positives in 626 names. ``Dependencies:`` therefore renders on line-scanned
+#: files unchanged. Recorded here because the gate's claim is about every
+#: section a line scan fills, not only the declaration kinds.
+SCAN_IMPORT_PRECISION = 0.992
+
 
 def evidence(used_ast: bool, found: bool) -> str:
     """Which of the four outcome classes one section landed in."""
@@ -242,6 +279,13 @@ def sections_for(path: str, source: str) -> dict:
     a line scan tuned for Python would put invented names in front of the
     extraction model, and the gate belongs with the parser rather than with
     the caller. tree-sitter lifts this per language in Phase 6.
+
+    A file the line scan recovered gets the same treatment one kind at a time:
+    only the kinds in :data:`SCAN_EMITS` are returned, because the rest
+    measured below :data:`PRECISION_BAR` on the files both parsers answer. A
+    withheld kind is absent rather than empty, which is what the renderer
+    needs to drop the section, and ``symbol_evidence`` still records that the
+    scan is what ran.
     """
     if not is_supported(path):
         return {"symbol_evidence": UNSUPPORTED, "import_evidence": UNSUPPORTED}
@@ -249,12 +293,18 @@ def sections_for(path: str, source: str) -> dict:
     found = symbols_in(source)
     imported, imports_used_ast = imports_in(source)
 
-    return {
-        "package": module_key(path),
-        "imports": sorted(imported),
+    declared = {
         "classes": list(found.classes),
         "functions": list(found.functions),
         "methods": list(found.methods),
+    }
+    if not found.used_ast:
+        declared = {kind: names for kind, names in declared.items() if kind in SCAN_EMITS}
+
+    return {
+        "package": module_key(path),
+        "imports": sorted(imported),
+        **declared,
         "symbol_evidence": evidence(found.used_ast, bool(found)),
         "import_evidence": evidence(imports_used_ast, bool(imported)),
     }
