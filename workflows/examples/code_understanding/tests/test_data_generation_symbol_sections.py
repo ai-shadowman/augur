@@ -17,6 +17,7 @@ import re
 import sys
 import types
 import unittest
+import warnings
 from pathlib import Path
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -32,10 +33,18 @@ if "pygments" not in sys.modules:
     sys.modules.update({"pygments": pygments, "pygments.lexers": lexers, "pygments.util": util})
 
 from pipelines.base.data_generation import generate_code_comment  # noqa: E402  stubs first
+from provenance import symbols  # noqa: E402
 from provenance.declarations import declarations_in, module_key  # noqa: E402
 from provenance.imports import imports_in_lines, imports_in_source  # noqa: E402
 
 PROMPT = Path(BASE_DIR) / "assets" / "sdghub" / "code_generation" / "prompts" / "data_from_code.yaml"
+
+#: The candidate checkout the corpus-wide case runs over. Not part of this
+#: repository, so that case skips when it is absent.
+CANDIDATES = Path(
+    os.environ.get("AUGUR_CANDIDATES", Path.home() / "Developer" / "augur-test" / "candidates")
+)
+CHECKOUT = CANDIDATES / "celery"
 
 PATH = "celery/worker/state.py"
 
@@ -178,10 +187,9 @@ class TestTheOracleFeedsThatFormatterUnchanged(unittest.TestCase):
             result,
         )
 
-    def test_module_key_answers_the_package_field_the_model_is_still_asked_for(self):
+    def test_module_key_answers_the_package_field_the_model_used_to_be_asked_for(self):
         self.assertEqual("celery.worker.state", module_key(PATH))
         self.assertEqual("celery.app", module_key("celery/app/__init__.py"))
-        self.assertIn("**package**", PROMPT.read_text(encoding="utf-8"))
 
 
 class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
@@ -220,12 +228,171 @@ class TestWhatPhaseThreeStillHasToDecide(unittest.TestCase):
         """A language directive would render as ``- [import] __future__``."""
         self.assertIn("__future__", imports_in_source(SOURCE))
 
-    def test_the_prompt_still_asks_for_all_four_sections(self):
-        """Phase 3's deletion target, so the test fails once that lands and says why."""
+    def test_the_prompt_no_longer_asks_for_what_the_parser_settles(self):
+        """Phase 3's deletion, asserted so a re-added field fails rather than wins."""
         schema = PROMPT.read_text(encoding="utf-8").split("- role: user")[0]
         asked = re.findall(r"^\s*\d+\.\s+\*\*(?P<name>[^*]+)\*\*", schema, re.MULTILINE)
 
-        self.assertEqual(["purpose", "package", "imports", "classes", "methods"], asked)
+        self.assertEqual(["purpose", "methods"], asked)
+        for gone in ("**package**", "**imports**", "**classes**", "**method_name**"):
+            with self.subTest(field=gone):
+                self.assertNotIn(gone, schema)
+
+
+# --------------------------------------------------------------------------
+# The whole checkout, not a sample
+# --------------------------------------------------------------------------
+
+EXCLUDE_PARTS = {".git", "__pycache__"}
+
+
+def candidate_files():
+    if not CHECKOUT.is_dir():
+        return []
+    return [
+        path
+        for path in sorted(CHECKOUT.rglob("*.py"))
+        if not (EXCLUDE_PARTS & set(path.relative_to(CHECKOUT).parts))
+    ]
+
+
+FILES = candidate_files()
+
+#: The split published alongside this change, measured on celery 2.5.5. The
+#: 187 files ``ast`` accepts are these two classes together: 173 that declare
+#: something and 14 that parse cleanly and declare nothing.
+EXPECTED_FILES = 237
+EXPECTED_SPLIT = {"ast": 173, "ast-empty": 14, "line-scan": 50, "line-scan-empty": 0}
+
+
+def parse_sections(header: str) -> dict:
+    """Read the symbol sections back out of a rendered header.
+
+    The extraction model is not the only consumer; ``provenance`` parses these
+    sections out of the written corpus too. Reading them back here is what
+    makes "the header equals the oracle" a claim about the bytes rather than
+    about the dict that produced them.
+    """
+    found = {"package": "", "imports": [], "classes": [], "functions": [], "methods": []}
+    labels = {"Dependencies:": "imports", "Classes:": "classes",
+              "Functions:": "functions", "Methods:": "methods"}
+    section = None
+
+    for line in header.strip('"').splitlines():
+        stripped = line.strip()
+        if stripped in labels:
+            section = labels[stripped]
+        elif stripped.startswith("Package: "):
+            found["package"] = stripped[len("Package: "):]
+        elif stripped.startswith("- ") and section:
+            item = stripped[2:]
+            found[section].append(item[len("[import] "):] if section == "imports" else item)
+    return found
+
+
+def oracle_imports(source: str) -> list:
+    """Imports the way ``scan_tree`` has always chosen the scanner.
+
+    Spelled out rather than calling ``imports_in``, so this stays an
+    independent check on the combinator the header now goes through.
+    """
+    try:
+        return sorted(imports_in_source(source))
+    except SyntaxError:
+        return sorted(imports_in_lines(source))
+
+
+@unittest.skipIf(not FILES, f"no candidate checkout at {CHECKOUT}")
+class TestEveryHeaderInTheCheckoutMatchesTheOracle(unittest.TestCase):
+    """237 files through the production formatter, compared to the parsers.
+
+    Two claims, and they chain. ``test_provenance_symbols`` proves the kinds
+    fold back to ``declarations_in``; this proves the header carries those
+    kinds without losing or inventing one on the way through
+    ``generate_code_comment``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # Everything that compiles celery source happens here, under the
+        # filter: 237 Python 2 files carry invalid escape sequences in their
+        # docstrings and would bury the suite's real warnings.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", SyntaxWarning)
+            cls.cases = {}
+            for path in FILES:
+                relative = path.relative_to(CHECKOUT).as_posix()
+                source = path.read_text(encoding="utf-8", errors="replace")
+                metadata = symbols.sections_for(relative, source)
+                header = generate_code_comment(
+                    metadata=dict(metadata), file_path=relative, config=False,
+                    external_metadata=None, git_repo="https://github.com/celery/celery",
+                    git_slug="celery-v2-5-5", language="python", multi_repo=False,
+                )
+                declared, _ = declarations_in(source)
+                cls.cases[relative] = {
+                    "metadata": metadata,
+                    "rendered": parse_sections(header),
+                    "declared": declared,
+                    "bindings": {n.lower() for n in symbols.symbols_in(source).bindings},
+                    "imports": oracle_imports(source),
+                }
+
+    def test_the_three_symbol_sections_are_exactly_what_the_oracle_declares(self):
+        """Folded, and with bindings added back, the header is ``declarations_in``.
+
+        Bindings are the one kind no section takes, so they are the one thing
+        that has to be added back before the comparison. Without them this
+        would be a subset check and a dropped class would pass it.
+        """
+        for relative, case in self.cases.items():
+            with self.subTest(file=relative):
+                declared, bindings = case["declared"], case["bindings"]
+                in_header = {
+                    name.lower()
+                    for section in ("classes", "functions", "methods")
+                    for name in case["rendered"][section]
+                }
+
+                self.assertEqual(
+                    declared,
+                    in_header | bindings,
+                    f"{len(in_header - declared)} name(s) in the header the oracle does "
+                    f"not declare ({sorted(in_header - declared)[:5]}), "
+                    f"{len(declared - in_header - bindings)} declared but not written "
+                    f"({sorted(declared - in_header - bindings)[:5]})",
+                )
+
+    def test_the_dependencies_section_is_exactly_what_the_file_imports(self):
+        for relative, case in self.cases.items():
+            with self.subTest(file=relative):
+                self.assertEqual(case["imports"], case["rendered"]["imports"])
+
+    def test_the_package_line_is_the_path_folded_not_a_model_answer(self):
+        for relative, case in self.cases.items():
+            with self.subTest(file=relative):
+                self.assertEqual(module_key(relative), case["rendered"]["package"])
+
+    def test_the_sections_reach_the_header_in_source_order(self):
+        """Source order, not sorted order. The harness reproduces it that way."""
+        for relative, case in self.cases.items():
+            with self.subTest(file=relative):
+                for section in ("classes", "functions", "methods"):
+                    self.assertEqual(case["metadata"][section], case["rendered"][section])
+
+    def test_the_parser_split_is_what_the_commit_message_published(self):
+        if len(FILES) != EXPECTED_FILES:
+            self.skipTest(
+                f"{CHECKOUT} has {len(FILES)} files, not the {EXPECTED_FILES} of "
+                f"celery 2.5.5 this split was measured on"
+            )
+
+        split = dict.fromkeys(EXPECTED_SPLIT, 0)
+        for case in self.cases.values():
+            split[case["metadata"]["symbol_evidence"]] += 1
+
+        self.assertEqual(EXPECTED_SPLIT, split)
 
 
 if __name__ == "__main__":

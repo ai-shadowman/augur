@@ -399,12 +399,19 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
             lines.append(f"\n Functions:")
             lines.extend(f"- {func}" for func in metadata['functions'])
 
-        if metadata.get('methods'):
+        # A method may arrive as a bare name from the parser or as an object
+        # from a model. An object carrying no name contributes nothing: the
+        # alternative is rendering the whole dict into a header the extraction
+        # model then reads as a symbol.
+        method_names = [
+            name for name in (
+                method.get('method_name') if isinstance(method, dict) else method
+                for method in metadata.get('methods') or []
+            ) if name
+        ]
+        if method_names:
             lines.append(f"\n Methods:")
-            lines.extend([
-                f"- {method.get('method_name', method) if isinstance(method, dict) else method}"
-                for method in metadata['methods']
-            ])
+            lines.extend(f"- {name}" for name in method_names)
 
         if config:
             extension = os.path.splitext(file_path)[1]
@@ -449,6 +456,7 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
     from pathlib import Path
     from utils import json_utils
     from loaders.default_asset_loader import DefaultAssetLoader
+    from provenance import symbols
 
     try:
 
@@ -484,6 +492,12 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
             metadata['git_slug'] = git_slug
             metadata['language'] = language
             metadata['multi_repo'] = multi_repo
+
+            # The symbol sections, on the same terms. A parser settles what a
+            # file declares and imports exactly, so the model is not consulted
+            # about it; for a language no parser here reads, nothing is
+            # claimed and the two evidence keys say which case this was.
+            metadata.update(symbols.sections_for(rel_file_path, code))
 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 

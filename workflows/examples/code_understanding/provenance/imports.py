@@ -81,6 +81,20 @@ def imports_in_lines(source: str) -> set[str]:
     return names
 
 
+def imports_in(source: str) -> tuple[set[str], bool]:
+    """Imports in one source string, and whether ``ast`` refused it.
+
+    The pair :func:`declarations.declarations_in` has had all along. Without
+    it every caller holding a single source string has to spell the fallback
+    itself, and the one that forgets crashes on roughly a third of a Python 2
+    repository rather than degrading to the line scan.
+    """
+    try:
+        return imports_in_source(source), True
+    except (SyntaxError, ValueError, RecursionError):
+        return imports_in_lines(source), False
+
+
 def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str]]:
     """Collect every imported top-level name in a tree.
 
@@ -104,11 +118,10 @@ def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str
             except OSError as exc:
                 logger.debug("could not read %s: %s", path, exc)
                 continue
-            try:
-                names |= imports_in_source(source)
-            except (SyntaxError, ValueError):
+            found, used_ast = imports_in(source)
+            names |= found
+            if not used_ast:
                 unparsed.append(str(path.relative_to(root)))
-                names |= imports_in_lines(source)
 
     warnings = []
     if unparsed:
