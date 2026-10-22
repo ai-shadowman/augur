@@ -132,22 +132,13 @@ def _scan_lines(source: str) -> list[tuple[str, str]]:
     return out
 
 
-def symbols_in(source: str) -> Symbols:
-    """Classify everything one Python source string declares.
+def _classify(found: list[tuple[str, str]], used_ast: bool) -> Symbols:
+    """Bucket ``(kind, name)`` pairs, collapsing duplicates on the folded name.
 
-    Duplicates collapse on the folded name, first occurrence winning, because
-    the oracle is a set and ``def f`` followed by ``f = wrap(f)`` is one
-    declaration to it. Keeping the first occurrence keeps the more informative
-    kind.
+    First occurrence wins, because the oracle is a set and ``def f`` followed
+    by ``f = wrap(f)`` is one declaration to it. Keeping the first occurrence
+    keeps the more informative kind.
     """
-    try:
-        found: list[tuple[str, str]] = []
-        _walk_ast(ast.parse(source).body, (), found)
-        used_ast = True
-    except (SyntaxError, ValueError, RecursionError):
-        found = _scan_lines(source)
-        used_ast = False
-
     buckets: dict[str, list[str]] = {CLASS: [], FUNCTION: [], METHOD: [], BINDING: []}
     seen: set[str] = set()
     for kind, name in found:
@@ -164,6 +155,41 @@ def symbols_in(source: str) -> Symbols:
         bindings=tuple(buckets[BINDING]),
         used_ast=used_ast,
     )
+
+
+def symbols_in_source(source: str) -> Symbols:
+    """Classify by parsing, the exact answer. Raises if ``ast`` refuses.
+
+    The counterpart of :func:`declarations.declarations_in_source`, and the
+    oracle the line scan is measured against: for Python the AST is ground
+    truth, so a disagreement is the line scan's.
+    """
+    found: list[tuple[str, str]] = []
+    _walk_ast(ast.parse(source).body, (), found)
+    return _classify(found, used_ast=True)
+
+
+def symbols_in_lines(source: str) -> Symbols:
+    """Classify by indentation, the recovered answer. Never raises.
+
+    The counterpart of :func:`declarations.declarations_in_lines`. Public so
+    the two paths can be run against the same file and compared without
+    reaching past an underscore; the fidelity table in
+    ``tests/test_provenance_scan_fidelity.py`` is what that seam exists for.
+    """
+    return _classify(_scan_lines(source), used_ast=False)
+
+
+def symbols_in(source: str) -> Symbols:
+    """Classify everything one Python source string declares.
+
+    Parses when it can and falls back to the line scan when it cannot, the
+    same pairing :func:`declarations.declarations_in` makes.
+    """
+    try:
+        return symbols_in_source(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return symbols_in_lines(source)
 
 
 # --------------------------------------------------------------------------
