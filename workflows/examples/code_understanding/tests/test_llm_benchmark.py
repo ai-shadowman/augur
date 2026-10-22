@@ -438,6 +438,20 @@ class TestPipelineIntegrationWithGuideLLM(unittest.TestCase):
                 DependencyAnalyzer.prepare_settings(template_dir=tmpdir, output_dir=tmpdir)
                 rendered = (Path(tmpdir) / "settings.yaml").read_text(encoding="utf-8")
                 self.assertIn("concurrent_requests: 16", rendered)
+                self.assertIn("max_tokens: 8192", rendered)
+
+                # Also verify stale MLflow template with hardcoded concurrent_requests: 25 is overridden
+                stale_template = src_template.read_text(encoding="utf-8").replace(
+                    "concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}",
+                    "concurrent_requests: 25",
+                ).replace("    max_tokens: 8192\n", "")
+                dst_template.write_text(stale_template, encoding="utf-8")
+                os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = "20"
+                DependencyAnalyzer.prepare_settings(template_dir=tmpdir, output_dir=tmpdir)
+                rendered_stale = (Path(tmpdir) / "settings.yaml").read_text(encoding="utf-8")
+                self.assertIn("concurrent_requests: 20", rendered_stale)
+                self.assertNotIn("concurrent_requests: 25", rendered_stale)
+                self.assertIn("max_tokens: 8192", rendered_stale)
 
     def test_kubeflow_data_generation_pipeline_wires_benchmark_llm_op(self):
         kfp_dg_path = Path(BASE_DIR) / "pipelines" / "kubeflow" / "data_generation.py"
@@ -450,6 +464,36 @@ class TestPipelineIntegrationWithGuideLLM(unittest.TestCase):
         self.assertIn("_run_pipeline_multi_repo", func_names)
         self.assertIn("prep.after(bench)", source)
         self.assertIn("max_concurrency=bench.output", source)
+
+    def test_generate_raw_dataset_excludes_telemetry_json_files_in_config_mode(self):
+        from pipelines.base import data_generation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "source"
+            tgt = Path(tmpdir) / "target"
+            src.mkdir()
+            tgt.mkdir()
+
+            for telemetry_name in ("durations.json", "tokens.json", "project_metrics.json", "benchmark_results.json"):
+                (src / telemetry_name).write_text('{"test": 1}', encoding="utf-8")
+            (src / "app_config.json").write_text('{"port": 8080}', encoding="utf-8")
+
+            with patch("utils.code_utils.get_exclude_dirs_for_language", return_value=set()), \
+                 patch("utils.code_utils.get_config_file_extensions_for_language", return_value=[".json"]), \
+                 patch("utils.code_utils.is_large_code_file", return_value=False), \
+                 patch("utils.code_utils.generate_slug_from_repo", return_value="org-repo-main"), \
+                 patch("pandas.DataFrame", side_effect=lambda records: records):
+                records = data_generation.generate_raw_dataset(
+                    str(src),
+                    str(tgt),
+                    "https://github.com/org/repo.git",
+                    "main",
+                    language="java",
+                    config=True,
+                )
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["file_path"], "app_config.json")
 
 
 if __name__ == "__main__":

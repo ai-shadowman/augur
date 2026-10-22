@@ -566,7 +566,26 @@ class DependencyAnalyzer:
                 env["GRAPHRAG_CONCURRENT_REQUESTS"] = str(env.get("SDG_LLM_MAX_CONCURRENCY") or "25")
 
             with open(template_path) as f:
-                content = string.Template(f.read())
+                raw_template = f.read()
+
+            # Safeguard against stale settings.yaml.in in MLflow that may still have
+            # hardcoded concurrent_requests instead of ${GRAPHRAG_CONCURRENT_REQUESTS}
+            raw_template = re.sub(
+                r"(concurrent_requests:\s*)\d+",
+                r"\g<1>${GRAPHRAG_CONCURRENT_REQUESTS}",
+                raw_template,
+            )
+            chat_block_match = re.search(
+                r"(default_chat_model:\n(?:[ \t]+[^\n]+\n)+)", raw_template
+            )
+            if chat_block_match and "max_tokens:" not in chat_block_match.group(1):
+                raw_template = raw_template.replace(
+                    "default_chat_model:\n",
+                    "default_chat_model:\n    max_tokens: 8192\n",
+                    1,
+                )
+
+            content = string.Template(raw_template)
 
             with open(output_path, "w") as f:
                 f.write(content.substitute(env))

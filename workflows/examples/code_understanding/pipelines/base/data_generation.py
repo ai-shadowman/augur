@@ -124,6 +124,15 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
             )
 
             for filename in files:
+                if filename in {
+                    "metadata.json",
+                    "code-metadata.json",
+                    "durations.json",
+                    "tokens.json",
+                    "project_metrics.json",
+                    "benchmark_results.json",
+                }:
+                    continue
                 if os.path.splitext(filename)[1] not in include_extensions:
                     continue
 
@@ -240,7 +249,22 @@ def get_parsed_code_metadata(df, language, config=False):
         flows_dir = f"flows/{flow_dir}"
         DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_dir)
 
-        flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
+        flow_yaml_path = f"{flows_dir}/flow.yaml"
+        if os.path.isfile(flow_yaml_path):
+            import re
+            with open(flow_yaml_path, "r", encoding="utf-8") as f:
+                flow_yaml_text = f.read()
+            cleaned_yaml_text = re.sub(
+                r"^[ \t]*(?:best_of|top_k)\s*:[^\n]*\n?",
+                "",
+                flow_yaml_text,
+                flags=re.MULTILINE,
+            )
+            if cleaned_yaml_text != flow_yaml_text:
+                with open(flow_yaml_path, "w", encoding="utf-8") as f:
+                    f.write(cleaned_yaml_text)
+
+        flow = Flow.from_yaml(flow_yaml_path)
 
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",
@@ -250,7 +274,6 @@ def get_parsed_code_metadata(df, language, config=False):
             n=1,
             max_tokens=32_000,
             response_format={"type": "json_object"},
-            top_k=1,
             timeout=llm_timeout,
             num_retries=llm_num_retries,
         )

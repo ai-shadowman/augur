@@ -163,13 +163,14 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in ["durations.json", "tokens.json", "project_metrics.json", "benchmark_results.json"]:
-                    fpath = os.path.join(f"{graphrag_source_path}/input", fname)
-                    if os.path.exists(fpath):
-                        try:
-                            os.remove(fpath)
-                        except Exception:
-                            pass
+                for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]:
+                    for fname in [f"{base_t}.json", f"{base_t}.txt", f"{base_t}_metadata.txt"]:
+                        fpath = os.path.join(f"{graphrag_source_path}/input", fname)
+                        if os.path.exists(fpath):
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
                 txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
                 if not txt_files:
                     raise RuntimeError(
