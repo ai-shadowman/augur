@@ -45,8 +45,15 @@ if "pygments" not in sys.modules:
     sys.modules.update({"pygments": pygments, "pygments.lexers": lexers, "pygments.util": util})
 
 from pipelines.base.data_generation import generate_code_comment  # noqa: E402  stubs first
-from provenance import symbols  # noqa: E402
+from provenance import graph, symbols  # noqa: E402
+from provenance.corpus import Corpus, parse_header  # noqa: E402
 from provenance.declarations import module_key  # noqa: E402
+
+#: ``conftest.real_dataframes`` swaps the MagicMock pandas out for the real one
+#: on request. The grounding tests at the bottom of this module call
+#: ``graph.ground``, which builds and indexes frames, and the module name does
+#: not carry the ``test_provenance`` prefix the fixture otherwise keys on.
+REAL_DATAFRAMES = True
 
 JAVA_PATH = "src/main/java/org/apache/commons/lang3/StringUtils.java"
 
@@ -313,6 +320,105 @@ class TestTheBucketingDecisionsEachLanguageForces(unittest.TestCase):
             {"symbol_evidence": symbols.UNSUPPORTED, "import_evidence": symbols.UNSUPPORTED},
             symbols.sections_for("src/main/kotlin/Main.kt", "fun main() {}\n"),
         )
+
+
+def ground(titles, *languages):
+    """Index the named languages' headers and reconcile entities against them.
+
+    The headers are the ones rendered above, parsed back by the same reader
+    indexing uses, so this exercises the whole round trip rather than a
+    hand-built :class:`Corpus`.
+    """
+    import pandas as pd
+
+    corpus = Corpus(files=[
+        parse_header(header_for(*CASES[language])) for language in languages
+    ])
+    entities = pd.DataFrame(
+        [(t, "MODULE", f"The {t} module.") for t in titles],
+        columns=["title", "type", "description"],
+    )
+    relationships = pd.DataFrame([], columns=["source", "target", "description", "weight"])
+    entities, _, report = graph.ground(corpus, entities, relationships)
+    return set(entities["title"].astype(str)), report
+
+
+class TestTheGroundingGateNoLongerFiresForTheseThree(unittest.TestCase):
+    """The definition of done, in its positive form.
+
+    A gate that stopped warning because nothing reached it would pass a
+    silence check, so each case asserts what was grounded as well as what was
+    not declined: the model's entity keeps its place under the header's
+    spelling, and no second entity is created beside it.
+    """
+
+    SLUG = GIT_SLUG.upper()
+
+    def test_a_java_entity_grounds_onto_the_package_the_header_declares(self):
+        """The one language where the path fold alone would not have matched.
+
+        The model is shown ``Package: org.apache.commons.lang3.StringUtils``
+        and writes that back. Maven's four leading directories mean the path
+        folds to something else entirely, so the declared name is the only
+        key this can meet.
+        """
+        titles, report = ground(["ORG.APACHE.COMMONS.LANG3.STRINGUTILS"], "java")
+
+        self.assertEqual([], report.unsupported_files)
+        self.assertEqual([], report.ungrounded_modules)
+        self.assertEqual([self.SLUG], report.created)
+        self.assertEqual({JAVA_PATH.upper(), self.SLUG}, titles)
+
+    def test_the_same_java_file_grounds_on_the_path_the_model_may_write_instead(self):
+        """Two spellings, one file, and no duplicate entity between them."""
+        titles, report = ground(
+            ["ORG.APACHE.COMMONS.LANG3.STRINGUTILS",
+             "src/main/java/org/apache/commons/lang3/StringUtils.java"],
+            "java",
+        )
+
+        self.assertEqual([], report.ungrounded_modules)
+        self.assertEqual({JAVA_PATH.upper(), self.SLUG}, titles)
+
+    def test_typescript_and_ruby_ground_on_the_path_fold_as_python_does(self):
+        """Neither states a package, so there is one key and it is the path."""
+        titles, report = ground(
+            ["PACKAGES.CORE.NEST-APPLICATION", "LIB.JEKYLL.SITE"], "typescript", "ruby",
+        )
+
+        self.assertEqual([], report.unsupported_files)
+        self.assertEqual([], report.ungrounded_modules)
+        self.assertEqual({TYPESCRIPT_PATH.upper(), RUBY_PATH.upper(), self.SLUG}, titles)
+
+    def test_a_java_file_whose_header_states_no_package_is_the_negative_control(self):
+        """What the declared key buys, measured by taking it away.
+
+        A header written before the symbol sections existed has only the path
+        fold, so the model's declared spelling matches nothing, the entity
+        stays ungrounded and a second one is created for the file beside it.
+        That is the three-entity outcome the second key avoids.
+        """
+        import pandas as pd
+
+        from provenance.corpus import CorpusFile
+
+        corpus = Corpus(files=[CorpusFile(
+            path=JAVA_PATH, git_repo=GIT_REPO, git_slug=GIT_SLUG, multi_repo=False,
+        )])
+        entities = pd.DataFrame(
+            [("ORG.APACHE.COMMONS.LANG3.STRINGUTILS", "MODULE", "The utils module.")],
+            columns=["title", "type", "description"],
+        )
+        _, _, report = graph.ground(
+            corpus, entities,
+            pd.DataFrame([], columns=["source", "target", "description", "weight"]),
+        )
+
+        self.assertEqual(["ORG.APACHE.COMMONS.LANG3.STRINGUTILS"], report.ungrounded_modules)
+        # The module pass runs before the repository pass, so the invented
+        # second entity is recorded first. Two created where the three tests
+        # above create one, and the extra one is the duplicate.
+        self.assertEqual([JAVA_PATH.upper(), self.SLUG], report.created)
 
 
 if __name__ == "__main__":

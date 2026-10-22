@@ -29,9 +29,9 @@ def document_frame(rows):
 
 
 def corpus_file(path, slug="celery-v2-5-5", repo="https://github.com/celery/celery.git",
-                multi_repo=False, runtime=None):
-    return CorpusFile(path=path, git_repo=repo, git_slug=slug,
-                      multi_repo=multi_repo, runtime=runtime)
+                multi_repo=False, runtime=None, package=None):
+    return CorpusFile(path=path, git_repo=repo, git_slug=slug, multi_repo=multi_repo,
+                      runtime=runtime, package=package)
 
 
 class TestCanonicalKey(unittest.TestCase):
@@ -94,6 +94,28 @@ class TestParseHeader(unittest.TestCase):
         header = HEADER.replace("celery/worker/state.py", "celery//worker/state.py")
         self.assertEqual(parse_header(header).path, "celery/worker/state.py")
 
+    def test_the_package_section_is_read_where_the_formatter_writes_it(self):
+        text = f'"""{HEADER}\n\n Package: celery.worker.state\n\nDependencies:\n- [import] sys"""\n'
+        self.assertEqual(parse_header(text).package, "celery.worker.state")
+
+    def test_a_header_written_before_the_section_existed_declares_nothing(self):
+        """The ``positional`` corpus variant, which is still rebuilt and read."""
+        self.assertIsNone(parse_header(f'"""{HEADER}, runtime Python 2.7"""\nimport os\n').package)
+
+    def test_the_word_appearing_in_the_file_body_is_not_read_as_the_section(self):
+        """Anchored to the end of the located-at line, not searched for.
+
+        A module docstring that writes ``Package: celery`` as prose would
+        otherwise give the file a second key naming something else, and every
+        entity spelled that way would ground onto it.
+        """
+        text = f'"""{HEADER}"""\n\nREADME = """\nPackage: some.other.thing\n"""\n'
+        self.assertIsNone(parse_header(text).package)
+
+    def test_an_empty_package_section_does_not_borrow_the_line_below_it(self):
+        text = f'"""{HEADER}\n\n Package: \n\nDependencies:\n- [import] sys"""\n'
+        self.assertIsNone(parse_header(text).package)
+
 
 class TestCorpusFile(unittest.TestCase):
     def test_the_title_is_uppercased_to_match_what_graphrag_stores(self):
@@ -105,6 +127,112 @@ class TestCorpusFile(unittest.TestCase):
 
     def test_the_key_is_the_folded_form_of_the_path(self):
         self.assertEqual(corpus_file("celery/worker/state.py").key, "celery.worker.state")
+
+
+JAVA_PATH = "src/main/java/org/apache/commons/lang3/StringUtils.java"
+JAVA_PACKAGE = "org.apache.commons.lang3.StringUtils"
+
+
+class TestTheSecondKeyAHeaderCanDeclare(unittest.TestCase):
+    """``Package:`` as a key, which turns out to matter for Python too.
+
+    Java was the reason for it: the declared type name is what Maven's four
+    leading directories cannot produce, and a model shown the header writes
+    the declared one. The expectation going in was that Python would be a
+    no-op, because a module's package line is its path folded.
+
+    It is a no-op for 202 of celery's 237 files and not for the other 35,
+    which are its ``__init__.py``. There the package line is the directory,
+    ``celery.app`` for ``celery/app/__init__.py``, and the path fold keeps the
+    ``__init__`` segment. The two names are the same importable thing in
+    Python, so the second key is correct rather than merely convenient, and
+    :mod:`tests.test_provenance_graph` measures what it is worth.
+    """
+
+    def test_a_python_module_declares_nothing_the_path_does_not_already_say(self):
+        stated = corpus_file("celery/worker/state.py", package="celery.worker.state")
+
+        self.assertEqual(("celery.worker.state",), stated.keys)
+        self.assertEqual((stated.key,), stated.keys)
+
+    def test_a_python_package_init_is_the_second_key_nobody_predicted(self):
+        """``declarations.module_key`` drops ``__init__``; ``canonical_key`` keeps it.
+
+        Both are right about their own question. The path fold has to keep the
+        segment, because ``celery/app/__init__.py`` and ``celery/app.py`` are
+        different files and folding them together would misattribute. The
+        package line has to drop it, because ``import celery.app`` is what
+        runs the file and no Python source ever spells ``celery.app.__init__``.
+        Carrying both is what lets each answer stand.
+        """
+        stated = corpus_file("celery/app/__init__.py", package="celery.app")
+
+        self.assertEqual(("celery.app.__init__", "celery.app"), stated.keys)
+
+    def test_a_java_header_declares_a_name_the_path_cannot_produce(self):
+        stated = corpus_file(JAVA_PATH, package=JAVA_PACKAGE)
+
+        self.assertEqual(
+            ("src.main.java.org.apache.commons.lang3.stringutils",
+             "org.apache.commons.lang3.stringutils"),
+            stated.keys,
+        )
+
+    def test_a_header_with_no_package_line_keeps_the_one_key_it_always_had(self):
+        self.assertEqual(("celery.worker.state",), corpus_file("celery/worker/state.py").keys)
+
+    def test_both_keys_reach_the_same_file(self):
+        corpus = Corpus(files=[corpus_file(JAVA_PATH, package=JAVA_PACKAGE)])
+        by_key = corpus.by_key()
+
+        self.assertEqual(set(corpus.keys), set(by_key))
+        self.assertEqual({JAVA_PATH}, {f.path for f in by_key.values()})
+
+    def test_the_declared_name_proves_its_parent_packages_exist(self):
+        """Which is the point of a second key beyond the match itself.
+
+        ``prefixes_of`` turns ``org.apache.commons.lang3.stringutils`` into
+        four real PACKAGE entities. The path fold proves ``src``,
+        ``src.main`` and ``src.main.java`` instead, which name directories
+        Java has no word for.
+        """
+        corpus = Corpus(files=[corpus_file(JAVA_PATH, package=JAVA_PACKAGE)])
+
+        self.assertLessEqual(
+            {"org", "org.apache", "org.apache.commons", "org.apache.commons.lang3"},
+            corpus.package_prefixes(),
+        )
+
+    def test_a_declared_name_two_files_claim_identifies_neither(self):
+        """Maven's parallel main and test trees, which is where this bites.
+
+        Both files declare ``org.ex.Cache`` and their paths differ, so the
+        declared key is a coin flip between them. Dropped rather than
+        resolved: the partial-evidence failure is a resolver that accepts the
+        only candidate it can see and answers confidently.
+        """
+        corpus = Corpus(files=[
+            corpus_file("src/main/java/org/ex/Cache.java", package="org.ex.Cache"),
+            corpus_file("src/test/java/org/ex/Cache.java", package="org.ex.Cache"),
+        ])
+
+        with self.assertLogs("provenance.corpus", level="WARNING") as logged:
+            by_key = corpus.by_key()
+
+        self.assertNotIn("org.ex.cache", by_key)
+        self.assertEqual(
+            {"src.main.java.org.ex.cache", "src.test.java.org.ex.cache"}, set(by_key),
+        )
+        self.assertIn("org.ex.cache", logged.output[0])
+
+    def test_a_declared_name_that_is_another_files_path_loses_to_the_path(self):
+        """A path fold is this file's own identity; a declared name is a claim."""
+        corpus = Corpus(files=[
+            corpus_file("org/ex/cache.py"),
+            corpus_file("src/main/java/org/ex/Cache.java", package="org.ex.Cache"),
+        ])
+
+        self.assertEqual("org/ex/cache.py", corpus.by_key()["org.ex.cache"].path)
 
 
 class TestCorpus(unittest.TestCase):
@@ -230,10 +358,26 @@ class TestTheSuffixesComeFromTheMapping(unittest.TestCase):
         ``provenance.graph`` gates on the same question instead.
         """
         for path, expected in [
-            ("src/main/java/com/example/Foo.java", "src.main.java.com.example.foo.java"),
-            ("src/app/service.ts", "src.app.service.ts"),
-            ("lib/thing.rb", "lib.thing.rb"),
+            ("src/main/kotlin/com/example/Foo.kt", "src.main.kotlin.com.example.foo.kt"),
             ("cmd/server/main.go", "cmd.server.main.go"),
+            ("src/App.tsx", "src.app.tsx"),
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(canonical_key(path), expected)
+
+    def test_an_extension_a_grammar_reads_is_stripped_like_pythons(self):
+        """``.java``, ``.ts`` and ``.rb`` joined the set with their dialects.
+
+        The path fold on its own is not enough to ground a Java file, since
+        Maven's layout is not the declared package; that is what the second
+        key below is for. It is enough to stop the fold manufacturing a key
+        ending in ``.java`` that nothing could ever match.
+        """
+        for path, expected in [
+            ("src/main/java/com/example/Foo.java", "src.main.java.com.example.foo"),
+            ("src/app/service.ts", "src.app.service"),
+            ("src/app/service.mts", "src.app.service"),
+            ("lib/thing.rb", "lib.thing"),
         ]:
             with self.subTest(path=path):
                 self.assertEqual(canonical_key(path), expected)

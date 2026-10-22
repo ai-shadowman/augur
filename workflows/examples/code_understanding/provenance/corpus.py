@@ -49,6 +49,15 @@ HEADER = re.compile(
     re.IGNORECASE,
 )
 
+#: The ``Package:`` section. Matched from the end of the located-at line
+#: rather than searched for: ``generate_code_comment`` writes it as the next
+#: non-blank line, so blank lines are the whole of what may legitimately come
+#: between, and a hit anywhere else in the head slice would be a line of the
+#: file's own source naming something other than this file. ``[ \t]`` rather
+#: than ``\s`` after the colon, so an empty section cannot take the first word
+#: of the line below it.
+PACKAGE = re.compile(r"\s*Package:[ \t]*(?P<package>\S+)")
+
 #: Separators a model uses interchangeably for the same path. ``_`` is
 #: deliberately absent: folding it would make ``celery.app.__init__`` collide
 #: with ``celery.app.init``, and ``__init__`` is a real and common path segment.
@@ -75,10 +84,11 @@ def canonical_key(name: str) -> str:
     which is what lets them be recognised as one entity.
 
     The suffixes come from :func:`provenance.languages.source_suffixes`, which
-    derives them from the shipped language mapping rather than declaring them.
-    An extension outside that set is left on, so a Java or TypeScript path
-    folds to something no entity will match; :func:`provenance.graph.ground`
-    gates on the same question rather than letting that pass silently.
+    derives them from the shipped language mapping and the registered parser
+    dialects rather than declaring them. An extension outside that set is left
+    on, so a ``.kt`` or ``.go`` path folds to something no entity will match;
+    :func:`provenance.graph.ground` gates on the same question rather than
+    letting that pass silently.
     """
     text = str(name).strip().lower()
     for suffix in source_suffixes():
@@ -117,10 +127,36 @@ class CorpusFile:
     #: ``text_unit_ids``, and the only thing that can settle a relative import
     #: whose resolution depends on how deep the importing file sits.
     document_id: str | None = None
+    #: The ``Package:`` line, as the header states it. For Python it is the
+    #: path folded, so it adds nothing; for Java it is the declared type name,
+    #: which Maven's directory layout does not spell.
+    package: str | None = None
 
     @property
     def key(self) -> str:
+        """The path folded. Unique per document, so it is the primary key."""
         return canonical_key(self.path)
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """Every spelling of this file an entity could legitimately carry.
+
+        The path fold always, and the folded ``Package:`` line where it says
+        something different. Java is the reason: ``StringUtils.java`` sits at
+        ``src/main/java/org/apache/commons/lang3/`` and declares itself
+        ``org.apache.commons.lang3.StringUtils``, and the model is shown the
+        second. Matching only the first would leave every Java file looking
+        ungrounded while its real entity sat beside it under another name.
+
+        Both keys are read off the header, so neither is a guess. For Python
+        they are byte-identical and this is a one-element tuple, which is what
+        makes the Java case testable against the existing corpus as a no-op.
+        """
+        key = self.key
+        if not self.package:
+            return (key,)
+        declared = canonical_key(self.package)
+        return (key,) if declared == key else (key, declared)
 
     @property
     def title(self) -> str:
@@ -149,10 +185,47 @@ class Corpus:
 
     @property
     def keys(self) -> set[str]:
-        return {f.key for f in self.files}
+        return set(self.by_key())
+
+    def keyed_files(self) -> list[tuple[CorpusFile, tuple[str, ...]]]:
+        """Each file in corpus order with the keys that identify it alone.
+
+        The path fold always, and the declared ``Package:`` key only where it
+        is unambiguous, which means claimed by one file and by no file's path.
+
+        The ambiguous case is ordinary rather than exotic. Maven puts main and
+        test sources in parallel trees, so ``src/main/java/org/ex/Cache.java``
+        and ``src/test/java/org/ex/Cache.java`` have distinct paths and both
+        declare ``org.ex.Cache``. Taking either would ground the model's
+        entity onto a file chosen by iteration order, which is the failure a
+        resolver makes when it accepts the only candidate its evidence knows
+        about. Dropping the key costs those two files their declared spelling
+        and keeps both path folds, so neither is misattributed. A declared key
+        that is some other file's path fold loses the same way, since a path
+        fold is a file's own identity where a declared name is a claim.
+
+        This is the one place those rules live. :meth:`by_key` is this
+        inverted, and :func:`provenance.graph.ground_modules` matches per file
+        and so needs them the way round they are here; deriving one from the
+        other is what keeps the two from disagreeing about which keys count.
+        """
+        paths = {f.key for f in self.files}
+        claims = Counter(k for f in self.files for k in f.keys[1:] if k not in paths)
+        contested = sorted(k for k, n in claims.items() if n > 1)
+        if contested:
+            logger.warning(
+                "%d declared package name(s) are claimed by more than one corpus "
+                "file and were not used as keys: %s",
+                len(contested), ", ".join(contested[:10]),
+            )
+        return [
+            (f, (f.key, *(k for k in f.keys[1:] if k not in paths and claims[k] == 1)))
+            for f in self.files
+        ]
 
     def by_key(self) -> dict[str, CorpusFile]:
-        return {f.key: f for f in self.files}
+        """Every key that identifies exactly one document, to that document."""
+        return {key: f for f, keys in self.keyed_files() for key in keys}
 
     def by_document_id(self) -> dict[str, CorpusFile]:
         """Documents keyed by GraphRAG's id, for tracing an entity to its file."""
@@ -205,17 +278,26 @@ def parse_header(text: str) -> CorpusFile | None:
     Only the head of the document is searched. The phrase can legitimately
     appear later in a file that documents the convention, and a match there
     would describe some other file.
+
+    ``Package:`` is read from where the formatter puts it rather than looked
+    for, and is absent from a header built before the symbol sections existed.
+    Absent is the honest answer there: the ``positional`` corpus variant has
+    no package line and inventing one from the path would make the no-op
+    untestable.
     """
-    match = HEADER.search(str(text)[:1024])
+    head = str(text)[:1024]
+    match = HEADER.search(head)
     if not match:
         return None
     runtime = (match.group("runtime") or "").strip() or None
+    package = PACKAGE.match(head, match.end())
     return CorpusFile(
         path=PurePosixPath(match.group("path")).as_posix(),
         git_repo=match.group("repo").rstrip(","),
         git_slug=match.group("slug"),
         multi_repo=match.group("multi").lower() == "true",
         runtime=runtime,
+        package=package.group("package") if package else None,
     )
 
 

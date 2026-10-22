@@ -11,6 +11,13 @@ afterwards, which leaves every other test seeing exactly what it saw before.
 
 Provenance test modules must therefore not build a DataFrame at import time,
 only inside a test or its setUp.
+
+The ``test_provenance`` prefix is a proxy for "this module needs a real
+DataFrame", and a module can be both: the non-Python header tests render
+through ``generate_code_comment`` and then ground the result, so they belong
+with data generation by name and need real pandas by behaviour. Setting
+``REAL_DATAFRAMES = True`` at module level asks for the swap directly, which
+is what the prefix was standing in for.
 """
 
 import sys
@@ -24,7 +31,10 @@ STUBBABLE = ("pandas", "pandas.core", "pyarrow")
 @pytest.fixture(autouse=True, scope="module")
 def real_dataframes(request):
     name = request.module.__name__.rpartition(".")[2]
-    if not name.startswith("test_provenance"):
+    wanted = name.startswith("test_provenance") or getattr(
+        request.module, "REAL_DATAFRAMES", False
+    )
+    if not wanted:
         yield
         return
 

@@ -19,6 +19,13 @@ fresh entity per corpus file, coming out at roughly twice its real size with no
 warning. Measured on two-file synthetic corpora: Java 2 entities to 5,
 TypeScript 2 to 5, Python 2 to 3.
 
+The first two of those three lines are now historical. A language folds once
+something can read it, so :mod:`provenance.dialects` is the second source the
+suffix set unions in, and ``.java``, ``.ts``, ``.mts``, ``.cts`` and ``.rb``
+joined when their grammars did. ``.kt`` and ``.go`` still fold to nothing and
+still reach the gate, which is the point of deriving the set rather than
+declaring it: registering a parser is what lifts a language, one at a time.
+
 So this module answers one question, and deliberately not a larger one. It does
 **not** decide what language a file is written in: extension to language is
 many-to-many in the shipped mapping (``.c`` and ``.h`` belong to both ``c`` and
@@ -38,20 +45,20 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path, PurePosixPath
 
-#: Languages whose paths the key folding genuinely reduces to the spelling a
-#: model produces. Of the 28 the mapping names, these are the two:
-#: :mod:`provenance.declarations` can read their declarations, and their
-#: extensions are the ones :func:`provenance.corpus.canonical_key` strips.
-#: Phase 6 of the deterministic-first arc widens this as tree-sitter grammars
-#: land; until then every other language reaches the gate.
-FOLDED_LANGUAGES = ("python", "ansible")
+from .dialects import suffixes as dialect_suffixes
 
-#: Extensions the folding handles that the mapping omits. ``.pyx`` is Cython
-#: and :data:`provenance.declarations.PYTHON_SUFFIXES` parses it, but the
-#: mapping's ``python`` entry lists only ``.py`` and ``.pyi``. The mapping is
-#: incomplete here rather than the folding being wrong, so the delta is named
-#: and kept rather than silently dropped by the derivation.
-_ORACLE_EXTRA = (".pyx",)
+#: Mapping entries whose *configuration* extensions the folding also strips.
+#: A dialect covers a language's source files; this covers the rest of what a
+#: repository in that language puts in the corpus, which for ``python`` is
+#: ``setup.cfg``, ``tox.ini``, ``pyproject.toml`` and ``requirements.txt``, and
+#: for ``ansible`` is the playbooks themselves.
+#:
+#: It is not the list of languages the pipeline can read. That question is
+#: :func:`provenance.dialects.dialect_for`, and the two are unioned below
+#: rather than reconciled: ``.ts`` is claimed by the mapping's ``javascript``
+#: and parsed by the ``typescript`` dialect, and folding it is correct under
+#: either name.
+FOLDED_LANGUAGES = ("python", "ansible")
 
 #: Shipped alongside ``provenance/``, under the same package root the asset
 #: loader uses. Read directly rather than through ``DefaultAssetLoader``, which
@@ -103,9 +110,21 @@ def languages_by_extension() -> dict[str, tuple[str, ...]]:
 def source_suffixes() -> tuple[str, ...]:
     """Extensions :func:`provenance.corpus.canonical_key` strips, longest first.
 
-    Longest first so a compound extension wins over its own tail, which costs
-    nothing for the two languages here and stops being a latent bug the moment
-    one with a compound extension joins them.
+    Two sources, unioned. The mapping supplies what :data:`FOLDED_LANGUAGES`
+    claims, and :func:`provenance.dialects.suffixes` supplies every extension
+    some registered grammar reads. Neither is a subset of the other: the
+    mapping has ``.cfg`` and ``.toml``, which no parser reads and the folding
+    must still strip, and the dialects have ``.pyx``, ``.mts`` and ``.cts``,
+    which the mapping has never heard of.
+
+    Deriving both halves is what keeps this honest. The original defect was a
+    hand-written tuple drifting away from the shipped mapping; a hand-written
+    tuple could now drift away from the dialect registry in exactly the same
+    way, and registering a grammar would quietly leave its language gated.
+
+    Longest first so a compound extension wins over its own tail. That matters
+    now rather than hypothetically: ``.mts`` has to be taken before the
+    ``.ts`` it ends with.
     """
     data = mapping()
     derived = {
@@ -115,7 +134,7 @@ def source_suffixes() -> tuple[str, ...]:
         if language.lower() in FOLDED_LANGUAGES
         for extension in extensions
     }
-    derived.update(_ORACLE_EXTRA)
+    derived.update(suffix.lower() for suffix in dialect_suffixes())
     return tuple(sorted(derived, key=lambda s: (-len(s), s)))
 
 

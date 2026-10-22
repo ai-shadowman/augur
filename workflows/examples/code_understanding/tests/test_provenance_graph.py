@@ -19,9 +19,17 @@ REPO = "https://github.com/celery/celery.git"
 SLUG = "celery-v2-5-5"
 
 
-def corpus(paths, runtime=None, slug=SLUG):
+def corpus(paths, runtime=None, slug=SLUG, packages=None):
+    """A corpus from paths, optionally with the ``Package:`` each header states.
+
+    ``packages`` maps a path to its declared name. Left out, no header
+    declares one, which is what every corpus built before the symbol sections
+    existed looks like.
+    """
+    packages = packages or {}
     return Corpus(files=[
-        CorpusFile(path=p, git_repo=REPO, git_slug=slug, multi_repo=False, runtime=runtime)
+        CorpusFile(path=p, git_repo=REPO, git_slug=slug, multi_repo=False, runtime=runtime,
+                   package=packages.get(p))
         for p in paths
     ])
 
@@ -621,18 +629,111 @@ class TestGround(unittest.TestCase):
         self.assertIn("merged:", rendered)
 
 
+class TestThePythonPackageInitTheSecondKeyRepairs(unittest.TestCase):
+    """The second key was added for Java and lands hardest on Python.
+
+    A header for ``celery/app/__init__.py`` states ``Package: celery.app``,
+    because that is the name an import uses. The path folds to
+    ``celery.app.__init__``, which no Python source anywhere spells. So the
+    model writes back the only name it was shown, the single-key corpus fails
+    to match it, the file looks missing, and the repair creates a second
+    entity for a file that already had one.
+
+    Measured over celery's 237 files, feeding one module entity per file
+    under the name its own header declares: 36 entities created without the
+    second key and 1 with it. The 1 is the repository, which comes from the
+    slug. The other 35 are celery's ``__init__.py``, every one a duplicate.
+    """
+
+    PATHS = ["celery/app/__init__.py", "celery/app/base.py"]
+    PACKAGES = {"celery/app/__init__.py": "celery.app"}
+
+    def ground(self, rows, packages):
+        report = GroundingReport()
+        entities, _ = graph.ground_modules(
+            corpus(self.PATHS, packages=packages), entity_frame(rows), edge_frame(), report,
+        )
+        return sorted(entities["title"].astype(str)), report
+
+    def test_the_declared_name_grounds_onto_the_init_rather_than_duplicating_it(self):
+        titles, report = self.ground(
+            [("CELERY.APP", "MODULE", "The app package."),
+             ("CELERY.APP.BASE", "MODULE", "The base module.")],
+            self.PACKAGES,
+        )
+
+        self.assertEqual(["CELERY/APP/BASE.PY", "CELERY/APP/__INIT__.PY"], titles)
+        self.assertEqual([], report.created)
+        self.assertEqual([], report.ungrounded_modules)
+
+    def test_without_the_declared_name_the_same_input_invents_a_second_entity(self):
+        """The negative control, which is what every run did until now."""
+        titles, report = self.ground(
+            [("CELERY.APP", "MODULE", "The app package."),
+             ("CELERY.APP.BASE", "MODULE", "The base module.")],
+            packages=None,
+        )
+
+        self.assertEqual(
+            ["CELERY.APP", "CELERY/APP/BASE.PY", "CELERY/APP/__INIT__.PY"], titles,
+        )
+        self.assertEqual(["CELERY/APP/__INIT__.PY"], report.created)
+        # And it is not even reported, which is what made this survive so
+        # long. ``celery/app/base.py`` proves the directory, so ``CELERY.APP``
+        # is a confirmed package prefix and the pass has a true thing to say
+        # about it. The duplicate beside it is the part nothing was counting.
+        self.assertEqual([], report.ungrounded_modules)
+
+    def test_a_package_typed_entity_collapses_into_the_init_as_well(self):
+        """``MODULE_TYPES`` holds ``package``, and for Python that is right.
+
+        ``celery.app`` names a directory and names the file that runs when it
+        is imported, and those are one thing rather than two. The pass already
+        declined to trust the model's choice between the two type names; the
+        second key means both now land on the file.
+        """
+        titles, report = self.ground(
+            [("CELERY.APP", "PACKAGE", "The app package.")], self.PACKAGES,
+        )
+
+        self.assertEqual(["CELERY/APP/BASE.PY", "CELERY/APP/__INIT__.PY"], titles)
+        self.assertEqual(["CELERY/APP/BASE.PY"], report.created)
+
+    def test_a_sibling_module_of_the_same_name_keeps_the_init_off_it(self):
+        """``celery/app.py`` beside ``celery/app/__init__.py``, the collision.
+
+        Both can sit on disk and the import system prefers the package. The
+        declared key ``celery.app`` is also ``celery/app.py``'s own path fold,
+        and a path fold is a file's identity where a declared name is a claim,
+        so the path wins and the ``__init__`` keeps only its own spelling.
+        """
+        paths = ["celery/app.py", "celery/app/__init__.py"]
+        report = GroundingReport()
+        entities, _ = graph.ground_modules(
+            corpus(paths, packages={"celery/app/__init__.py": "celery.app"}),
+            entity_frame([("CELERY.APP", "MODULE", "Ambiguous.")]),
+            edge_frame(), report,
+        )
+
+        self.assertEqual("CELERY/APP.PY", str(entities["title"].iloc[0]))
+        self.assertEqual(["CELERY/APP/__INIT__.PY"], report.created)
+
+
 class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
     """Creating an entity for a file the folding could not have matched.
 
     The repair for a file with no entity is to create one, because the path is
     known and the type is not in doubt. That reasoning holds only while a
-    failure to match means something. On a ``.java`` path the key keeps its
+    failure to match means something. On a ``.kt`` path the key keeps its
     extension and can never meet a model's dotted spelling, so every corpus
     file looks missing, every one gets a duplicate, and the module layer comes
     out at twice its real size with nothing saying so.
 
     Measured on two-file synthetic corpora before the gate: Java 2 entities to
-    5, TypeScript 2 to 5, Python 2 to 3.
+    5, TypeScript 2 to 5, Python 2 to 3. Java and TypeScript were the examples
+    here until their grammars landed and the folding started stripping their
+    extensions. The condition did not move; they did. Kotlin and Go replace
+    them, because a gate needs a case that still reaches it.
     """
 
     def ground(self, paths, rows, edges=()):
@@ -643,16 +744,23 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
         return entities, relationships, report
 
     def test_a_gated_file_gets_no_entity_and_the_report_says_why(self):
+        """``.kt``, which ``file_extensions["java"]`` lists beside ``.java``.
+
+        The reason still names ``java``, because that is the language the
+        mapping claims for the extension and this gate does not classify. What
+        it declines to do is fold it, and registering the Java grammar did not
+        register a Kotlin one.
+        """
         entities, _, report = self.ground(
-            ["src/main/java/com/example/Foo.java"],
+            ["src/main/kotlin/com/example/Foo.kt"],
             [("COM.EXAMPLE.FOO", "MODULE", "The Foo class.")],
         )
         self.assertEqual(report.created, [])
         self.assertEqual(sorted(entities["title"]), ["COM.EXAMPLE.FOO"])
         self.assertEqual(len(report.unsupported_files), 1)
         path, reason = report.unsupported_files[0]
-        self.assertEqual(path, "src/main/java/com/example/Foo.java")
-        self.assertIn(".java", reason)
+        self.assertEqual(path, "src/main/kotlin/com/example/Foo.kt")
+        self.assertIn(".kt", reason)
         self.assertIn("java", reason)
 
     def test_an_unmapped_extension_is_gated_without_a_language_being_claimed(self):
@@ -666,7 +774,7 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
 
     def test_the_skip_is_logged_once_per_reason_not_once_per_file(self):
         """A five-hundred-file repository should say one true thing once."""
-        paths = [f"src/main/java/com/example/C{i}.java" for i in range(12)]
+        paths = [f"src/main/kotlin/com/example/C{i}.kt" for i in range(12)]
         with self.assertLogs("provenance.graph", level="WARNING") as captured:
             _, _, report = self.ground(paths, [("UNRELATED", "MODULE", "x")])
         self.assertEqual(len(captured.records), 1)
@@ -681,12 +789,12 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
         match, which on an unhandled extension carries no information.
         """
         entities, _, report = self.ground(
-            ["src/Foo.java"],
-            [("SRC/FOO.JAVA", "MODULE", "The Foo class."),
-             ("src.foo.java", "MODULE", "Foo again, another spelling.")],
+            ["src/Foo.kt"],
+            [("SRC/FOO.KT", "MODULE", "The Foo class."),
+             ("src.foo.kt", "MODULE", "Foo again, another spelling.")],
         )
-        self.assertEqual(sorted(entities["title"]), ["SRC/FOO.JAVA"])
-        self.assertEqual(report.merged, [("SRC/FOO.JAVA", ["src.foo.java"])])
+        self.assertEqual(sorted(entities["title"]), ["SRC/FOO.KT"])
+        self.assertEqual(report.merged, [("SRC/FOO.KT", ["src.foo.kt"])])
         self.assertEqual(report.unsupported_files, [])
         self.assertEqual(report.created, [])
 
@@ -697,7 +805,7 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
         core, and the half the folding handles should still be repaired.
         """
         paths = ["celery/worker/state.py", "celery/app/base.py",
-                 "src/App.java", "web/index.html"]
+                 "src/App.kt", "web/index.html"]
         entities, _, report = self.ground(
             paths,
             # One spelling the folding recognises, and nothing for the rest.
@@ -709,7 +817,7 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
         self.assertEqual(report.created, ["CELERY/APP/BASE.PY"])
         self.assertEqual(
             [p for p, _ in report.unsupported_files],
-            ["src/App.java", "web/index.html"],
+            ["src/App.kt", "web/index.html"],
         )
         self.assertEqual(sorted(entities["title"]),
                          ["CELERY/APP/BASE.PY", "CELERY/WORKER/STATE.PY"])
@@ -721,6 +829,13 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
         and has nothing to do with suffix stripping, so the gate does not take
         it. A gated language lands on exactly the shape the Python control
         lands on.
+
+        The first three extensions fold now and the last two do not, and the
+        predicate does not distinguish them, which is the point. A folded
+        language matches its two entities and retitles them; a gated one
+        leaves them alone and declines to add a third. Both arrive at
+        ``before + 1``, so the number this asserts cannot tell you which
+        happened, and the failure it catches is the duplicate either way.
         """
         for extension in (".java", ".ts", ".rb", ".go", ".tsx"):
             with self.subTest(extension=extension):

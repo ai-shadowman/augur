@@ -138,10 +138,15 @@ def _drop_unfoldable(missing, report: GroundingReport):
     they are the same thing.
 
     Only the creation half is gated, not the matching half above. A model that
-    happens to spell a ``.java`` path exactly as the header does still grounds
+    happens to spell a ``.kt`` path exactly as the header does still grounds
     onto it, which is right: that match is evidence, not a guess. What the gate
     removes is the inference drawn from a *failure* to match, which on an
     unhandled extension carries no information at all.
+
+    Java, TypeScript and Ruby reached this gate until their grammars landed
+    and :func:`provenance.languages.source_suffixes` started stripping their
+    extensions. They now fold, so they pass through here rather than being
+    waved through: the condition is unchanged and the languages moved.
 
     One warning per distinct reason rather than per file, so a Java repository
     with five hundred source files logs the one true thing once.
@@ -193,8 +198,15 @@ def ground_modules(
 
     drop: list[int] = []
 
-    for key, corpus_file in by_key.items():
-        rows = list(frame.index[module_like & (keys == key)])
+    # Per file rather than per key, because a file can answer to two of them
+    # and collapsing each separately would leave two surviving rows under one
+    # title. ``keyed_files`` is the same rule ``by_key`` applies, the way
+    # round this loop needs it: a declared name two files claim, or one that
+    # is another file's path fold, has already been dropped, so the row sets
+    # gathered here cannot overlap. ``corpus_file.keys`` would not do, since
+    # it is the raw claim before any of that is settled.
+    for corpus_file, file_keys in corpus.keyed_files():
+        rows = list(frame.index[module_like & keys.isin(file_keys)])
         if not rows:
             continue
         # Prefer a row already carrying the header spelling, so the surviving
@@ -249,11 +261,12 @@ def ground_modules(
     # join can repair outright: the path is known and the type is not in doubt.
     #
     # Unless the folding could not have matched it in the first place. A
-    # ``.java`` path folds to ``src.main.java.com.example.foo.java``, which no
+    # ``.kt`` path folds to ``src.main.kotlin.com.example.foo.kt``, which no
     # entity will ever carry, so every corpus file looks missing and each one
     # gets a duplicate created beside the model's own entity for it. That is
-    # how a two-file Java corpus went from 2 entities to 5. Declining here is
-    # the difference between a graph that is wrong and one that says so.
+    # how a two-file Java corpus went from 2 entities to 5 before ``.java``
+    # folded. Declining here is the difference between a graph that is wrong
+    # and one that says so.
     present = set(frame["title"].astype(str))
     missing = [f for f in corpus.files if f.title not in present]
     missing = _drop_unfoldable(missing, report)

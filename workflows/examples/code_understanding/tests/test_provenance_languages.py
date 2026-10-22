@@ -15,7 +15,7 @@ the enumeration and fail the count.
 
 import unittest
 
-from provenance import graph, languages
+from provenance import dialects, graph, languages
 from provenance.corpus import Corpus, CorpusFile
 from provenance.grounding_report import GroundingReport
 
@@ -23,9 +23,12 @@ REPO = "https://github.com/example/app.git"
 SLUG = "example-app"
 
 #: Extensions the folding handles, as :mod:`provenance.languages` derives them.
-#: Spelled out once so a change to the derivation has to be deliberate.
+#: Spelled out once so a change to the derivation has to be deliberate. The
+#: second row arrived with the tree-sitter grammars; ``.pyx``, ``.mts`` and
+#: ``.cts`` are in no mapping section and reach the set through a dialect.
 EXPECTED_SUFFIXES = frozenset(
-    {".cfg", ".ini", ".py", ".pyi", ".pyx", ".toml", ".txt", ".yaml", ".yml"}
+    {".cfg", ".ini", ".py", ".pyi", ".toml", ".txt", ".yaml", ".yml"}
+    | {".cts", ".java", ".mts", ".pyx", ".rb", ".ts"}
 )
 
 
@@ -83,23 +86,23 @@ class TestDerivedSuffixes(unittest.TestCase):
     def test_the_derived_set_is_what_the_folding_uses(self):
         self.assertEqual(set(languages.source_suffixes()), EXPECTED_SUFFIXES)
 
-    def test_every_derived_suffix_traces_to_the_mapping_or_a_named_extra(self):
+    def test_every_derived_suffix_traces_to_the_mapping_or_a_dialect(self):
         """No suffix may appear without a source. This is the drift guard.
 
-        A suffix that is neither claimed by a folded language nor listed in
-        ``_ORACLE_EXTRA`` is the old bug returning: a value someone added by
-        hand that the shipped mapping knows nothing about.
+        A suffix claimed by neither a folded language nor a registered dialect
+        is the old bug returning: a value someone added by hand that neither
+        the shipped mapping nor the parser registry knows anything about.
         """
         claims = languages.languages_by_extension()
+        parsed = set(dialects.suffixes())
         for suffix in languages.source_suffixes():
             with self.subTest(suffix=suffix):
-                if suffix in languages._ORACLE_EXTRA:
-                    continue
                 folded = set(claims.get(suffix, ())) & set(languages.FOLDED_LANGUAGES)
                 self.assertTrue(
-                    folded,
-                    f"{suffix} is folded but no folded language claims it; it is "
-                    "either a hand-added suffix or the mapping moved underneath it",
+                    folded or suffix in parsed,
+                    f"{suffix} is folded but no folded language claims it and no "
+                    "dialect reads it; it is either a hand-added suffix or one of "
+                    "its two sources moved underneath it",
                 )
 
     def test_every_extension_of_a_folded_language_is_folded(self):
@@ -110,20 +113,33 @@ class TestDerivedSuffixes(unittest.TestCase):
             with self.subTest(language=language, extension=extension):
                 self.assertIn(extension, languages.source_suffixes())
 
-    def test_the_oracle_extra_is_still_needed(self):
-        """``.pyx`` is kept by hand only because the mapping omits it.
+    def test_every_suffix_a_dialect_reads_is_folded(self):
+        """Registering a grammar must lift its language, not just its parser.
 
-        If a later edit adds ``.pyx`` to the mapping's ``python`` entry, the
-        extra becomes dead weight and this says so rather than letting it sit
-        there implying the mapping is still wrong.
+        The two halves are separate changes in separate files, and a dialect
+        added without this holding would read a file, write its symbol
+        sections into the header, and then have every one of its entities
+        declined by the grounding gate for an extension nothing strips.
+        """
+        for suffix in dialects.suffixes():
+            with self.subTest(suffix=suffix):
+                self.assertIn(suffix, languages.source_suffixes())
+
+    def test_the_three_suffixes_no_mapping_section_names_still_fold(self):
+        """``.pyx``, ``.mts`` and ``.cts`` exist only in the dialect tables.
+
+        Cython and the two TypeScript module extensions are absent from both
+        mapping sections, so before the dialects were a source they needed a
+        hand-kept extra beside the derivation. This is what replaced it: if a
+        later edit adds one of them to the mapping, nothing here changes,
+        because the dialect is what the folding now reads it from.
         """
         claims = languages.languages_by_extension()
-        for extension in languages._ORACLE_EXTRA:
+        for extension in (".pyx", ".mts", ".cts"):
             with self.subTest(extension=extension):
-                self.assertNotIn(
-                    extension, claims,
-                    f"{extension} is now in the mapping; drop it from _ORACLE_EXTRA",
-                )
+                self.assertNotIn(extension, claims)
+                self.assertIn(extension, dialects.suffixes())
+                self.assertIn(extension, languages.source_suffixes())
 
 
 class TestSuffixOf(unittest.TestCase):
@@ -161,10 +177,22 @@ class TestClassify(unittest.TestCase):
                 self.assertTrue(languages.classify(path).folded)
 
     def test_a_mapped_but_unhandled_extension_names_its_language(self):
-        verdict = languages.classify("src/main/java/com/example/Foo.java")
+        """``.kt``, which ``file_extensions["java"]`` lists beside ``.java``.
+
+        One mapping entry naming two languages is why registering the Java
+        grammar lifted ``.java`` and not its neighbour. The verdict still
+        reports ``java`` for a Kotlin file, because that is what the mapping
+        says and this module does not classify; what it declines to do is
+        fold it.
+        """
+        verdict = languages.classify("src/main/kotlin/com/example/Foo.kt")
         self.assertFalse(verdict.folded)
         self.assertEqual(verdict.languages, ("java",))
-        self.assertIn("java", verdict.reason)
+        self.assertIn(".kt", verdict.reason)
+
+    def test_the_extension_beside_it_in_the_same_entry_does_fold(self):
+        """The contrast that makes the case above a fact rather than a quirk."""
+        self.assertTrue(languages.classify("src/main/java/com/example/Foo.java").folded)
 
     def test_an_unmapped_extension_names_the_extension_and_claims_no_language(self):
         """``.go`` is absent from both sections, so the gate must not guess.
@@ -253,19 +281,41 @@ class TestEveryMappedLanguage(unittest.TestCase):
 
 
 class TestTheDefectThisPrevents(unittest.TestCase):
-    """The measured before/after, kept as a test so it cannot come back."""
+    """The measured before/after, kept as a test so it cannot come back.
 
-    def test_a_java_corpus_does_not_double_its_module_layer(self):
+    The count is the same for every row here and the reason is not, which is
+    the whole point of keeping both kinds. A language with a grammar matches
+    its entity and retitles it; a language without one fails to match and the
+    gate declines to invent a second entity beside the model's. Either way
+    two corpus files produce two module entities and a repository, and the
+    failure this guards against is the third one appearing.
+    """
+
+    def test_a_java_corpus_now_grounds_rather_than_declining(self):
+        """``.java`` folds since the grammar landed, so the gate is not reached."""
         corpus, _, titles = synthetic(".java")
         entities, report = run_ground(corpus, titles)
         self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual(report.unsupported_files, [])
+        self.assertEqual(sorted(entities["title"].astype(str)),
+                         ["EXAMPLE-APP", "PKG/MOD_A.JAVA", "PKG/MOD_B.JAVA"])
+
+    def test_a_typescript_corpus_now_grounds_rather_than_declining(self):
+        corpus, _, titles = synthetic(".ts")
+        entities, report = run_ground(corpus, titles)
+        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual(report.unsupported_files, [])
+        self.assertEqual(sorted(entities["title"].astype(str)),
+                         ["EXAMPLE-APP", "PKG/MOD_A.TS", "PKG/MOD_B.TS"])
+
+    def test_a_kotlin_corpus_still_declines(self):
+        """The gate keeps a live case, so a silent pass cannot be mistaken for it."""
+        corpus, paths, titles = synthetic(".kt")
+        entities, report = run_ground(corpus, titles)
+        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual([p for p, _ in report.unsupported_files], paths)
         self.assertEqual(sorted(entities["title"].astype(str)),
                          ["EXAMPLE-APP", "PKG.MOD_A", "PKG.MOD_B"])
-
-    def test_a_typescript_corpus_does_not_double_its_module_layer(self):
-        corpus, _, titles = synthetic(".ts")
-        _, report = run_ground(corpus, titles)
-        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
 
     def test_the_python_control_is_unmoved(self):
         """The control the whole gate is measured against."""
@@ -282,12 +332,12 @@ class TestGroundingReportRecordsTheSkip(unittest.TestCase):
     def test_the_rendered_report_names_the_files_and_the_reason(self):
         from provenance.grounding_report import render
 
-        corpus, _, titles = synthetic(".java")
+        corpus, _, titles = synthetic(".kt")
         _, report = run_ground(corpus, titles)
         text = render(report)
         self.assertIn("not grounded:  2 corpus file(s)", text)
-        self.assertIn("pkg/mod_a.java", text)
-        self.assertIn("java", text)
+        self.assertIn("pkg/mod_a.kt", text)
+        self.assertIn(".kt", text)
 
     def test_an_empty_report_says_nothing_about_unsupported_files(self):
         from provenance.grounding_report import render
