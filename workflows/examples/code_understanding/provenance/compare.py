@@ -13,7 +13,10 @@ guideline and a differ needs nothing from it but the dataclass.
 Every metric below is read from ``report.stats`` as ``verify_index`` already
 writes it. If a metric cannot be computed from a :class:`VerificationReport`
 alone it does not belong here, and the honest move is to say which and why
-rather than to widen ``verify_index`` to suit the comparison.
+rather than to widen ``verify_index`` to suit the comparison. ``EXCLUDED`` is
+where that saying-which-and-why lives. It also carries the harder case, a
+number ``verify_index`` does write and this comparison still should not quote,
+because the reading would not mean what a reader takes it to mean.
 
 The predictions are registered before the measurement they describe. Phase 7
 is the only measurement in this epic whose numbers someone watches arrive, so
@@ -247,6 +250,71 @@ MODULE_PRECISION = Metric(
 #: module entities on celery alone. A differ that could not see that would
 #: miss the layer this epic moved most recently.
 METRICS = (SYMBOL_PRECISION, MISATTRIBUTED_SYMBOLS, INVENTED_PACKAGES, MODULE_PRECISION)
+
+
+# ---------------------------------------------------------------------------
+# What deliberately is not measured
+
+#: No :class:`VerificationReport` carries the number at all.
+UNMEASURABLE = "unmeasurable"
+#: A report does carry it, and the reading would be read as something it is not.
+UNINFORMATIVE = "uninformative"
+
+
+@dataclass(frozen=True)
+class Exclusion:
+    """A metric left out on purpose, kept with the argument that left it out.
+
+    The same move ``decidability`` makes for a prompt field. A metric that
+    quietly stops being quoted invites the next person to re-add it on the
+    strength of the gap; one that carries a verdict has to be argued past.
+    """
+
+    name: str
+    #: Keys in ``report.stats`` it would have been read from. Named so a test
+    #: can check they still exist, which is what makes this a retirement
+    #: rather than a note about code that has since moved.
+    stats: tuple[str, ...]
+    verdict: str
+    reason: str
+
+
+CONSTRAINT_SURVIVAL = Exclusion(
+    name="declared_constraints_surviving",
+    stats=("declared_constraints", "constraints_survived", "constraints_unindexed"),
+    verdict=UNINFORMATIVE,
+    reason=(
+        "Retires the '7/7 constraints surviving' acceptance line, on three "
+        "measurements. The denominator belongs to the corpus rather than to "
+        "celery: the checkout declares 16 constrained dependencies across 8 "
+        "manifests, and the 7 is default.txt's three plus test.txt's three "
+        "plus py25.txt's one, which is whichever subset one run happened to "
+        "index. The numerator measured the stitch rather than the model: 7/7 "
+        "came from the stitched artifact in /tmp/stitch-run, while verifying "
+        "entities.parquet directly gives 1/7, identically with the folding "
+        "gate on and off. And the check is vacuous on both Phase 7 corpora, "
+        "whose 116 input documents all sit under celery/ with no manifest "
+        "among them, so every declaration is held out as unindexed and "
+        "declared_constraints reads 0 whichever way the run goes. "
+        "Under the operating rule the 1/7 is the expected reading and not a "
+        "defect. A constraint is a verbatim value AUGUR already holds in "
+        "facts.packages[].constraint, so asking a model to carry it through "
+        "extraction and description summarisation is the echo failure the "
+        "rule's first corollary names. check_declared_constraints stays in "
+        "verify.py, earning its place as the stitch's own regression test: a "
+        "stitch that silently stops writing constraints shows up there and "
+        "nowhere else."
+    ),
+)
+
+EXCLUDED = (CONSTRAINT_SURVIVAL,)
+
+
+def excluded_for(name: str, exclusions=EXCLUDED) -> Exclusion | None:
+    for exclusion in exclusions:
+        if exclusion.name == name:
+            return exclusion
+    return None
 
 
 # ---------------------------------------------------------------------------

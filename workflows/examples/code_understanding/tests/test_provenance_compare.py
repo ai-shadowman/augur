@@ -15,7 +15,14 @@ import unittest
 
 from provenance import compare, declarations, verify
 from provenance.corpus import Corpus, CorpusFile
-from provenance.models import Finding, FindingKind, RepoFacts, VerificationReport
+from provenance.models import (
+    Finding,
+    FindingKind,
+    Layer,
+    Package,
+    RepoFacts,
+    VerificationReport,
+)
 
 FACTS = RepoFacts(
     root="/tmp/celery-255",
@@ -50,6 +57,16 @@ def document_frame():
     import pandas as pd
 
     return pd.DataFrame([{"title": "state.py", "text": DOCUMENT}])
+
+
+def corpus_file(path):
+    """One indexed document, as ``parse_header`` would have produced it."""
+    return CorpusFile(
+        path=path,
+        git_repo="https://github.com/celery/celery.git",
+        git_slug="celery-v2-5-5",
+        multi_repo=False,
+    )
 
 
 def report(**stats):
@@ -155,10 +172,7 @@ class TestTheBucketNamesMatchTheChecksThatWriteThem(unittest.TestCase):
         self.assert_covers(stats, "package_layer", compare.INVENTED_PACKAGES)
 
     def test_the_module_layer_buckets_are_the_checks_own(self):
-        corpus = Corpus(files=[
-            CorpusFile(path="celery/worker/state.py", git_repo="https://github.com/celery/celery.git",
-                       git_slug="celery-v2-5-5", multi_repo=False)
-        ])
+        corpus = Corpus(files=[corpus_file("celery/worker/state.py")])
 
         _findings, stats = verify.check_module_layer_grounded(FACTS, entity_frame([]), corpus)
 
@@ -313,6 +327,95 @@ class TestThePredictionsAreCheckable(unittest.TestCase):
         self.assertEqual([], result.broken_predictions)
         self.assertEqual([], result.movements)
         self.assertEqual(len(compare.METRICS), len(result.unavailable))
+
+
+class TestTheRetiredMetricStaysArguedRatherThanAbsent(unittest.TestCase):
+    """What is deliberately not compared, and why it is not.
+
+    ``declared_constraints_surviving`` was Phase 1's acceptance line at 7/7.
+    Deleting it quietly would leave the next reader a gap to fill on the
+    strength of the gap. These tests are the other half of the retirement:
+    the verdict has to survive, its evidence has to stay attached, and the
+    stats it names have to still exist, so a re-addition argues past a record
+    rather than past an absence.
+    """
+
+    def test_no_exclusion_is_also_a_registered_metric(self):
+        """Quoting and retiring the same number would be the worst of both."""
+        registered = {metric.name for metric in compare.METRICS}
+
+        for exclusion in compare.EXCLUDED:
+            with self.subTest(exclusion=exclusion.name):
+                self.assertNotIn(exclusion.name, registered)
+
+    def test_each_exclusion_carries_a_known_verdict_and_its_own_reason(self):
+        known = {compare.UNMEASURABLE, compare.UNINFORMATIVE}
+        reasons = [e.reason.strip() for e in compare.EXCLUDED]
+
+        for exclusion in compare.EXCLUDED:
+            with self.subTest(exclusion=exclusion.name):
+                self.assertIn(exclusion.verdict, known)
+        self.assertTrue(all(reasons), "an exclusion with no reason is a deletion")
+        self.assertEqual(len(reasons), len(set(reasons)), "a reused reason is filler")
+
+    def test_the_stats_an_exclusion_names_are_still_written(self):
+        """Otherwise the record outlives the code and stops meaning anything."""
+        _findings, stats = verify.check_declared_constraints(FACTS, entity_frame([]))
+
+        for key in compare.CONSTRAINT_SURVIVAL.stats:
+            with self.subTest(stat=key):
+                self.assertIn(key, stats)
+
+    def test_the_reason_keeps_all_three_measurements_attached(self):
+        """A verdict quoted without its evidence is re-litigated on vibes."""
+        evidence = {
+            "16 constrained": "the denominator is 16 declarations, not 7",
+            "1/7": "direct verification gives 1/7; the 7/7 was the stitch",
+            "116 input documents": "no manifest reaches either Phase 7 corpus",
+        }
+        reason = compare.CONSTRAINT_SURVIVAL.reason
+
+        for token, why in evidence.items():
+            with self.subTest(measurement=why):
+                self.assertIn(token, reason)
+
+    def test_the_check_really_is_vacuous_on_a_corpus_holding_no_manifest(self):
+        """The third measurement, asserted against the code rather than quoted.
+
+        Both Phase 7 corpora hold only files under ``celery/``. Every declared
+        constraint is then held out as unindexed, so the ratio reads 0/0
+        whichever header variant the run used, and a differ quoting it would
+        report a tie it never measured.
+        """
+        facts = RepoFacts(
+            root="/tmp/celery-255",
+            own_modules=["celery"],
+            packages=[
+                Package(
+                    name="kombu",
+                    ecosystem="python",
+                    layer=Layer.PACKAGE,
+                    source_file="requirements/default.txt",
+                    constraint="<2.2.0,>=2.1.8",
+                    declared_line="kombu>=2.1.8,<2.2.0",
+                )
+            ],
+        )
+        sources_only = Corpus(files=[corpus_file("celery/worker/state.py")])
+
+        _findings, stats = verify.check_declared_constraints(
+            facts, entity_frame([("kombu", "library", "Messaging.")]), sources_only
+        )
+
+        self.assertEqual(0, stats["declared_constraints"])
+        self.assertEqual(1, stats["constraints_unindexed"])
+
+    def test_an_unretired_name_is_not_silently_treated_as_retired(self):
+        self.assertIsNone(compare.excluded_for("symbol_precision"))
+        self.assertIs(
+            compare.CONSTRAINT_SURVIVAL,
+            compare.excluded_for("declared_constraints_surviving"),
+        )
 
 
 class TestBounds(unittest.TestCase):

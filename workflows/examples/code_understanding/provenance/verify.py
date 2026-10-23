@@ -186,6 +186,13 @@ def check_declared_constraints(
     one, so the absent entity measures the corpus filter and says nothing
     about extraction. Scoring it would move the surviving-constraint ratio for
     reasons no prompt and no stitch can touch.
+
+    The ratio this check prints is **not** a measure of extraction quality,
+    and the "7/7 constraints surviving" acceptance line it was written against
+    is retired: see :data:`provenance.compare.CONSTRAINT_SURVIVAL` for the
+    three measurements behind that. What the check does earn is the stitch.
+    ``provenance stitch`` writes these constraints into the graph, so a stitch
+    that silently stops writing them shows up here and nowhere else.
     """
     findings: list[Finding] = []
     titles = {
