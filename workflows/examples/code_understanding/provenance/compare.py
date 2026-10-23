@@ -458,7 +458,14 @@ def render(comparison: Comparison, experiment: str = EXPERIMENT) -> str:
     lines = [f"experiment: {experiment}", f"{before_label} -> {after_label}", ""]
 
     for movement in comparison.movements:
-        arrow = {True: "improved", False: "regressed", None: "flat"}[movement.improved]
+        # ``improved`` is False for no movement as well as for a regression, and
+        # None when a side is missing, so the label reads the delta first.
+        if movement.delta == 0:
+            arrow = "flat"
+        else:
+            arrow = {True: "improved", False: "regressed", None: "not comparable"}[
+                movement.improved
+            ]
         lines.append(f"{movement.metric.name} ({movement.metric.unit})")
         lines.append(f"  {before_label:<12} {movement.baseline}")
         lines.append(f"  {after_label:<12} {movement.treatment}")

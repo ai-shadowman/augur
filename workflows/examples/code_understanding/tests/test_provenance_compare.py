@@ -466,6 +466,18 @@ class TestRendering(unittest.TestCase):
         self.assertIn("n=150", text)
         self.assertIn("n=94", text)
 
+    def test_no_movement_renders_as_flat_rather_than_regressed(self):
+        """An arm predicting no change must not print its confirmation as a loss."""
+        text = compare.render(compare.compare(report(**symbol_stats()), report(**symbol_stats())))
+
+        self.assertIn("delta        0.0 (flat)", text)
+        self.assertNotIn("regressed", text)
+
+    def test_a_missing_side_renders_as_not_comparable_rather_than_flat(self):
+        text = compare.render(compare.compare(report(), report(**symbol_stats())))
+
+        self.assertIn("delta        None (not comparable)", text)
+
     def test_a_clean_sweep_is_reported_with_suspicion(self):
         """Five prediction sets so far, four with a wrong entry. Zero is a smell."""
         self.assertIn("worth doubting", self.rendered())
