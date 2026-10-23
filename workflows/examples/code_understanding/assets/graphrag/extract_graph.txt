@@ -1,41 +1,37 @@
 -Target activity-
 You are an AI assistant that helps analyze software codebases and extract dependency information.
 
--Repository Entity Rule (enforced throughout)-
+-Goal-
+Given a text document describing a software artifact — which may be source code in any programming language, a configuration file, an infrastructure definition, or a build script — identify all software entities and the relationships between them.
+
 Every document begins with a header of the form:
   "This file is located at <path> from repository url <git_repo_url>, repository slug <git_slug_value>, multi_repo <true|false>"
   The header may optionally end with: ", runtime <runtime_components>" (e.g. ", runtime Python 3.12")
-Extract git_slug, git_repo, and multi_repo from this header. If ", runtime " is present in the header, also extract its value.
-
-You MUST emit exactly ONE repository entity using the extracted values:
-- entity_name MUST be exactly: the git_slug value from the document header
-- entity_type: repository
-- entity_description MUST begin with: "Repository hosted at <git_repo_url>." followed by a brief description of the codebase.
-  If the header contains ", runtime ", include the runtime immediately after the opening sentence: "Runtime stack: <runtime_value>."
-  If no runtime is present in the header, omit the "Runtime stack:" sentence entirely.
-  WITH runtime:    "Repository hosted at https://github.com/acme/my-app. Runtime stack: Python 3.12. ..."
-  WITHOUT runtime: "Repository hosted at https://github.com/acme/my-app. ..."
-
-WRONG:  ("entity"<|>TIC TAC TOE SAMPLE MAIN<|>repository<|>...)   ← invented title, not the git_slug from the header
-CORRECT:("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. ...)
-
--Goal-
-Given a text document describing a software artifact — which may be source code in any programming language, a configuration file, an infrastructure definition, or a build script — identify all software entities and the relationships between them.
+Use <path> to name the module entity for this document. Do not emit a repository entity and do
+not repeat the url in descriptions: the repository, its url, its slug, its runtime and every
+BELONGS_TO edge are added from the header after extraction. Report what the code does.
 
 -Steps-
 1. Identify all entities. For each identified entity, extract the following information:
 - entity_name: Most specific identifier available for the entity.
-  For repositories, always use the git_slug (e.g., jhani-user-app-main).
-  For all other entities: if multi_repo is true (from the document header), prefix with <git_slug>:: to
+  If multi_repo is true (from the document header), prefix with <git_slug>:: to
   avoid cross-repo name collisions
   (e.g., acme-payments-main::com.acme.payments.PaymentService); otherwise use the bare name.
-  Within the name, preserve the original casing from the source: relative file path for modules
-  (e.g., src/main/java/com/acme/PaymentService.java), fully qualified names for classes/functions
-  (e.g., com.acme.PaymentService, com.acme.PaymentService.getPayment), key-path notation for config
-  files (e.g., spring.datasource.url). External dependencies shared across repos are never prefixed.
+  Use the relative file path for modules
+  (e.g., src/main/java/com/acme/PaymentService.java), fully qualified names for
+  classes/functions (e.g., com.acme.PaymentService, com.acme.PaymentService.getPayment),
+  key-path notation for config files (e.g., spring.datasource.url). External dependencies
+  shared across repos are never prefixed.
 - entity_type: One of the following types: [{entity_types}]
+- Before typing an imported or referenced name, place it in one of three layers:
+  a. APPLICATION CODE — defined in THIS repository. Type it module, class or function.
+     Never library or stdlib_module, however it was imported.
+  b. PLATFORM — a module of the language's own standard library. Type it stdlib_module.
+  c. PACKAGE — a third-party distribution. Type it library, named for the distribution.
+     If a manifest or build file declares a version, add a sentence "Version: <spec>." to
+     the description, using the spec exactly as declared.
+  If unsure between b and c, use library. Never leave entity_type blank.
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
-  - For all entity types except repository and dependency, the description MUST begin with: "Defined in the repository at <git_repo_url from document header>."
 
 2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
 For each pair of related entities, extract the following information:
@@ -45,26 +41,19 @@ For each pair of related entities, extract the following information:
 - relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
 For dependencies that cross repository boundaries, use CROSS_REPO_IMPORTS or CROSS_REPO_DEPENDS_ON as the relationship type in the description.
 
-3. For every package entity identified in step 1, emit a USES_LIBRARY relationship for each dependency entity (external library) used by modules within that package.
-- source_entity: the package entity
-- target_entity: the dependency entity
-- relationship_description: e.g., "com.acme.payments imports org.springframework.web.bind.annotation"
-- relationship_strength: a numeric score reflecting how central the dependency is to the package
-Omit USES_LIBRARY if no modules within the package import or reference the dependency.
-
-4. For every non-repository entity identified in step 1, emit a BELONGS_TO relationship linking it to its repository entity, with the following exceptions:
-- Class and function entities are optional, since they are reachable through their parent module.
-- Dependency entities: emit BELONGS_TO only if the dependency is internal to the repository (i.e., defined within the same codebase). Omit BELONGS_TO for external third-party libraries and frameworks.
-
 ######################
 -Entity Types-
 ######################
-- repository: A git repository. entity_name = git_slug (e.g., jhani-user-app-main).
+This catalogue covers every type AUGUR can configure. Only the types in
+[{entity_types}] are available for this run; if a type below is not in that
+list, do not emit it.
+
 - module: A single source file or compilation unit. entity_name = relative file path as found in the "This file is located at" annotation (e.g., src/main/java/com/acme/PaymentService.java, src/utils/my_service.py).
 - class: A class definition. entity_name = fully qualified class name (e.g., com.acme.PaymentService, my_module.MyClass).
 - function: A function or method. entity_name = fully qualified name including module and class where applicable (e.g., com.acme.PaymentService.getPayment, my_module.fetch_data, my_module.MyClass.my_method).
 - package: A fully qualified language-specific namespace or directory that groups related modules or classes, or file path for Javascript/Typescript
-- dependency: An external code reference or declared library. Covers both import statements from source files and versioned libraries declared in build or config files (with optional version, vulnerability, and deprecation metadata). Never prefixed with git_slug
+- library: A third-party distribution the repository depends on, named for the distribution rather than any symbol inside it (e.g., kombu, requests, org.springframework.web). `from kombu.clocks import LamportClock` is the library kombu, not kombu.clocks and not LamportClock. Carries a version when one is declared. Never prefixed with git_slug
+- stdlib_module: A module of the language's own standard library (e.g., logging, socket, java.util). Versioned by the runtime, never independently. Never prefixed with git_slug
 - config_file: A configuration file (e.g., application.yaml, .env, terraform.tfvars)
 - service: A configured service or infrastructure component (e.g., spring.datasource)
 - variable: An environment variable or configuration property
@@ -77,28 +66,40 @@ Omit USES_LIBRARY if no modules within the package import or reference the depen
 - CALLS: Function A calls Function B
 - USES: Module A uses functionality from Module B
 - DEPENDS_ON: Generic dependency relationship within the same repository
-- BELONGS_TO: Module/Class/Function/Package/Config A belongs to Repository B
-- USES_LIBRARY: Package A (a codebase namespace or grouping unit) uses library B
 - CROSS_REPO_IMPORTS: Module A in one repo imports Module B from a different repo
 - CROSS_REPO_DEPENDS_ON: Module A in one repo depends on Module B from a different repo
 
 ######################
 -Output Format-
 ######################
-One tuple per line. No preamble, no explanation, no markdown fences — tuples only.
+No preamble, no explanation, no markdown fences — tuples only.
 Two tuple types:
 
 ("entity"<|><entity_name><|><entity_type><|><entity_description>)
 ("relationship"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
 
-CRITICAL — Emit exact source casing. ALL CAPS only if the source identifier is ALL CAPS (e.g. `MAX_SIZE = 100`). Never introduce ALL CAPS not present in the source:
+End every tuple with {record_delimiter} on its own line, including the last tuple you
+emit. If you are asked to continue and add more tuples, terminate those the same way.
+After the final {record_delimiter}, emit {completion_delimiter} on its own line.
 
-WRONG:  ("entity"<|>PLAY<|>function<|>...)              ← source says `def play()`
-WRONG:  ("entity"<|>USERCONTROLLER<|>class<|>...)      ← source says `class UserController`
-WRONG:  ("entity"<|>FETCHDATA<|>function<|>...)        ← source says `func fetchData()`
-CORRECT:("entity"<|>play<|>function<|>...)
-CORRECT:("entity"<|>UserController<|>class<|>...)
-CORRECT:("entity"<|>fetchData<|>function<|>...)
+CRITICAL — Name an imported module exactly as the import statement spells it. Do not rewrite it
+as a file path and do not infer where the file lives from the location of the file importing it.
+Only the path in this document's own header may be written as a path.
+
+WRONG:  ("entity"<|>celery/worker/registry.py<|>module<|>...)  ← this file is celery/worker/__init__.py and says `from celery import registry`
+WRONG:  ("entity"<|>src/utils/helpers.py<|>module<|>...)       ← import says `from myapp import helpers`; the path was guessed
+CORRECT:("entity"<|>celery.registry<|>module<|>...)
+CORRECT:("entity"<|>myapp.helpers<|>module<|>...)
+
+This holds for a relative import too: keep its leading dots. In celery/app/base.py,
+`from ..datastructures import X` is ..datastructures. Resolving the dots needs the
+package this document sits in, which is a calculation on the header path and is done
+after extraction. Two attempts at having the model do it instead produced
+celery.app.base.datastructures and src/celery/app/base.py.
+
+CRITICAL — An attribute read off a variable is not an entity. `self.conf.EMAIL_HOST`
+is a configuration key being read, not a declared name, and SELF is not a namespace.
+Emit an entity only for something the document declares or imports.
 
 CRITICAL — Use fully qualified names for module, class, and function entities. Never use bare names:
 
@@ -111,14 +112,30 @@ CORRECT:("entity"<|>game.play<|>function<|>...)
 CORRECT:("entity"<|>com.acme.PaymentService<|>class<|>...)
 CORRECT:("entity"<|>com.acme.PaymentService.getPayment<|>function<|>...)
 
+CRITICAL — Layer entities at the right granularity. Name the distribution or the module,
+never a symbol inside one, and never file your own code as someone else's:
+
+WRONG:  ("entity"<|>kombu.clocks<|>library<|>...)          ← a symbol inside a distribution
+WRONG:  ("entity"<|>kombu.pools.ProducerPool<|>library<|>...)
+CORRECT:("entity"<|>kombu<|>library<|>...)                 the distribution, once
+WRONG:  ("entity"<|>basestring<|>stdlib_module<|>...)      ← a language builtin, not a module
+WRONG:  ("entity"<|>time.sleep<|>stdlib_module<|>...)      ← a function inside a module
+CORRECT:("entity"<|>time<|>stdlib_module<|>...)            the module, once
+WRONG:  ("entity"<|>celery.worker.utils.timeutils<|>library<|>...)  ← defined in THIS repository
+CORRECT:("entity"<|>celery/worker/utils/timeutils.py<|>module<|>...)
+
+Language builtins (isinstance, map, len, basestring) are not entities at all. Skip them.
+
+CRITICAL — Do not type a name as stdlib_module on the strength of the name alone. A name that
+matches a standard library module can still be a third-party backport pinned in a manifest;
+`multiprocessing==2.6.2.1` in a requirements file is a declared distribution, so it is a library.
+If the document declares the name in a manifest, it is a library whatever it is called.
+
 ######################
 -Example-
 ######################
-git_slug: <extract from "repository slug" in document header>
-git_repo: <extract from "repository url" in document header>
 multi_repo: <extract from "multi_repo" in document header>
-runtime: <value after ", runtime " in document header; leave blank if absent>
-Entity_types: [repository, module, class, function, package, dependency]
+Entity_types: [module, class, function, package, library, stdlib_module]
 Text:
 """This file is located at src/utils/my_service.py from repository url https://github.com/acme/my-app, repository slug my-app-main, multi_repo false, runtime Python 3.12"""
 # my_service.py
@@ -128,29 +145,23 @@ def fetch_data(url):
     return requests.get(url).json()
 
 Output:
-("entity"<|>my-app-main<|>repository<|>Repository hosted at https://github.com/acme/my-app. Runtime stack: Python 3.12. Contains the my-app service implementation.)
-("entity"<|>src/utils/my_service.py<|>module<|>Defined in the repository at https://github.com/acme/my-app. Module that provides data fetching functionality via the fetch_data function.)
-("entity"<|>my_service.fetch_data<|>function<|>Defined in the repository at https://github.com/acme/my-app. Function that fetches JSON data from a given URL using the requests library.)
-("entity"<|>requests<|>dependency<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
-("relationship"<|>src/utils/my_service.py<|>my-app-main<|>src/utils/my_service.py BELONGS_TO the my-app-main repository<|>10)
+("entity"<|>src/utils/my_service.py<|>module<|>Module that provides data fetching functionality via the fetch_data function.)
+{record_delimiter}
+("entity"<|>my_service.fetch_data<|>function<|>Function that fetches JSON data from a given URL using the requests library.)
+{record_delimiter}
+("entity"<|>requests<|>library<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
+{record_delimiter}
 ("relationship"<|>my_service.fetch_data<|>src/utils/my_service.py<|>my_service.fetch_data is defined in src/utils/my_service.py<|>10)
+{record_delimiter}
 ("relationship"<|>src/utils/my_service.py<|>requests<|>src/utils/my_service.py IMPORTS the requests library<|>8)
+{record_delimiter}
+{completion_delimiter}
 
 ######################
 -Real Data-
 ######################
-git_slug: <extract from "repository slug" in document header>
-git_repo: <extract from "repository url" in document header>
 multi_repo: <extract from "multi_repo" in document header>
-runtime: <value after ", runtime " in document header; leave blank if absent>
 Entity_types: {entity_types}
 Text: {input_text}
 ######################
-MANDATORY: Your very first output tuple MUST be the repository entity. Use git_slug, git_repo, and runtime extracted from the document header.
-If runtime IS present in the header:
-  ("entity"<|><git_slug><|>repository<|>Repository hosted at <git_repo>. Runtime stack: <runtime>. <brief description of what this repository contains>)
-If runtime is NOT present in the header:
-  ("entity"<|><git_slug><|>repository<|>Repository hosted at <git_repo>. <brief description of what this repository contains>)
 Output:
-
-
