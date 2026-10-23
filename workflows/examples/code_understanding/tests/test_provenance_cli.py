@@ -39,11 +39,11 @@ class CliTestCase(unittest.TestCase):
             "extract", str(self.repo), "--no-syft", "-o", str(self.facts_path), *extra
         )
 
-    def write_index(self, rows):
+    def write_index(self, rows, name="output"):
         # Imported here, not at module scope: see tests/conftest.py.
         import pandas as pd
 
-        output = self.work / "output"
+        output = self.work / name
         output.mkdir(exist_ok=True)
         pd.DataFrame(rows, columns=["title", "type", "description"]).to_parquet(
             output / "entities.parquet"
@@ -215,6 +215,97 @@ class TestHealthCommand(CliTestCase):
             "-o", str(destination),
         )
         self.assertIn("kombu", json.loads(destination.read_text(encoding="utf-8")))
+
+
+class TestCompareCommand(CliTestCase):
+    """Two indexes of one checkout, which is the shape of an ingest experiment.
+
+    The arithmetic is covered in ``test_provenance_compare.py`` against
+    synthetic reports. What is tested here is that the subcommand verifies
+    both directories against the same facts and that the exit status carries
+    the prediction verdict, since a runner reads that and not the prose.
+    """
+
+    DECLARED = [
+        ("kombu", "library", "Messaging. Version: >=2.1.8,<2.2.0"),
+        ("anyjson", "library", "JSON wrapper. Version: ==0.3.1"),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.extract()
+
+    def hallucinated(self, count):
+        """Package entities no manifest declares and no source file imports."""
+        return [(f"ghost-{n}", "library", "A library this repo never names") for n in range(count)]
+
+    def compare(self, baseline_rows, treatment_rows, *extra):
+        baseline = self.write_index(baseline_rows, name="positional")
+        treatment = self.write_index(treatment_rows, name="parser")
+        return self.run_cli(
+            "compare", str(self.facts_path), str(baseline), str(treatment), *extra
+        )
+
+    def test_a_run_matching_every_prediction_exits_zero(self):
+        status, text = self.compare(
+            self.DECLARED + self.hallucinated(40), self.DECLARED + self.hallucinated(2)
+        )
+
+        self.assertEqual(cli.EXIT_OK, status, msg=text)
+        self.assertIn("invented_package_entities", text)
+        self.assertIn("-> held", text)
+
+    def test_a_broken_prediction_exits_nonzero_and_prints_its_reason(self):
+        rows = self.DECLARED + self.hallucinated(5)
+
+        status, text = self.compare(rows, rows)
+
+        self.assertEqual(cli.EXIT_FINDINGS, status)
+        self.assertIn("predictions that did not hold", text)
+        self.assertIn("why it was predicted", text)
+
+    def test_both_indexes_are_read_rather_than_one_twice(self):
+        _status, text = self.compare(
+            self.DECLARED + self.hallucinated(40), self.DECLARED + self.hallucinated(2)
+        )
+
+        self.assertIn("40", text)
+        self.assertIn("delta        -38", text)
+
+    def test_the_labels_name_the_two_sides(self):
+        _status, text = self.compare(
+            self.DECLARED, self.DECLARED, "--labels", "before", "after"
+        )
+
+        self.assertIn("before -> after", text)
+
+    def test_the_experiment_line_is_overridable_so_a_run_is_attributable(self):
+        _status, text = self.compare(self.DECLARED, self.DECLARED, "--experiment", "a dry run")
+
+        self.assertIn("experiment: a dry run", text)
+
+    def test_json_output_carries_the_verdicts_alongside_the_numbers(self):
+        _status, text = self.compare(
+            self.DECLARED + self.hallucinated(40),
+            self.DECLARED + self.hallucinated(2),
+            "--json",
+        )
+
+        payload = json.loads(text)
+        invented = next(
+            m for m in payload["metrics"] if m["metric"] == "invented_package_entities"
+        )
+        self.assertEqual(40, invented["positional"])
+        self.assertEqual(2, invented["parser"])
+        self.assertTrue(invented["improved"])
+        self.assertTrue(all(p["held"] for p in invented["predictions"]))
+
+    def test_an_unbuilt_index_is_an_error_not_a_traceback(self):
+        built = self.write_index(self.DECLARED, name="positional")
+
+        status = cli.main(["compare", str(self.facts_path), str(built), str(self.work)])
+
+        self.assertEqual(cli.EXIT_ERROR, status)
 
 
 class TestParser(unittest.TestCase):
