@@ -1,4 +1,5 @@
 import tempfile
+import os
 import unittest
 import subprocess
 from pathlib import Path
@@ -175,6 +176,69 @@ class TestRepositoryIgnorePolicyMatching(unittest.TestCase):
         policy.filter_directories(root, ["vendor", "cache", "src"], built_in_names={"vendor"})
         policy.filter_files(root, [".augurignore", "debug.log", "app.py"], built_in_names={".augurignore"})
         self.assertEqual(policy.stats, IgnoreStats(ignored_directories=2, ignored_files=2))
+
+    def test_unsafe_links_are_skipped_once_and_are_not_custom_matches(self):
+        for patterns in (None, "*.py\nunsafe-dir/\n"):
+            with self.subTest(patterns=patterns), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "repo"
+                root.mkdir()
+                if patterns is not None:
+                    (root / AUGURIGNORE_FILENAME).write_text(patterns, encoding="utf-8")
+                outside = Path(directory) / "outside.py"
+                outside.write_text("secret", encoding="utf-8")
+                (root / "unsafe.py").symlink_to(outside)
+                (root / "broken.py").symlink_to("missing.py")
+                (root / "loop.py").symlink_to("loop.py")
+                (root / "unsafe-dir").symlink_to(root.parent, target_is_directory=True)
+                (root / "safe.txt").write_text("safe", encoding="utf-8")
+                policy = RepositoryIgnorePolicy.from_repository(root)
+
+                with self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+                    for _ in range(2):
+                        self.assertEqual(policy.filter_files(root, ["unsafe.py", "broken.py", "loop.py", "safe.txt"]), ["safe.txt"])
+                        self.assertEqual(policy.filter_directories(root, ["unsafe-dir"]), [])
+
+                self.assertEqual(len(logs.output), 4)
+                self.assertIn("Skipping unsafe.py: symlink target is outside repository root", "\n".join(logs.output))
+                self.assertIn("broken.py", "\n".join(logs.output))
+                self.assertIn("loop.py", "\n".join(logs.output))
+                self.assertEqual(policy.stats, IgnoreStats(ignored_directories=1, ignored_files=3))
+                self.assertFalse(policy.has_custom_exclusions)
+
+    def test_internal_links_keep_lexical_ignore_matching(self):
+        root, policy = self.make_policy("alias.py\nignored-dir/\n")
+        (root / "real.py").write_text("safe", encoding="utf-8")
+        (root / "alias.py").symlink_to("real.py")
+        (root / "kept.py").symlink_to("real.py")
+        (root / "src").mkdir()
+        (root / "ignored-dir").symlink_to("src", target_is_directory=True)
+        (root / "kept-dir").symlink_to("src", target_is_directory=True)
+
+        self.assertEqual(policy.filter_files(root, ["alias.py", "kept.py"]), ["kept.py"])
+        self.assertEqual(policy.filter_directories(root, ["ignored-dir", "kept-dir"]), ["kept-dir"])
+        self.assertTrue(policy.has_custom_exclusions)
+
+    @unittest.skipIf(os.name == "nt", "Backslash is a separator on Windows")
+    def test_literal_backslash_symlink_names_are_checked_as_filesystem_entries(self):
+        root, policy = self.make_policy("")
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "secret.py"
+            outside.write_text("secret", encoding="utf-8")
+            names = ["unsafe\\alias.py", "broken\\alias.py", "loop\\alias.py"]
+            (root / names[0]).symlink_to(outside)
+            (root / names[1]).symlink_to("missing.py")
+            (root / names[2]).symlink_to(names[2])
+
+            with self.assertLogs("utils.repository_ignore", level="WARNING") as logs:
+                self.assertEqual(policy.filter_files(root, names), [])
+            self.assertEqual(len(logs.output), 3)
+            self.assertEqual(policy.stats.ignored_files, 3)
+
+    def test_filters_still_reject_ordinary_paths_outside_repository(self):
+        root, policy = self.make_policy("")
+        for method in (policy.filter_files, policy.filter_directories):
+            with self.subTest(method=method.__name__), self.assertRaises(RepositoryIgnoreError):
+                method(root.parent, ["outside"])
 
     def test_normalizes_platform_separators_and_rejects_outside_paths(self):
         root, policy = self.make_policy("cache/**\n")

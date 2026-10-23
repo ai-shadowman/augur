@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+from utils.request_timing import timing_span
 from contextlib import contextmanager
 
 ##############################################################################
@@ -178,7 +179,11 @@ def read_from_input_artifact(artifact):
 
     logging.info(f"Extract a KFP Input[Dataset] tar.gz archive to a temp dir.")
     with tempfile.TemporaryDirectory() as tmp:
-        with tarfile.open(artifact.path, "r:gz") as tar:
+        with timing_span("artifact.extract", "io") as event, tarfile.open(artifact.path, "r:gz") as tar:
+            try:
+                event["bytes"] = os.path.getsize(artifact.path)
+            except OSError:
+                pass
             if hasattr(tarfile, "tar_filter"):
                  tar.extractall(tmp, filter="tar")
             elif hasattr(tarfile, "fully_trusted_filter"):
@@ -203,8 +208,13 @@ def write_to_output_artifact(artifact, compresslevel=1):
     with tempfile.TemporaryDirectory() as tmp:
         yield tmp
         os.makedirs(os.path.dirname(artifact.path), exist_ok=True)
-        with tarfile.open(artifact.path, "w:gz", compresslevel=compresslevel) as tar:
-            tar.add(tmp, arcname=".")
+        with timing_span("artifact.archive", "io") as event:
+            with tarfile.open(artifact.path, "w:gz", compresslevel=compresslevel) as tar:
+                tar.add(tmp, arcname=".")
+            try:
+                event["bytes"] = os.path.getsize(artifact.path)
+            except OSError:
+                pass
 
 
 @contextmanager

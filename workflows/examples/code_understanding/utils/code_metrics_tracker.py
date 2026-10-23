@@ -5,8 +5,10 @@ import logging
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+from utils.repository_ignore import skip_unsafe_symlink
 
 # Extension and file classification maps
 EXT_TO_LANGUAGE: Dict[str, str] = {
@@ -328,6 +330,9 @@ class CodeMetricsTracker:
         root: str,
         fname: str,
         filter_languages: Optional[Set[str]] = None,
+        *,
+        repository_root: Optional[Path] = None,
+        warned_symlinks: Optional[Set[str]] = None,
     ) -> Tuple[str, str, Optional[str]]:
         """Resolves original filename, extension, and language for generated .txt files."""
         stem = fname[:-4] if fname.endswith(".txt") else fname
@@ -345,6 +350,16 @@ class CodeMetricsTracker:
             os.path.join(parent_dir, "target", f"{stem}_metadata.txt"),
         ]
         for meta_path in meta_candidates:
+            if repository_root is not None:
+                if skip_unsafe_symlink(
+                    meta_path, repository_root,
+                    warned_symlinks if warned_symlinks is not None else set(),
+                ):
+                    continue
+                try:
+                    Path(meta_path).resolve().relative_to(repository_root.resolve())
+                except (OSError, RuntimeError, ValueError):
+                    continue
             if os.path.isfile(meta_path):
                 orig_fname, orig_ext, lang = cls._read_metadata_file(meta_path)
                 if orig_fname:
@@ -484,10 +499,19 @@ class CodeMetricsTracker:
             for fl in filter_languages:
                 self.languages.setdefault(fl, _empty_lang_stats())
 
-        for root, dirs, files in os.walk(source_path):
-            dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        repository_root = Path(os.path.abspath(source_path))
+        warned_symlinks: set[str] = set()
+        for root, dirs, files in os.walk(source_path, followlinks=False):
+            dirs[:] = [
+                d for d in dirs
+                if not skip_unsafe_symlink(Path(root) / d, repository_root, warned_symlinks)
+                and d not in EXCLUDED_DIRS and not d.startswith(".")
+            ]
 
             for fname in files:
+                fpath = os.path.join(root, fname)
+                if skip_unsafe_symlink(fpath, repository_root, warned_symlinks):
+                    continue
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
                 if fname.endswith("_metadata.txt") or fname in (
@@ -496,11 +520,11 @@ class CodeMetricsTracker:
                 ):
                     continue
 
-                fpath = os.path.join(root, fname)
                 resolved_lang = None
                 if fname.endswith(".txt"):
                     base_fname, ext, resolved_lang = self._inspect_txt_file(
-                        fpath, root, fname, filter_languages
+                        fpath, root, fname, filter_languages,
+                        repository_root=repository_root, warned_symlinks=warned_symlinks,
                     )
                 else:
                     base_fname = fname

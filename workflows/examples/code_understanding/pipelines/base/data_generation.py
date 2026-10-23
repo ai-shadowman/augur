@@ -3,6 +3,7 @@ import os
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+from utils.request_timing import timing_span
 
 from utils.kubeflow_utils import setup_logging
 setup_logging()
@@ -265,7 +266,8 @@ def get_parsed_code_metadata(df, language, config=False):
 
         converted_df = None
         try:
-            converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
+            with timing_span("sdg.generate_batch", "batch"):
+                converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
@@ -296,6 +298,12 @@ def load_external_data(source_path: str, ignore_policy=None) -> dict:
     ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
 
     if not os.path.isdir(code_metadata_dir):
+        if os.path.islink(code_metadata_dir):
+            ignore_policy.filter_files(source_path, [code_utils.CODE_METADATA_DIR])
+        return result
+    if not ignore_policy.filter_directories(source_path, [code_utils.CODE_METADATA_DIR]):
+        return result
+    if os.path.islink(code_metadata_dir):
         return result
 
     for root, dirs, files in os.walk(code_metadata_dir):
@@ -684,9 +692,10 @@ class DataGenerationPipeline:
                 with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
                     prepare_environment(source_path=source_path, target_path=target_path,
                                         git_repo=git_repo, git_branch=git_branch)
+                    ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
 
                     with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                        languages = detect_languages(source_path)
+                        languages = detect_languages(source_path, ignore_policy)
 
                     if code_tracker:
                         try:
@@ -696,7 +705,7 @@ class DataGenerationPipeline:
                             logging.debug(f"Code metrics measurement failed: {e}")
 
                     with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                        external_metadata = load_external_data(source_path)
+                        external_metadata = load_external_data(source_path, ignore_policy)
 
                     for language in languages:
                         for config in [False, True]:
@@ -704,17 +713,20 @@ class DataGenerationPipeline:
                                 git_repo=git_repo, git_branch=git_branch,
                                 language=language, source_path=source_path, target_path=target_path,
                                 config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                                ignore_policy=ignore_policy,
                             )
+                    ignore_policy.log_summary()
             else:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
-                languages = detect_languages(source_path)
+                ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
+                languages = detect_languages(source_path, ignore_policy)
                 if code_tracker:
                     try:
                         code_tracker.measure_repository(source_path, languages=languages)
                     except Exception as e:
                         logging.debug(f"Code metrics measurement failed: {e}")
-                external_metadata = load_external_data(source_path)
+                external_metadata = load_external_data(source_path, ignore_policy)
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(

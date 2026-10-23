@@ -63,6 +63,27 @@ podman push localhost/pipeline-tools:$TAG quay.io/ai-shadowman/pipeline-tools:$T
 
 ---
 
+## Python Package Build Caching (Layer Optimization)
+
+To prevent redownloading large Python packages across repeated builds:
+
+1. **Native Podman Layer Caching**:
+   * Podman caches image layers across builds by default.
+   * `requirements.txt` is installed in a dedicated build step:
+     ```dockerfile
+     ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
+
+     COPY requirements.txt ./requirements.txt
+
+     RUN pip install --upgrade pip \
+         && pip install -r requirements.txt
+     ```
+   * As long as `requirements.txt` does not change, Podman reuses the cached layer (`--> Using cache <layer-id>`), completing in seconds with zero network downloads.
+   * Standard Containerfile syntax is preserved (`RUN pip install ...`), ensuring 100% compatibility across all Podman/Buildah versions and OpenShift BuildConfigs.
+
+2. **Optimized Layer Caching in `data-analysis` and `pipeline-tools`**:
+   * `requirements.txt` is copied and installed **before** `workflows/examples/code_understanding` is copied.
+   * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install ./workflows/examples/code_understanding`), skipping heavy package downloads completely and rebuilding in seconds.
 ## Building via OpenShift BuildConfig (Cluster-native Builds)
 
 Instead of building locally with Podman, you can offload builds to the OpenShift cluster using `BuildConfig` objects that push directly to `quay.io` using authentication secret `quay-secret`.
