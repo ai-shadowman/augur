@@ -29,6 +29,12 @@ class GroundingReport:
     merged: list[tuple[str, list[str]]] = field(default_factory=list)
     #: Corpus files that had no entity at all and were created.
     created: list[str] = field(default_factory=list)
+    #: Package directories the indexed paths prove and the extraction did not
+    #: name. Separate from :attr:`created`, which is about files: a reader
+    #: comparing a joined run against an unjoined one needs to know which
+    #: part of the package bucket the product wrote and which part the model
+    #: emitted, and one combined count would hide exactly that.
+    packages_created: list[str] = field(default_factory=list)
     #: ``(path, reason)`` for each corpus file the module layer declined to
     #: create an entity for, because the key folding cannot strip its
     #: extension. The mirror of :attr:`created`: those are files a join could
@@ -88,6 +94,12 @@ def render(report: GroundingReport, limit: int = 15) -> str:
     if report.created:
         lines.append(f"created:       {len(report.created)} entity(ies) with no extraction")
         lines.extend(f"  {t}" for t in report.created[:limit])
+    if report.packages_created:
+        lines.append(
+            f"packages:      {len(report.packages_created)} directory(ies) "
+            "proved by an indexed path and not extracted"
+        )
+        lines.extend(f"  {t}" for t in report.packages_created[:limit])
     if report.unsupported_files:
         _section(
             lines,

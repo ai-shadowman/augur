@@ -34,7 +34,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 
-from .languages import source_suffixes
+from .languages import classify, source_suffixes
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,37 @@ class Corpus:
     def package_prefixes(self) -> set[str]:
         """Directories proved to exist by the paths that were indexed."""
         return prefixes_of(self.keys)
+
+    def importable_prefixes(self) -> set[str]:
+        """The same directories, named the way the language names a package.
+
+        Narrower than :meth:`package_prefixes`, and the asymmetry is the
+        point. That one grades a model and should stay generous: Maven's
+        ``src/main/java`` is a real directory and charging invention for
+        naming it would be unfair. This one is written into the graph by
+        :func:`provenance.packages.synthesize` and should be conservative,
+        because ``SRC.MAIN.JAVA`` is a build-layout artifact that no migration
+        report wants as a node.
+
+        Two narrowings, both of them a file's own header talking:
+
+        * where a file declares a package, the declared key is the name the
+          package is imported by, so the path fold contributes nothing above
+          it. ``keyed_files`` is consulted rather than ``CorpusFile.keys`` so
+          a declared name two files claim is already gone, which is the
+          ordinary Maven ``src/main`` and ``src/test`` case.
+        * a file whose extension the folding cannot strip is skipped
+          entirely. ``foo.kt`` folds to ``…com.example.foo.kt`` and every
+          prefix of that is garbage. Same gate as
+          :func:`provenance.graph._drop_unfoldable`, for the same reason:
+          an inference drawn from a key that could never have matched carries
+          no information.
+        """
+        return prefixes_of(
+            keys[-1]
+            for f, keys in self.keyed_files()
+            if classify(f.path).folded
+        )
 
     def _majority(self, attribute: str) -> str | None:
         """The value the headers agree on, or the most common one if they differ.

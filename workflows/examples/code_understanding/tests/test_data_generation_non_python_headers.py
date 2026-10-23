@@ -462,6 +462,9 @@ class TestTheGroundingGateNoLongerFiresForTheseThree(unittest.TestCase):
 
     SLUG = GIT_SLUG.upper()
 
+    JAVA_PACKAGES = {"ORG", "ORG.APACHE", "ORG.APACHE.COMMONS",
+                     "ORG.APACHE.COMMONS.LANG3"}
+
     def test_a_java_entity_grounds_onto_the_package_the_header_declares(self):
         """The one language where the path fold alone would not have matched.
 
@@ -475,7 +478,13 @@ class TestTheGroundingGateNoLongerFiresForTheseThree(unittest.TestCase):
         self.assertEqual([], report.unsupported_files)
         self.assertEqual([], report.ungrounded_modules)
         self.assertEqual([self.SLUG], report.created)
-        self.assertEqual({JAVA_PATH.upper(), self.SLUG}, titles)
+        self.assertEqual({JAVA_PATH.upper(), self.SLUG} | self.JAVA_PACKAGES, titles)
+        # Rule 3 of ``packages.synthesize``, on the layout that motivated it.
+        # The path fold proves ``src``, ``src.main`` and ``src.main.java``;
+        # the declared name is what an import uses, so those three are not
+        # written and the four that an import would name are.
+        self.assertEqual(self.JAVA_PACKAGES, set(report.packages_created))
+        self.assertFalse({t for t in report.packages_created if t.startswith("SRC")})
 
     def test_the_same_java_file_grounds_on_the_path_the_model_may_write_instead(self):
         """Two spellings, one file, and no duplicate entity between them."""
@@ -486,7 +495,7 @@ class TestTheGroundingGateNoLongerFiresForTheseThree(unittest.TestCase):
         )
 
         self.assertEqual([], report.ungrounded_modules)
-        self.assertEqual({JAVA_PATH.upper(), self.SLUG}, titles)
+        self.assertEqual({JAVA_PATH.upper(), self.SLUG} | self.JAVA_PACKAGES, titles)
 
     def test_typescript_and_ruby_ground_on_the_path_fold_as_python_does(self):
         """Neither states a package, so there is one key and it is the path."""
@@ -496,7 +505,11 @@ class TestTheGroundingGateNoLongerFiresForTheseThree(unittest.TestCase):
 
         self.assertEqual([], report.unsupported_files)
         self.assertEqual([], report.ungrounded_modules)
-        self.assertEqual({TYPESCRIPT_PATH.upper(), RUBY_PATH.upper(), self.SLUG}, titles)
+        self.assertEqual(
+            {TYPESCRIPT_PATH.upper(), RUBY_PATH.upper(), self.SLUG}
+            | {"PACKAGES", "PACKAGES.CORE", "LIB", "LIB.JEKYLL"},
+            titles,
+        )
 
     def test_a_java_file_whose_header_states_no_package_is_the_negative_control(self):
         """What the declared key buys, measured by taking it away.

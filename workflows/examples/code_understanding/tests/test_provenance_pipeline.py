@@ -422,7 +422,8 @@ class TestRunWorkflowGrounding(WorkflowTestCase):
         facts_module.write(self.FACTS, self.root / pipeline.FACTS_FILENAME)
         output = self.run_stage()
         titles = set(self.storage.tables["entities"]["title"])
-        self.assertEqual(titles, {"CELERY-V2-5-5", "KOMBU", "CELERY/WORKER/STATE.PY"})
+        self.assertEqual(titles, {"CELERY-V2-5-5", "KOMBU", "CELERY/WORKER/STATE.PY",
+                                  "CELERY", "CELERY.WORKER"})
         self.assertEqual(output.result["grounding"]["repository"], "CELERY-V2-5-5")
         self.assertIn("relationships", self.storage.writes)
 

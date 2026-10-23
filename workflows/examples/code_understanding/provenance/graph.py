@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import declarations, languages
+from . import declarations, languages, packages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .grounding_report import GroundingReport
 from .tables import collapse, document_for, rewrite_edges, text_unit_documents, types_of
@@ -515,6 +515,11 @@ def ground(
     entities, relationships = ground_modules(
         corpus, entities, relationships, report, text_units, facts,
     )
+    # After the collapse, so a directory the model did name is recognised and
+    # not written twice; before ``ground_repository``, whose ``_belongs_to``
+    # pass is what keeps a synthesized package from landing as an isolated
+    # node.
+    entities = packages.synthesize(corpus, entities, report)
     if documents is not None:
         entities, relationships = ground_symbols(
             entities, relationships, report, documents, facts,

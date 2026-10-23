@@ -269,7 +269,12 @@ class TestEveryMappedLanguage(unittest.TestCase):
                 entities, report = run_ground(corpus, titles)
                 present = set(entities["title"].astype(str))
 
-                self.assertEqual(report.entities_after, report.entities_before + 1)
+                # The repository, and the one directory ``pkg/`` that both
+                # paths prove. A folded extension is exactly the case
+                # ``packages.synthesize`` writes for, so the second row is
+                # the gate passing rather than a duplicate appearing.
+                self.assertEqual(report.entities_after, report.entities_before + 2)
+                self.assertEqual(report.packages_created, ["PKG"])
                 self.assertEqual(report.unsupported_files, [])
                 self.assertEqual(report.ungrounded_modules, [])
                 for path in paths:
@@ -287,26 +292,32 @@ class TestTheDefectThisPrevents(unittest.TestCase):
     the whole point of keeping both kinds. A language with a grammar matches
     its entity and retitles it; a language without one fails to match and the
     gate declines to invent a second entity beside the model's. Either way
-    two corpus files produce two module entities and a repository, and the
-    failure this guards against is the third one appearing.
+    two corpus files produce two module entities, and the failure this guards
+    against is a third one appearing.
+
+    The totals differ by one, and on the same axis. A folded extension also
+    gets ``PKG`` from :func:`provenance.packages.synthesize`, because the two
+    paths prove that directory; kotlin does not, because an extension the
+    folding cannot strip is skipped there for the reason the gate skips it
+    here. So the package row tracks the gate rather than cutting across it.
     """
 
     def test_a_java_corpus_now_grounds_rather_than_declining(self):
         """``.java`` folds since the grammar landed, so the gate is not reached."""
         corpus, _, titles = synthetic(".java")
         entities, report = run_ground(corpus, titles)
-        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual((report.entities_before, report.entities_after), (2, 4))
         self.assertEqual(report.unsupported_files, [])
         self.assertEqual(sorted(entities["title"].astype(str)),
-                         ["EXAMPLE-APP", "PKG/MOD_A.JAVA", "PKG/MOD_B.JAVA"])
+                         ["EXAMPLE-APP", "PKG", "PKG/MOD_A.JAVA", "PKG/MOD_B.JAVA"])
 
     def test_a_typescript_corpus_now_grounds_rather_than_declining(self):
         corpus, _, titles = synthetic(".ts")
         entities, report = run_ground(corpus, titles)
-        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual((report.entities_before, report.entities_after), (2, 4))
         self.assertEqual(report.unsupported_files, [])
         self.assertEqual(sorted(entities["title"].astype(str)),
-                         ["EXAMPLE-APP", "PKG/MOD_A.TS", "PKG/MOD_B.TS"])
+                         ["EXAMPLE-APP", "PKG", "PKG/MOD_A.TS", "PKG/MOD_B.TS"])
 
     def test_a_kotlin_corpus_still_declines(self):
         """The gate keeps a live case, so a silent pass cannot be mistaken for it."""
@@ -321,9 +332,9 @@ class TestTheDefectThisPrevents(unittest.TestCase):
         """The control the whole gate is measured against."""
         corpus, _, titles = synthetic(".py")
         entities, report = run_ground(corpus, titles)
-        self.assertEqual((report.entities_before, report.entities_after), (2, 3))
+        self.assertEqual((report.entities_before, report.entities_after), (2, 4))
         self.assertEqual(sorted(entities["title"].astype(str)),
-                         ["EXAMPLE-APP", "PKG/MOD_A.PY", "PKG/MOD_B.PY"])
+                         ["EXAMPLE-APP", "PKG", "PKG/MOD_A.PY", "PKG/MOD_B.PY"])
 
 
 class TestGroundingReportRecordsTheSkip(unittest.TestCase):

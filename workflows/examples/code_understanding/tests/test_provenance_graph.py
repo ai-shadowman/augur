@@ -580,11 +580,18 @@ class TestGround(unittest.TestCase):
         entities, relationships, report = graph.ground(
             corpus(["celery/worker/state.py"]), entity_frame(self.ROWS), edge_frame()
         )
+        # ``CELERY`` and ``CELERY.WORKER`` are the two directories the one
+        # indexed path proves, written by ``packages.synthesize`` rather than
+        # extracted. A one-file corpus is the worst case for that ratio and
+        # the reason it is worth seeing here: on the 116-file celery arm the
+        # same pass writes one row.
         self.assertEqual(sorted(entities["title"]),
-                         ["CELERY-V2-5-5", "CELERY/WORKER/STATE.PY", "KOMBU"])
+                         ["CELERY", "CELERY-V2-5-5", "CELERY.WORKER",
+                          "CELERY/WORKER/STATE.PY", "KOMBU"])
         self.assertEqual(report.entities_before, 4)
-        self.assertEqual(report.entities_after, 3)
-        self.assertEqual(report.relationships_after, 1)
+        self.assertEqual(report.entities_after, 5)
+        self.assertEqual(report.packages_created, ["CELERY", "CELERY.WORKER"])
+        self.assertEqual(report.relationships_after, 3)
 
     def test_an_unparseable_corpus_leaves_the_graph_as_extracted(self):
         # No headers means nothing authoritative to reconcile against, and a
@@ -823,19 +830,19 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
                          ["CELERY/APP/BASE.PY", "CELERY/WORKER/STATE.PY"])
 
     def test_the_whole_pass_lands_a_gated_corpus_on_the_control_shape(self):
-        """The exit predicate: before + 1, the +1 being the repository.
+        """The exit predicate, which is the repository plus the folding verdict.
 
-        ``EX-APP`` comes from the header's ``git_slug``, which is a header fact
-        and has nothing to do with suffix stripping, so the gate does not take
-        it. A gated language lands on exactly the shape the Python control
-        lands on.
+        ``CELERY-V2-5-5`` comes from the header's ``git_slug``, a header fact
+        with nothing to do with suffix stripping, so every corpus here gets
+        it and the gate never takes it.
 
-        The first three extensions fold now and the last two do not, and the
-        predicate does not distinguish them, which is the point. A folded
-        language matches its two entities and retitles them; a gated one
-        leaves them alone and declines to add a third. Both arrive at
-        ``before + 1``, so the number this asserts cannot tell you which
-        happened, and the failure it catches is the duplicate either way.
+        The first three extensions fold and the last two do not, and the one
+        row that separates them is ``PKG``. That is the same verdict twice
+        rather than two verdicts: ``packages.synthesize`` skips an unfoldable
+        path for the reason this gate skips it, because a prefix of
+        ``pkg.a.go`` is not a directory any import names. What neither case
+        may do is add a *module* row, which is the duplicate this guards
+        against, so the titles are asserted exactly.
         """
         for extension in (".java", ".ts", ".rb", ".go", ".tsx"):
             with self.subTest(extension=extension):
@@ -844,9 +851,17 @@ class TestTheGateOnUnfoldableExtensions(unittest.TestCase):
                     entity_frame([("PKG.A", "MODULE", "a"), ("PKG.B", "MODULE", "b")]),
                     edge_frame(),
                 )
-                self.assertEqual(report.entities_after, report.entities_before + 1)
+                folds = extension in {".java", ".ts", ".rb"}
+                self.assertEqual(report.entities_after,
+                                 report.entities_before + (2 if folds else 1))
+                self.assertEqual(report.packages_created, ["PKG"] if folds else [])
                 self.assertEqual(report.created, ["CELERY-V2-5-5"])
-                self.assertIn("CELERY-V2-5-5", set(entities["title"].astype(str)))
+                self.assertEqual(
+                    sorted(entities["title"].astype(str)),
+                    ["CELERY-V2-5-5", "PKG", f"PKG/A{extension.upper()}",
+                     f"PKG/B{extension.upper()}"]
+                    if folds else ["CELERY-V2-5-5", "PKG.A", "PKG.B"],
+                )
 
 
 if __name__ == "__main__":
