@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dgemma-spike
+---
+# 25.3 GiB of weights plus the hub's blob cache, which holds a second copy
+# during download. 60Gi leaves room to try the NVFP4 build beside it later.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dgemma-models
+  namespace: dgemma-spike
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: gp3-csi
+  resources:
+    requests:
+      storage: 60Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dgemma-download
+  namespace: dgemma-spike
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      # The claim is WaitForFirstConsumer on EBS, so whichever node this lands
+      # on owns the volume for good. It has to be the GPU node or the server
+      # will never be able to mount it.
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-L40S
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: download
+          image: vllm/vllm-openai:v0.31.0
+          command: ["python3", "-c"]
+          args:
+            - |
+              import os, time
+              from huggingface_hub import snapshot_download
+              t = time.time()
+              p = snapshot_download(
+                  "RedHatAI/diffusiongemma-26B-A4B-it-FP8-dynamic",
+                  local_dir="/models/dgemma-fp8",
+                  max_workers=8,
+              )
+              total = sum(
+                  os.path.getsize(os.path.join(d, f))
+                  for d, _, fs in os.walk(p) for f in fs
+              )
+              print(f"done {p} {total/2**30:.1f} GiB in {time.time()-t:.0f}s", flush=True)
+          env:
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "0"
+            - name: HF_HOME
+              value: /models/.hf
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            requests: {cpu: "4", memory: 8Gi}
+            limits: {cpu: "8", memory: 16Gi}
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: dgemma-models
