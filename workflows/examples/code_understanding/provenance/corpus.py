@@ -58,10 +58,20 @@ HEADER = re.compile(
 #: of the line below it.
 PACKAGE = re.compile(r"\s*Package:[ \t]*(?P<package>\S+)")
 
-#: Separators a model uses interchangeably for the same path. ``_`` is
-#: deliberately absent: folding it would make ``celery.app.__init__`` collide
-#: with ``celery.app.init``, and ``__init__`` is a real and common path segment.
-_SEPARATORS = re.compile(r"[/.]+")
+#: Separators a model uses interchangeably for the same path or dotted name.
+#:
+#: ``::`` and ``#`` are Ruby's and unambiguous there: ``::`` is the namespace
+#: operator and ``#`` is rdoc's notation for an instance method, which is how
+#: Ruby documentation writes ``Jekyll::Commands::New#create_site`` and how a
+#: model reading that documentation writes it back. Without them a title like
+#: ``JEKYLL::TAGS::LINK#RENDER`` survives folding as one opaque segment and
+#: matches nothing: on the positional jekyll arm that is 204 of 242 symbol
+#: titles, graded 0.0 for a reason unrelated to what the model knew.
+#:
+#: ``_`` is deliberately absent: folding it would make ``celery.app.__init__``
+#: collide with ``celery.app.init``, and ``__init__`` is a real and common path
+#: segment.
+_SEPARATORS = re.compile(r"(?:::|[/.#])+")
 
 
 def dotted_key(name: str) -> str:

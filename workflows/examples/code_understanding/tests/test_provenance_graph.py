@@ -436,6 +436,114 @@ class TestGroundSymbols(unittest.TestCase):
         self.assertEqual(report.symbols_refiled, [])
 
 
+RUBY_HEADER = (
+    "=begin\nThis file is located at {path} from repository url "
+    "https://github.com/jekyll/jekyll, repository slug jekyll, "
+    "multi_repo false, runtime Ruby\n=end\n"
+)
+
+JAVA_HEADER = (
+    "/*\nThis file is located at {path} from repository url "
+    "https://github.com/apache/commons-lang, repository slug commons-lang, "
+    "multi_repo false, runtime Java\n\nPackage: {package}\n*/\n"
+)
+
+
+class TestTheOwnerThatIsNotAPath(unittest.TestCase):
+    """The two dialects whose symbols are not addressed by their file's path.
+
+    ``declarations.namespace_for`` keys Ruby's inventory under ``""``, because
+    the walker already returned the whole ``module`` chain, and Java's under
+    the declared package with the type stem removed. Both reach code in
+    ``_corrected_owner`` that the Python corpora never exercise: an owner that
+    is the empty string, and a correct title whose owner is nothing like the
+    path fold.
+    """
+
+    RUBY = "module Jekyll\n  module Tags\n    class Link\n      def render; end\n    end\n  end\nend\n"
+    JAVA = "package org.apache.commons.lang3.tuple;\npublic class Pair {\n  void accept() {}\n}\n"
+
+    def documents(self, rows):
+        """``(path, header, body)`` triples, one language per call."""
+        import pandas as pd
+
+        return pd.DataFrame([
+            {"title": path, "text": header + body} for path, header, body in rows
+        ])
+
+    def ruby(self, rows, path="lib/jekyll/tags/link.rb"):
+        report = GroundingReport()
+        documents = self.documents([(path, RUBY_HEADER.format(path=path), self.RUBY)])
+        entities, _relationships = graph.ground_symbols(
+            entity_frame(rows), edge_frame(), report, documents, None,
+        )
+        return entities, report
+
+    def test_a_ruby_title_the_walker_would_have_written_is_left_alone(self):
+        """``declared_in`` answers ``""`` here, and ``_corrected_owner`` tests
+        it against ``None`` rather than reading it for truth. Truthiness would
+        call every correctly qualified Ruby symbol undeclared."""
+        entities, report = self.ruby(
+            [("JEKYLL::TAGS::LINK#RENDER", "FUNCTION", "Renders the tag.")]
+        )
+
+        self.assertEqual(list(entities["title"]), ["JEKYLL::TAGS::LINK#RENDER"])
+        self.assertEqual(report.symbols_refiled, [])
+
+    def test_a_ruby_rename_carries_no_leading_dot(self):
+        """The path that makes the guard load-bearing. The model prefixed the
+        name with the source directory, which is not part of a Ruby constant
+        path, so the corpus answers with the symbol and an owner of ``""``.
+        Joining on a dot regardless would emit ``.JEKYLL.TAGS.LINK.RENDER``."""
+        entities, report = self.ruby(
+            [("LIB::JEKYLL::TAGS::LINK#RENDER", "FUNCTION", "Renders the tag.")]
+        )
+        title = entities["title"].iloc[0]
+
+        self.assertFalse(title.startswith("."), title)
+        self.assertEqual("JEKYLL.TAGS.LINK.RENDER", title)
+        self.assertEqual(report.symbols_refiled, [
+            ("LIB::JEKYLL::TAGS::LINK#RENDER", "JEKYLL.TAGS.LINK.RENDER"),
+        ])
+
+    def test_a_java_symbol_is_correct_under_its_declared_package(self):
+        """Maven puts the file under ``src/main/java`` and the model is shown
+        ``org.apache.commons.lang3.tuple``. Keyed by the path fold this title
+        looked undeclared, and the join rewrote all 686 of them."""
+        path = "src/main/java/org/apache/commons/lang3/tuple/Pair.java"
+        header = JAVA_HEADER.format(path=path, package="org.apache.commons.lang3.tuple.Pair")
+        report = GroundingReport()
+        entities, _relationships = graph.ground_symbols(
+            entity_frame([("ORG.APACHE.COMMONS.LANG3.TUPLE.PAIR.ACCEPT", "FUNCTION", "Accepts.")]),
+            edge_frame(), report,
+            self.documents([(path, header, self.JAVA)]),
+            None,
+        )
+
+        self.assertEqual(
+            ["ORG.APACHE.COMMONS.LANG3.TUPLE.PAIR.ACCEPT"], list(entities["title"])
+        )
+        self.assertEqual([], report.symbols_refiled)
+
+    def test_the_declared_package_is_what_a_wrong_java_owner_is_corrected_to(self):
+        """Anti-vacuity for the case above: the join still works on Java, it
+        just no longer fires on names that were already right. A title under
+        the build layout is wrong, and the corpus names one owner for it."""
+        path = "src/main/java/org/apache/commons/lang3/tuple/Pair.java"
+        header = JAVA_HEADER.format(path=path, package="org.apache.commons.lang3.tuple.Pair")
+        report = GroundingReport()
+        entities, _relationships = graph.ground_symbols(
+            entity_frame([("SRC.MAIN.JAVA.PAIR.ACCEPT", "FUNCTION", "Accepts.")]),
+            edge_frame(), report,
+            self.documents([(path, header, self.JAVA)]),
+            None,
+        )
+
+        self.assertEqual(
+            ["ORG.APACHE.COMMONS.LANG3.TUPLE.PAIR.ACCEPT"], list(entities["title"])
+        )
+
+
 class TestGroundRepository(unittest.TestCase):
     """One repository was indexed, so the graph gets exactly one repository."""
 

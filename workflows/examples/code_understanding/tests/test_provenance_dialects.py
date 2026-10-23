@@ -273,8 +273,12 @@ class TestTheShapeEachLanguageMustHave(unittest.TestCase):
         self.assertEqual(("f",), self.symbols(TYPESCRIPT, source).functions)
 
     def test_ruby_qualifies_with_a_dot_so_the_key_folds(self):
-        """``dotted_key`` folds ``.`` and ``/`` and does not fold ``::``, so a
-        name spelled the Ruby way would never match the path's."""
+        """The walker writes ``.`` rather than Ruby's own ``::``, so the name
+        folds without relying on ``dotted_key`` reading the source spelling.
+
+        ``dotted_key`` does fold ``::`` now, which is what lets a *model's*
+        ``Jekyll::Site#process`` compare. This is the other half: what the
+        parser stores needs no folding rule to match."""
         found = self.symbols(RUBY, "module Jekyll\n  class Site\n    def process; end\n  end\nend\n")
 
         self.assertEqual(("Jekyll", "Jekyll.Site"), found.classes)

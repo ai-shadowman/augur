@@ -361,10 +361,15 @@ def _corrected_owner(key: str, corpus_symbols, corpus_index, checkout) -> str | 
     The third check is the ``..ABSTRACT`` lesson applied one layer down: the
     corpus is a subset, so a unique match inside it is only unique evidence
     once the full checkout has failed to contradict it.
+
+    Both ``declared_in`` calls are compared against ``None`` rather than read
+    for truth, because ``""`` is a real answer: Ruby's inventory is keyed under
+    the empty owner, so a correctly spelled Ruby title gets ``""`` back and
+    truthiness would read that as undeclared and rename it.
     """
-    if "." not in key or declarations.declared_in(key, corpus_symbols):
+    if "." not in key or declarations.declared_in(key, corpus_symbols) is not None:
         return None
-    if declarations.declared_in(key, checkout):
+    if declarations.declared_in(key, checkout) is not None:
         return None
     found = declarations.attribution_of(key, corpus_index)
     if found is None:
@@ -372,7 +377,14 @@ def _corrected_owner(key: str, corpus_symbols, corpus_index, checkout) -> str | 
     symbol, owners = found
     if len(owners) != 1:
         return ""
-    return f"{next(iter(owners))}.{symbol}".upper()
+    owner = next(iter(owners))
+    # An owner of ``""`` is Ruby, where ``declarations.namespace_for`` prepends
+    # nothing because the walker already returned the whole ``module`` chain.
+    # Joining with a dot regardless would emit ``.JEKYLL.TAGS.LINK.RENDER``.
+    # The symbol is then the entity's whole correct title, so the caller's
+    # ``corrected != titles[i]`` is what makes this a no-op on a model that
+    # already spelled it right.
+    return f"{owner}.{symbol}".upper() if owner else symbol.upper()
 
 
 def ground_symbols(entities, relationships, report: GroundingReport, documents, facts=None):

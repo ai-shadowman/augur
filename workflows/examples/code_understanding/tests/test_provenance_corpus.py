@@ -12,6 +12,7 @@ from provenance.corpus import (
     Corpus,
     CorpusFile,
     canonical_key,
+    dotted_key,
     from_documents,
     parse_header,
 )
@@ -61,6 +62,46 @@ class TestCanonicalKey(unittest.TestCase):
 
     def test_only_the_trailing_extension_comes_off(self):
         self.assertEqual(canonical_key("docs/conf.py.txt"), "docs.conf.py")
+
+
+class TestDottedKeyFoldsTheSeparatorsRubyUses(unittest.TestCase):
+    """``::`` and ``#`` are how a model spells a Ruby symbol it read in rdoc.
+
+    Before they folded, ``JEKYLL::TAGS::LINK#RENDER`` survived as one opaque
+    segment and matched nothing, which graded 204 of the positional jekyll
+    arm's 242 symbol titles as wrong for a reason unrelated to what the model
+    knew.
+    """
+
+    CASES = [
+        ("the namespace operator", "Jekyll::Tags::Link", "jekyll.tags.link"),
+        ("rdoc's instance method", "Jekyll::Site#process", "jekyll.site.process"),
+        ("a class method", "Jekyll::Utils.slugify", "jekyll.utils.slugify"),
+        ("mixed with a path", "lib/jekyll::Tags", "lib.jekyll.tags"),
+        ("a trailing separator", "Jekyll::Tags::", "jekyll.tags"),
+        ("the dotted spelling the walker stores", "Jekyll.Tags.Link", "jekyll.tags.link"),
+    ]
+
+    def test_both_spellings_reach_one_key(self):
+        for label, spelling, expected in self.CASES:
+            with self.subTest(label):
+                self.assertEqual(dotted_key(spelling), expected)
+
+    def test_the_model_and_the_walker_agree_after_folding(self):
+        # The whole point: what a model read out of rdoc and what the parser
+        # stored are the same key, so the join can compare them.
+        self.assertEqual(
+            dotted_key("Jekyll::Commands::New#create_site"),
+            dotted_key("Jekyll.Commands.New.create_site"),
+        )
+
+    def test_underscores_are_still_not_folded(self):
+        # The addition is two separators, not a looser rule. ``post_url`` is a
+        # real Ruby method name and must not collide with ``post.url``.
+        self.assertNotEqual(
+            dotted_key("Jekyll::Tags::PostUrl#post_url"),
+            dotted_key("Jekyll::Tags::PostUrl#post.url"),
+        )
 
 
 class TestParseHeader(unittest.TestCase):

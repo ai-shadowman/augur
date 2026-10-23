@@ -47,7 +47,7 @@ from typing import Any
 from .corpus import dotted_key, parse_header
 from .dialects import PYTHON, Dialect, dialect_for, suffixes
 from .models import Finding, FindingKind, RepoFacts
-from .treesitter import declarations_in_tree
+from .treesitter import declarations_in_tree, parse
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +196,8 @@ def scan_files(root: Path, paths: Iterable[Path]) -> tuple[dict[str, set[str]], 
         if dialect is PYTHON and not parsed:
             unparsed.append(relative)
         if found:
-            symbols.setdefault(module_key(relative), set()).update(found)
+            key = namespace_for(relative, source, dialect)
+            symbols.setdefault(key, set()).update(found)
 
     return symbols, _unparsed_warning(unparsed, "Python file(s)")
 
@@ -215,12 +216,12 @@ def scan_corpus(documents) -> dict[str, set[str]]:
     a Ruby one with ``=begin``, and the symbols found are the same with the
     header as without it.
 
-    The key is :func:`module_key`, which folds the path. For Java that is the
-    Maven directory rather than the declared package, so a model spelling
-    ``org.apache.commons.lang3.StringUtils`` does not join here yet. Nothing
-    is misattributed by it today, because the fold gate in
-    :mod:`provenance.graph` still drops those files; the second key lands with
-    the gate.
+    The key is :func:`namespace_for`, not the path fold, because what a caller
+    wants back is a key that composes with a stored symbol into the name the
+    model would write. Those differ wherever a language states its own
+    namespace: a Maven Java file folds to ``src.main.java.…`` and is addressed
+    as ``org.apache.commons.lang3``, and a Ruby file's symbols carry their whole
+    ``module`` chain already and so are keyed under ``""``.
     """
     symbols: dict[str, set[str]] = {}
     if documents is None or "text" not in documents:
@@ -235,7 +236,8 @@ def scan_corpus(documents) -> dict[str, set[str]]:
         if dialect is PYTHON and not parsed:
             unparsed.append(header.path)
         if found:
-            symbols.setdefault(module_key(header.path), set()).update(found)
+            key = namespace_for(header.path, str(text), dialect)
+            symbols.setdefault(key, set()).update(found)
 
     for note in _unparsed_warning(unparsed, "indexed document(s)"):
         logger.info("provenance: %s", note)
@@ -269,6 +271,89 @@ def module_key(path: str) -> str:
     return dotted_key(".".join(parts))
 
 
+#: How each dialect's walker addresses a symbol, which decides what has to be
+#: prepended to reach a fully-qualified name. Keyed by the dialect's registered
+#: name and read by :func:`namespace_for`.
+#:
+#: A table rather than four ``if`` branches, for the reason
+#: :mod:`provenance.decidability` is one: a per-language claim that something
+#: downstream depends on should be importable and assertable, so the argument is
+#: settled once instead of re-derived every time a dialect is added.
+PATH_FOLD = "path-fold"
+DECLARED_PACKAGE = "declared-package"
+NO_PREFIX = "none"
+
+NAMESPACE_RULES = {
+    # The walker qualifies by enclosing class, and a module's name is its path.
+    # This is the composition the join assumed for every language.
+    "python": PATH_FOLD,
+    "typescript": PATH_FOLD,
+    # Qualified by enclosing type, whose name the language requires to equal the
+    # file stem. ``dialect.package_of`` returns the package *plus* that stem,
+    # because that is what makes a unique corpus key; composing a type-qualified
+    # symbol against it names the type twice.
+    "java": DECLARED_PACKAGE,
+    # The walker returns the whole ``module``/``class`` chain, which is already
+    # the address a caller uses. There is nothing to prepend.
+    "ruby": NO_PREFIX,
+}
+
+
+def namespace_for(path: str, source: str, dialect: Dialect) -> str:
+    """The prefix a fully-qualified name for this file's symbols carries.
+
+    :func:`module_key` answers the same question for the file itself; this
+    answers it for what the file declares, and the two differ wherever a
+    language states its own namespace. ``""`` where the walker's symbol is
+    already the whole address, so callers join with a dot only when the result
+    is non-empty.
+
+    Folded, unlike :func:`provenance.symbols.package_for`, which keeps the
+    source's casing because a header is rendered from it and a model reads that
+    header back. Nothing renders this: it only builds inventory keys, which are
+    compared against :func:`provenance.corpus.dotted_key` of an entity title,
+    so folding here is one place instead of every call site.
+
+    Raises on a dialect :data:`NAMESPACE_RULES` does not record, rather than
+    defaulting to the path fold. Defaulting is how the doubling arrived: Phase
+    6b registered Java and Ruby against a join that silently assumed Python's
+    rule, and the symbol layer then scored 0.0 on arms where the model had
+    answered correctly. ``tests/test_provenance_declarations.py`` asserts the
+    table covers every registered dialect, so this is unreachable in the product
+    and fires only for whoever adds the next one.
+    """
+    rule = NAMESPACE_RULES.get(dialect.name)
+    if rule is None:
+        raise ValueError(
+            f"no symbol-composition rule recorded for dialect {dialect.name!r}; "
+            f"provenance.declarations.NAMESPACE_RULES knows "
+            f"{sorted(NAMESPACE_RULES)}. Registering a dialect means deciding how "
+            f"its walker's symbols compose into a qualified name."
+        )
+    if rule == NO_PREFIX:
+        return ""
+    if rule == PATH_FOLD:
+        return module_key(path)
+
+    # Declared package, stem removed. ``package_of`` is asked directly rather
+    # than through ``symbols.package_for``, because the question here is whether
+    # the file declares a package at all and ``package_for``'s fallback answers
+    # a different one. Inferring it from ``declared == module_key(path)`` looks
+    # equivalent and is not: a Java file at ``org/apache/foo/Bar.java`` that
+    # declares ``package org.apache.foo`` folds to exactly its own path, so the
+    # equality fires on the ordinary non-Maven layout and keeps the stem.
+    #
+    # No package declared is the unnamed package, where the type name is the
+    # whole address and there is nothing to prepend.
+    if dialect.package_of is None:
+        return ""
+    declared = dialect.package_of(path, parse(source, dialect).root_node)
+    if not declared:
+        return ""
+    head, _, _ = dotted_key(declared).rpartition(".")
+    return head
+
+
 def owners_of(symbols: Mapping[str, Iterable[str]]) -> dict[str, set[str]]:
     """Invert the inventory: which modules declare each name."""
     index: dict[str, set[str]] = {}
@@ -279,9 +364,17 @@ def owners_of(symbols: Mapping[str, Iterable[str]]) -> dict[str, set[str]]:
 
 
 def _splits(key: str) -> Iterator[tuple[str, str]]:
-    """Every ``(owner, symbol)`` division of a dotted name, longest symbol first."""
+    """Every ``(owner, symbol)`` division of a dotted name, longest symbol first.
+
+    Starts at ``i = 0``, so the first division is an owner of ``""`` against
+    the whole key. That is the division a Ruby symbol needs:
+    :func:`namespace_for` keys those under ``""`` because the walker already
+    returned the full ``module`` chain. :func:`declared_in` walks this
+    reversed, so ``""`` is tried last and a Python key still prefers its
+    longest real owner.
+    """
     parts = key.split(".")
-    for i in range(1, len(parts)):
+    for i in range(len(parts)):
         yield ".".join(parts[:i]), ".".join(parts[i:])
 
 
@@ -312,12 +405,15 @@ def attribution_of(
     attribution has to rebuild the title from both halves, and splitting the
     key a second time at the call site would be a second chance to split it
     differently.
+
+    The whole key is the first thing tried, because :func:`_splits` now opens
+    with the ``i = 0`` division. It used to be a fall-through after the loop,
+    which tried it last and so preferred a shorter suffix match over an exact
+    one.
     """
     for _owner, symbol in _splits(key):
         if owners := index.get(symbol):
             return symbol, set(owners)
-    if owners := index.get(key):
-        return key, set(owners)
     return None
 
 
@@ -441,7 +537,12 @@ def check_symbol_layer(
             ))
             continue
 
-        if declared_in(key, corpus_symbols):
+        # ``is not None`` rather than truthiness: ``""`` is a real owner. Ruby
+        # keys its whole inventory there, because the walker already returned
+        # the ``module`` chain and :func:`namespace_for` has nothing to
+        # prepend, so a correctly qualified Ruby title comes back ``""`` and
+        # reading that for truth would bucket every one of them as wrong.
+        if declared_in(key, corpus_symbols) is not None:
             counts["declared"] += 1
             continue
 
@@ -456,14 +557,18 @@ def check_symbol_layer(
             continue
 
         owner = declared_in(key, checkout)
-        if owner or (owners := declared_elsewhere(key, checkout_index)):
+        owners = declared_elsewhere(key, checkout_index)
+        if owner is not None or owners:
             counts["leaked"] += 1
             findings.append(Finding(
                 kind=FindingKind.UNGROUNDED,
                 subject=title,
                 detail="declared in a file the run never indexed; recalled "
                        "from training, not read",
-                actual=f"declared in {owner or _sample(owners)}",
+                # ``key`` is the last resort for the empty owner, where the
+                # name carries its own namespace and there is no module to
+                # name beside it.
+                actual=f"declared in {owner or _sample(owners) or key}",
             ))
             continue
 

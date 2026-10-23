@@ -1,9 +1,10 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from provenance import declarations
-from provenance.dialects import PYTHON
+from provenance.dialects import DIALECTS, PYTHON, dialect_for
 from provenance.models import RepoFacts
 
 #: Python 2 source. ``except ... , e`` and the print statement both make this a
@@ -45,6 +46,27 @@ def document_frame(rows):
 
     return pd.DataFrame([
         {"title": path, "text": HEADER.replace("celery/worker/state.py", path) + body}
+        for path, body in rows
+    ])
+
+
+#: What ``generate_code_comment`` wraps a header in, per language. A Java
+#: document opens with ``/*`` and a Ruby one with ``=begin``, so a frame built
+#: with Python's delimiters would put a syntax error in front of the parser.
+DELIMITERS = {"java": ("/*", "*/"), "ruby": ("=begin", "=end")}
+
+
+def language_frame(language, rows):
+    """A documents table for a language other than Python."""
+    import pandas as pd
+
+    begin, end = DELIMITERS[language]
+    inner = HEADER.strip().strip('"')
+    return pd.DataFrame([
+        {
+            "title": path,
+            "text": f"{begin}{inner.replace('celery/worker/state.py', path)}{end}\n{body}",
+        }
         for path, body in rows
     ])
 
@@ -238,6 +260,153 @@ class TestLookup(unittest.TestCase):
         self.assertIsNone(declarations.attribution_of("celery.app.nonesuch", index))
 
 
+class TestTheEmptyOwner(unittest.TestCase):
+    """Ruby keys its inventory under ``""``, so the lookups have to reach it.
+
+    ``namespace_for`` returns ``""`` for a dialect whose walker already
+    produced the whole address. Without the ``i = 0`` division in ``_splits``
+    nothing can ever match such a key, and the arm with the best symbol
+    performance this project has recorded grades 0.0.
+    """
+
+    #: Ruby, as ``scan_corpus`` now keys it, beside Python as it always was.
+    SYMBOLS = {
+        "": {"jekyll.tags.link", "jekyll.tags.link.render"},
+        "celery.worker.state": {"task_accepted", "localcache", "localcache.get"},
+    }
+
+    def test_splits_opens_with_the_whole_key_under_no_owner(self):
+        self.assertEqual(
+            list(declarations._splits("a.b.c")),
+            [("", "a.b.c"), ("a", "b.c"), ("a.b", "c")],
+        )
+
+    def test_a_single_segment_key_still_divides(self):
+        # It used to yield nothing at all, so a bare name reached no lookup.
+        self.assertEqual(list(declarations._splits("render")), [("", "render")])
+
+    def test_declared_in_finds_a_symbol_that_carries_its_own_namespace(self):
+        found = declarations.declared_in("jekyll.tags.link.render", self.SYMBOLS)
+        self.assertEqual(found, "")
+
+    def test_python_still_prefers_its_longest_real_owner(self):
+        # ``declared_in`` walks the splits reversed, so ``""`` is tried last.
+        # This is what keeps the empty owner from shadowing every Python key.
+        found = declarations.declared_in("celery.worker.state.task_accepted", self.SYMBOLS)
+        self.assertEqual(found, "celery.worker.state")
+
+    def test_attribution_prefers_the_exact_title_over_a_suffix_of_it(self):
+        # The whole key is now the first division tried rather than a
+        # fall-through after the loop, so an exact match beats a shorter one.
+        index = declarations.owners_of({
+            "": {"jekyll.tags.link.render"}, "celery.app": {"render"},
+        })
+        symbol, owners = declarations.attribution_of("jekyll.tags.link.render", index)
+        self.assertEqual(symbol, "jekyll.tags.link.render")
+        self.assertEqual(owners, {""})
+
+
+#: One Maven file, one Ruby file: the two languages whose symbols the walker
+#: already qualifies, and so the two the path fold doubles.
+JAVA_SOURCE = """\
+package org.apache.commons.lang3.tuple;
+
+public class Pair {
+    public void accept(Object o) {}
+}
+"""
+
+RUBY_SOURCE = """\
+module Jekyll
+  module Tags
+    class Link
+      def render(context); end
+    end
+  end
+end
+"""
+
+
+class TestNamespaceFor(unittest.TestCase):
+    """What has to be prepended to a walker's symbol to reach a qualified name.
+
+    Python's answer is the path fold, which the join assumed for every
+    language. Getting it wrong on the other three is what scored the symbol
+    layer 0.0 on arms where the model had answered correctly, so each case
+    here is a figure that moved.
+    """
+
+    CASES = [
+        (
+            "python qualifies by class and takes its module name from the path",
+            "celery/app/task/sets.py", "class TaskSet:\n    def apply(self): pass\n",
+            "celery.app.task.sets",
+        ),
+        (
+            "a python package __init__ is addressed by its directory",
+            "celery/app/__init__.py", "def default_app(): pass\n",
+            "celery.app",
+        ),
+        (
+            "typescript composes against the path the same way",
+            "src/foo/bar.ts", "export class Baz { go() {} }\n",
+            "src.foo.bar",
+        ),
+        (
+            # The reason this project indexed commons-lang: the declared name
+            # and the path disagree on all 629 files.
+            "maven java takes the declared package with the type stem off",
+            "src/main/java/org/apache/commons/lang3/tuple/Pair.java", JAVA_SOURCE,
+            "org.apache.commons.lang3.tuple",
+        ),
+        (
+            # Inferring "no package declared" from ``declared ==
+            # module_key(path)`` looks equivalent and fires here, keeping the
+            # stem and doubling the type name. ``package_of`` is asked instead.
+            "java laid out flat still has its stem removed",
+            "org/apache/foo/Pair.java",
+            JAVA_SOURCE.replace("org.apache.commons.lang3.tuple", "org.apache.foo"),
+            "org.apache.foo",
+        ),
+        (
+            "the unnamed package leaves the type name as the whole address",
+            "Pair.java", "public class Pair {}\n",
+            "",
+        ),
+        (
+            "ruby's walker already returned the whole module chain",
+            "lib/jekyll/tags/link.rb", RUBY_SOURCE,
+            "",
+        ),
+    ]
+
+    def test_each_dialect_composes_its_own_way(self):
+        for label, path, source, expected in self.CASES:
+            with self.subTest(label):
+                dialect = dialect_for(path)
+                self.assertIsNotNone(dialect, path)
+                self.assertEqual(declarations.namespace_for(path, source, dialect), expected)
+
+    def test_every_registered_dialect_has_a_rule(self):
+        # What makes the raise below unreachable in the product. Registering a
+        # dialect means deciding how its symbols compose, which is a question
+        # with a measurement behind it rather than a default.
+        self.assertEqual(set(DIALECTS), set(declarations.NAMESPACE_RULES))
+
+    def test_an_unrecorded_dialect_raises_rather_than_guessing(self):
+        # Silently taking the path fold is exactly how the doubling arrived.
+        unknown = replace(PYTHON, name="kotlin")
+        with self.assertRaises(ValueError) as caught:
+            declarations.namespace_for("a/b.kt", "", unknown)
+        self.assertIn("kotlin", str(caught.exception))
+
+    def test_the_prefix_is_folded_so_call_sites_do_not_have_to_be(self):
+        # Compared against ``dotted_key`` of an entity title, which is folded.
+        path = "src/main/java/org/apache/commons/lang3/tuple/Pair.java"
+        found = declarations.namespace_for(path, JAVA_SOURCE, dialect_for(path))
+        self.assertEqual(found, found.lower())
+
+
 class TestScanFiles(unittest.TestCase):
     def test_only_python_files_are_read(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -257,6 +426,29 @@ class TestScanFiles(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("celery/legacy.py", warnings[0])
 
+    def test_the_checkout_inventory_keys_per_dialect_too(self):
+        # Two inventories exist, not one: this is the checkout, read through
+        # ``facts.declared_symbols`` by the ``leaked`` bucket, and ``scan_corpus``
+        # is the corpus. Keying them differently would compute ``leaked``
+        # against a differently-composed inventory than ``misattributed``.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src/main/java/org/apache/commons/lang3/tuple").mkdir(parents=True)
+            (root / "src/main/java/org/apache/commons/lang3/tuple/Pair.java").write_text(
+                JAVA_SOURCE
+            )
+            (root / "lib/jekyll/tags").mkdir(parents=True)
+            (root / "lib/jekyll/tags/link.rb").write_text(RUBY_SOURCE)
+
+            symbols, _warnings = declarations.scan_files(root, sorted(root.rglob("*")))
+
+        self.assertEqual(symbols["org.apache.commons.lang3.tuple"], {"pair", "pair.accept"})
+        self.assertNotIn("src.main.java.org.apache.commons.lang3.tuple.pair", symbols)
+        self.assertEqual(
+            symbols[""],
+            {"jekyll", "jekyll.tags", "jekyll.tags.link", "jekyll.tags.link.render"},
+        )
+
 
 class TestScanCorpus(unittest.TestCase):
     def test_declarations_are_keyed_by_the_header_path(self):
@@ -266,6 +458,28 @@ class TestScanCorpus(unittest.TestCase):
         ])
         symbols = declarations.scan_corpus(frame)
         self.assertEqual(symbols, {"celery.worker.state": {"task_accepted"}})
+
+    def test_a_java_document_is_keyed_by_what_an_import_would_name(self):
+        # The defect this whole change exists for. Keyed by the path fold, a
+        # model spelling ``org.apache.commons.lang3.tuple.Pair.accept`` joined
+        # against nothing, and the correction rebuilt a title carrying the
+        # type name twice.
+        frame = language_frame("java", [
+            ("src/main/java/org/apache/commons/lang3/tuple/Pair.java", JAVA_SOURCE),
+        ])
+        self.assertEqual(
+            declarations.scan_corpus(frame),
+            {"org.apache.commons.lang3.tuple": {"pair", "pair.accept"}},
+        )
+
+    def test_a_ruby_document_is_keyed_under_nothing_at_all(self):
+        # Its walker already returned the whole address, so prepending the
+        # path fold would name the namespace twice over.
+        frame = language_frame("ruby", [("lib/jekyll/tags/link.rb", RUBY_SOURCE)])
+        self.assertEqual(
+            declarations.scan_corpus(frame),
+            {"": {"jekyll", "jekyll.tags", "jekyll.tags.link", "jekyll.tags.link.render"}},
+        )
 
     def test_the_header_itself_declares_nothing(self):
         # The header is a prepended string literal, so it parses and binds no
