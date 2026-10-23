@@ -19,6 +19,7 @@ repeating the work, and so the facts file can be inspected by hand.
     python -m provenance stitch facts/celery.json output/
     python -m provenance verify facts/celery.json output/
     python -m provenance compare facts/celery.json positional/out parser/out
+    python -m provenance compare --arm purpose facts/celery.json parser/out purpose/out
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import logging
 import sys
 from pathlib import Path
 
+from . import arms as arms_module
 from . import compare as compare_module
 from . import facts as facts_module
 from .models import Layer
@@ -158,16 +160,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
+    arm = arms_module.ARMS[args.arm]
+    labels = tuple(args.labels) if args.labels else arm.labels
     collected = facts_module.read(Path(args.facts))
     comparison = compare_module.compare(
         verify_index(collected, Path(args.baseline_dir)),
         verify_index(collected, Path(args.treatment_dir)),
-        labels=(args.labels[0], args.labels[1]),
+        labels=labels,
+        predictions=arm.predictions,
     )
     if args.json:
         print(json.dumps(comparison.to_dict(), indent=2))
     else:
-        print(compare_module.render(comparison, experiment=args.experiment))
+        print(compare_module.render(comparison, experiment=args.experiment or arm.experiment))
     # A broken prediction is the informative outcome rather than a failure, but
     # it has to reach a runner that only reads the exit status, and a run whose
     # predictions all held is the one worth looking at twice.
@@ -242,16 +247,20 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("baseline_dir", help="GraphRAG output directory for the control")
     compare.add_argument("treatment_dir", help="GraphRAG output directory for the change")
     compare.add_argument(
+        "--arm",
+        choices=sorted(arms_module.ARMS),
+        default=arms_module.HEADER.name,
+        help="which registered experiment's predictions to grade against",
+    )
+    compare.add_argument(
         "--labels",
         nargs=2,
         metavar=("BASELINE", "TREATMENT"),
-        default=["positional", "parser"],
-        help="what the two indexes are called in the report",
+        help="what the two indexes are called in the report (default: the arm's)",
     )
     compare.add_argument(
         "--experiment",
-        default=compare_module.EXPERIMENT,
-        help="what was varied, printed above the metrics so the run is attributable",
+        help="what was varied, printed above the metrics (default: the arm's)",
     )
     compare.add_argument("--json", action="store_true")
     compare.set_defaults(func=cmd_compare)

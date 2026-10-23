@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from provenance import cli
+from provenance import arms, cli
 
 TREE = {
     "app/__init__.py": "",
@@ -283,6 +283,14 @@ class TestCompareCommand(CliTestCase):
         _status, text = self.compare(self.DECLARED, self.DECLARED, "--experiment", "a dry run")
 
         self.assertIn("experiment: a dry run", text)
+
+    def test_an_arm_brings_its_own_predictions_labels_and_experiment(self):
+        """The flat run the header arm calls broken is the one Arm A predicts."""
+        status, text = self.compare(self.DECLARED, self.DECLARED, "--arm", "purpose")
+
+        self.assertEqual(cli.EXIT_OK, status, msg=text)
+        self.assertIn("parser -> purpose", text)
+        self.assertIn("experiment: " + arms.PURPOSE.experiment, text)
 
     def test_json_output_carries_the_verdicts_alongside_the_numbers(self):
         _status, text = self.compare(
