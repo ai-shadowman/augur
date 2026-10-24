@@ -49,6 +49,11 @@ class DependencyAnalyzer:
         self.POST_AMBLE = ""
         self.RHEL_8to10_CONTEXT = ""
 
+        # The source tree relevant_files are checked against; found under
+        # PARENT_SOURCE_PATH when unset. See _relevant_files_evidence.
+        self.checkout_dir = None
+        self._evidence = None
+
         self._setup_configuration()
 
         self._setup_search()
@@ -631,6 +636,46 @@ class DependencyAnalyzer:
             f.git_repo for f in from_documents(documents).files
         )
 
+    def _relevant_files_evidence(self):
+        """What a plan's relevant_files are checked against, built once.
+
+        Without a checkout an unindexed path is reported `not-confirmed`
+        rather than invented, because the index alone is a subset of the
+        repository.
+        """
+        if self._evidence is not None:
+            return self._evidence
+
+        from provenance import relevant_files
+        from provenance.corpus import from_documents
+
+        documents = f"{self.root_dir}/output/documents.parquet"
+        if not os.path.exists(documents):
+            logging.warning(f"{documents} not found; relevant_files left unchecked")
+            return None
+        corpus = from_documents(pd.read_parquet(documents))
+        checkout = self.checkout_dir or (
+            os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), self.git_slug)
+            if self.git_slug else None
+        )
+        try:
+            if not checkout or not os.path.isdir(checkout):
+                raise FileNotFoundError(f"no checkout at {checkout}")
+            self._evidence = relevant_files.Evidence.from_checkout(corpus, Path(checkout))
+        except (ValueError, FileNotFoundError) as e:
+            logging.warning(f"relevant_files checked against the index only: {e}")
+            self._evidence = relevant_files.Evidence.indexed_only(corpus)
+        return self._evidence
+
+    def _check_answer(self, result: str) -> str:
+        """Put a verdict beside every relevant_files entry a model answer claims."""
+        from provenance import relevant_files
+
+        if not isinstance(result, str) or relevant_files.FIELD not in result:
+            return result
+        evidence = self._relevant_files_evidence()
+        return relevant_files.annotate(result, evidence) if evidence else result
+
     @timed("analysis.report")
     async def generate_migration_report(self):
         """Generate a high-level migration report"""
@@ -763,6 +808,7 @@ class DependencyAnalyzer:
                     result = await self.query_with_llm(prompt,
                                                        bypass_index=bypass_index,
                                                        use_global=use_global)
+                    result = self._check_answer(result)
                 if dur_tracker:
                     p_dur = time.perf_counter() - p_start
                     p_title = meta.get('title') or prompt_path

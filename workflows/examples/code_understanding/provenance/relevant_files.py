@@ -17,6 +17,11 @@ Each entry gets one of three verdicts:
     invented.
 ``matches-nothing``
     neither the index nor the checkout holds it.
+``not-confirmed``
+    no indexed document carries it and no checkout was available to say
+    whether it exists. Used in place of the two verdicts above when the
+    analysis stage runs without the source tree, rather than calling every
+    unindexed path invented.
 
 An entry that matches nothing is further given a :class:`Shape`, read off the
 entry text alone. Only a ``repo-path`` is a file the model invented inside the
@@ -30,6 +35,11 @@ folded with :func:`provenance.corpus.canonical_key`, so ``celery.app.base`` or
 ``CELERY/APP/BASE`` still resolve to ``celery/app/base.py``; such a match is
 flagged ``folded``, since the prompt asked for the path verbatim and did not
 get it, but the file it names is real.
+
+:func:`annotate` is the report-side hook: it leaves the model's
+``relevant_files`` as written and adds a ``relevant_files_verification`` list
+beside it, one verdict per entry, so a reader sees the claim and the check
+together and nothing is silently dropped.
 
 The JSON is taken from the first fenced block that parses, else from the
 outermost braces of the answer. An answer where neither parses is counted as
@@ -61,6 +71,7 @@ class Verdict(StrEnum):
     CONFIRMED = "confirmed"
     NOT_INDEXED = "not-indexed"
     MATCHES_NOTHING = "matches-nothing"
+    NOT_CONFIRMED = "not-confirmed"
 
 
 class Shape(StrEnum):
@@ -92,7 +103,7 @@ class Resolution:
     #: ambiguous, empty where nothing matched.
     resolved: tuple[str, ...] = ()
     folded: bool = False
-    #: Set only on ``matches-nothing``.
+    #: Set only on ``matches-nothing`` and ``not-confirmed``.
     shape: Shape | None = None
 
 
@@ -118,7 +129,9 @@ class Evidence:
     """Every path a plan could legitimately name, sized by the checkout walk."""
 
     indexed: frozenset[str]
-    checkout: frozenset[str]
+    #: ``None`` when no checkout was available, which is a different claim
+    #: from an empty one.
+    checkout: frozenset[str] | None
 
     @classmethod
     def from_checkout(cls, corpus: Corpus, root: Path) -> Evidence:
@@ -140,19 +153,24 @@ class Evidence:
             )
         return cls(indexed=indexed, checkout=checkout)
 
+    @classmethod
+    def indexed_only(cls, corpus: Corpus) -> Evidence:
+        return cls(indexed=frozenset(f.path for f in corpus.files), checkout=None)
+
     def resolve(self, entry: Any) -> Resolution:
         text = normalize(entry)
-        for paths, verdict in (
-            (self.indexed, Verdict.CONFIRMED),
-            (self.checkout, Verdict.NOT_INDEXED),
-        ):
+        sources = [(self.indexed, Verdict.CONFIRMED)]
+        if self.checkout is not None:
+            sources.append((self.checkout, Verdict.NOT_INDEXED))
+        for paths, verdict in sources:
             if text in paths:
                 return Resolution(str(entry), verdict, (text,))
             key = canonical_key(text)
             folded = tuple(sorted(p for p in paths if canonical_key(p) == key))
             if folded:
                 return Resolution(str(entry), verdict, folded, folded=True)
-        return Resolution(str(entry), Verdict.MATCHES_NOTHING, shape=shape_of(entry))
+        unmatched = Verdict.NOT_CONFIRMED if self.checkout is None else Verdict.MATCHES_NOTHING
+        return Resolution(str(entry), unmatched, shape=shape_of(entry))
 
 
 def _walk(root: Path) -> Iterator[str]:
@@ -228,6 +246,51 @@ def check(label: str, answer: str, evidence: Evidence) -> Answer:
     return result
 
 
+def annotate(answer: str, evidence: Evidence) -> str:
+    """The answer with a verdict beside every ``relevant_files`` entry.
+
+    An answer with no such field comes back unchanged. One that names the
+    field but whose JSON does not parse comes back with a note saying it was
+    not checked, so a truncated plan cannot pass for a checked one.
+    """
+    plan, form = extract(answer)
+    if form is Form.MALFORMED:
+        if FIELD not in answer:
+            return answer
+        return f"{answer.rstrip()}\n\n_{FIELD} not checked: the plan's JSON did not parse._"
+    rows = list(_rows(plan))
+    if not rows:
+        return answer
+    counts: Counter = Counter()
+    for row in rows:
+        files = row[FIELD]
+        if not isinstance(files, list):
+            row[f"{FIELD}_verification"] = f"not checked: {FIELD} is not a list"
+            counts["unreadable"] += 1
+            continue
+        checked = []
+        for entry in files:
+            r = evidence.resolve(entry)
+            counts[r.verdict] += 1
+            item = {"path": r.entry, "verdict": r.verdict.value}
+            if r.folded:
+                item["resolved"] = list(r.resolved)
+            if r.shape:
+                item["shape"] = r.shape.value
+            checked.append(item)
+        row[f"{FIELD}_verification"] = checked
+    total = sum(counts[v] for v in Verdict)
+    against = "the index and the checkout" if evidence.checkout is not None else "the index only; no checkout"
+    summary = ", ".join(f"{counts[v]} {v.value}" for v in Verdict if counts[v])
+    if counts["unreadable"]:
+        summary += f"; {counts['unreadable']} rows unreadable"
+    body = json.dumps(plan, indent=4, ensure_ascii=False)
+    return (
+        f"```json\n{body}\n```\n\n"
+        f"_{FIELD} checked against {against}: {total} entries, {summary or 'none'}._"
+    )
+
+
 def totals(answers: Iterable[Answer]) -> Counter:
     total: Counter = Counter()
     for a in answers:
@@ -250,21 +313,25 @@ def clean(answers: Iterable[Answer]) -> bool:
 def to_dict(answers: list[Answer], evidence: Evidence) -> dict:
     return {
         "indexed": len(evidence.indexed),
-        "checkout": len(evidence.checkout),
+        "checkout": None if evidence.checkout is None else len(evidence.checkout),
         "answers": [asdict(a) for a in answers],
     }
 
 
 def render(answers: list[Answer], evidence: Evidence) -> str:
+    shown = [v for v in Verdict if (v is Verdict.NOT_CONFIRMED) == (evidence.checkout is None)
+             or v is Verdict.CONFIRMED]
     lines = [
         f"evidence: {len(evidence.indexed)} indexed of {len(evidence.checkout)} checkout files"
+        if evidence.checkout is not None
+        else f"evidence: {len(evidence.indexed)} indexed, no checkout"
     ]
     for a in answers:
         counts = a.counts()
         folded = sum(r.folded for r in a.resolutions)
         lines.append(
             f"{a.label}: {a.form.value}, {a.rows} rows, {len(a.resolutions)} entries: "
-            + ", ".join(f"{counts[v]} {v.value}" for v in Verdict)
+            + ", ".join(f"{counts[v]} {v.value}" for v in shown)
             + (f" ({folded} by folded spelling)" if folded else "")
             + (
                 " [" + ", ".join(f"{n} {k.value}" for k, n in sorted(a.shapes().items())) + "]"

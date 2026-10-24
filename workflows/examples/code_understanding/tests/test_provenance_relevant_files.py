@@ -187,6 +187,69 @@ class TestEvidence(CheckoutTestCase):
             rf.Evidence.from_checkout(corpus(), self.root / "absent")
 
 
+class TestAnnotate(CheckoutTestCase):
+    def verification(self, text):
+        plan, form = rf.extract(text)
+        self.assertIs(rf.Form.FENCED, form, text)
+        return [row.get("relevant_files_verification") for row in plan["code_migration_plan"]]
+
+    def test_claims_stay_and_verdicts_sit_beside_them(self):
+        answer = "```json\n" + plan(
+            ["celery/app/base.py", "celery.worker.state", "setup.py", "/etc/fstab"], "x"
+        ) + "\n```"
+        out = rf.annotate(answer, self.evidence)
+        rows = rf.extract(out)[0]["code_migration_plan"]
+        self.assertEqual(
+            ["celery/app/base.py", "celery.worker.state", "setup.py", "/etc/fstab"],
+            rows[0]["relevant_files"],
+        )
+        self.assertEqual(
+            [
+                [
+                    {"path": "celery/app/base.py", "verdict": "confirmed"},
+                    {"path": "celery.worker.state", "verdict": "confirmed",
+                     "resolved": ["celery/worker/state.py"]},
+                    {"path": "setup.py", "verdict": "not-indexed"},
+                    {"path": "/etc/fstab", "verdict": "matches-nothing", "shape": "host-path"},
+                ],
+                "not checked: relevant_files is not a list",
+            ],
+            self.verification(out),
+        )
+        self.assertIn(
+            "_relevant_files checked against the index and the checkout: 4 entries, "
+            "2 confirmed, 1 not-indexed, 1 matches-nothing; 1 rows unreadable._",
+            out,
+        )
+
+    def test_without_a_checkout_unindexed_is_not_called_invented(self):
+        evidence = rf.Evidence.indexed_only(corpus())
+        out = rf.annotate(plan(["celery/app/base.py", "setup.py", "celery/nope.py"]), evidence)
+        self.assertEqual(
+            ["confirmed", "not-confirmed", "not-confirmed"],
+            [v["verdict"] for v in self.verification(out)[0]],
+        )
+        self.assertIn("against the index only; no checkout", out)
+        result = rf.check("1.md", plan(["setup.py"]), evidence)
+        self.assertIn("3 indexed, no checkout", rf.render([result], evidence))
+        self.assertIn("0 confirmed, 1 not-confirmed", rf.render([result], evidence))
+
+    def test_answers_it_cannot_check(self):
+        cut = '```json\n{"code_migration_plan": [{"relevant_files": ["a.py"'
+        cases = {
+            "no field": ("### Summary\n\nprose", "### Summary\n\nprose"),
+            "field, unparsed": (cut, cut + "\n\n_relevant_files not checked: the plan's JSON did not parse._"),
+        }
+        for name, (answer, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(expected, rf.annotate(answer, self.evidence))
+
+    def test_an_empty_plan_is_annotated_as_empty(self):
+        out = rf.annotate(plan([]), self.evidence)
+        self.assertEqual([[]], self.verification(out))
+        self.assertIn("0 entries, none", out)
+
+
 class TestCli(CheckoutTestCase):
     def run_cli(self, *argv):
         buffer = io.StringIO()
