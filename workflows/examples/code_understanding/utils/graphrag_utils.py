@@ -562,9 +562,30 @@ class DependencyAnalyzer:
             if not env.get("EMBED_LLM_TOKEN"):
                 logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
                 env["EMBED_LLM_TOKEN"] = "EMPTY"
+            if not env.get("GRAPHRAG_CONCURRENT_REQUESTS"):
+                env["GRAPHRAG_CONCURRENT_REQUESTS"] = str(env.get("SDG_LLM_MAX_CONCURRENCY") or "25")
 
             with open(template_path) as f:
-                content = string.Template(f.read())
+                raw_template = f.read()
+
+            # Safeguard against stale settings.yaml.in in MLflow that may still have
+            # hardcoded concurrent_requests instead of ${GRAPHRAG_CONCURRENT_REQUESTS}
+            raw_template = re.sub(
+                r"(concurrent_requests:\s*)\d+",
+                r"\g<1>${GRAPHRAG_CONCURRENT_REQUESTS}",
+                raw_template,
+            )
+            chat_block_match = re.search(
+                r"(default_chat_model:\n(?:[ \t]+[^\n]+\n)+)", raw_template
+            )
+            if chat_block_match and "max_tokens:" not in chat_block_match.group(1):
+                raw_template = raw_template.replace(
+                    "default_chat_model:\n",
+                    "default_chat_model:\n    max_tokens: 8192\n",
+                    1,
+                )
+
+            content = string.Template(raw_template)
 
             with open(output_path, "w") as f:
                 f.write(content.substitute(env))
@@ -847,10 +868,20 @@ class DependencyAnalyzer:
             if dur_tracker is None:
                 from utils.duration_tracker import DurationTracker
                 dur_tracker = DurationTracker.get_instance()
-            from utils.duration_tracker import extract_graphrag_indexing_durations, extract_data_generation_durations
+            from utils.duration_tracker import (
+                extract_benchmark_duration,
+                extract_graphrag_indexing_durations,
+                extract_data_generation_durations,
+            )
+            extract_benchmark_duration(candidate_dirs, dur_tracker)
             if not any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records):
                 extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
-            if not any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records):
+            if not any(
+                r.get("stage", "").lower() == "data generation"
+                and "guidellm" not in str(r.get("step", "")).lower()
+                and "concurrency benchmark" not in str(r.get("step", "")).lower()
+                for r in dur_tracker.records
+            ):
                 extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (durations): {e}")

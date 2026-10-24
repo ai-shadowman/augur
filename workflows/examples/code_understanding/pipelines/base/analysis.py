@@ -61,7 +61,7 @@ class AnalysisPipeline:
 
         dur_tracker = None
         try:
-            from utils.duration_tracker import DurationTracker
+            from utils.duration_tracker import DurationTracker, extract_benchmark_duration
             dur_tracker = DurationTracker.get_instance()
             for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Analysis")
@@ -73,6 +73,7 @@ class AnalysisPipeline:
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Analysis")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in analysis: {e}")
+            extract_benchmark_duration(candidate_dirs, dur_tracker)
             try:
                 dur_tracker.record_pod_creation_overhead(stage="Analysis")
             except Exception as e:

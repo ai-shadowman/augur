@@ -46,10 +46,11 @@ class TestMetadataChatParameters(unittest.TestCase):
 
         def chat_completion(**kwargs):
             # Reproduce the SDK rejection observed in the production logs.
-            if "best_of" in kwargs:
-                raise TypeError(
-                    "AsyncCompletions.create() got an unexpected keyword argument 'best_of'"
-                )
+            for unsupported in ("best_of", "top_k"):
+                if unsupported in kwargs:
+                    raise TypeError(
+                        f"AsyncCompletions.create() got an unexpected keyword argument '{unsupported}'"
+                    )
             return '{"purpose": "Manage train schedules", "classes": ["Train"]}'
 
         class Flow:

@@ -60,7 +60,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         dur_tracker = None
         try:
-            from utils.duration_tracker import DurationTracker
+            from utils.duration_tracker import DurationTracker, extract_benchmark_duration
             dur_tracker = DurationTracker.get_instance()
             for dur_file in find_all_telemetry_files(candidate_dirs, "durations.json"):
                 dur_tracker.load_and_merge(dur_file, current_stage="Indexing")
@@ -72,6 +72,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo, current_stage="Indexing")
             except Exception as e:
                 logging.debug(f"Failed to download durations from MLflow in indexing: {e}")
+            extract_benchmark_duration(candidate_dirs, dur_tracker)
             try:
                 dur_tracker.record_pod_creation_overhead(stage="Indexing")
             except Exception as e:
@@ -109,7 +110,16 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
         except Exception as e:
             logging.debug("Code metrics handling in indexing: %s", e)
 
-        # Immediately preserve prior durations.json, tokens.json, and project_metrics.json in graphrag_source_path
+        # Immediately preserve prior durations.json, benchmark_results.json, tokens.json, and project_metrics.json in graphrag_source_path
+        for bench_file in find_all_telemetry_files(candidate_dirs, "benchmark_results.json"):
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+                try:
+                    dst = os.path.join(d, "benchmark_results.json")
+                    if os.path.abspath(bench_file) != os.path.abspath(dst):
+                        shutil.copy2(bench_file, dst)
+                except Exception:
+                    pass
+            break
         if dur_tracker:
             for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
                 try:
@@ -130,6 +140,16 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     pass
 
         try:
+            try:
+                from utils.llm_benchmark import apply_best_concurrency, load_benchmark_result
+                for bench_file in find_all_telemetry_files(candidate_dirs, "benchmark_results.json"):
+                    bench_data = load_benchmark_result(bench_file)
+                    if bench_data and bench_data.get("best_concurrency"):
+                        apply_best_concurrency(int(bench_data["best_concurrency"]))
+                        break
+            except Exception as e:
+                logging.debug(f"Benchmark concurrency loading in indexing: {e}")
+
             cm_settings = dur_tracker.measure(stage="Indexing", step="Prepare Settings & Config") if dur_tracker else nullcontext()
             with cm_settings:
                 DependencyAnalyzer.prepare_settings(template_dir="templates", output_dir="templates")
@@ -143,7 +163,11 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in ["durations.json", "tokens.json", "project_metrics.json"]:
+                for fname in [
+                    f"{base_t}{suffix}"
+                    for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]
+                    for suffix in [".json", ".txt", "_metadata.txt"]
+                ]:
                     fpath = os.path.join(f"{graphrag_source_path}/input", fname)
                     if os.path.exists(fpath):
                         try:

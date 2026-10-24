@@ -13,7 +13,8 @@ models:
     model: ${GRAPHRAG_LLM_ID}
     model_provider: ${GRAPHRAG_LLM_PROVIDER_SETTINGS_XML}
     model_supports_json: true
-    concurrent_requests: 25           
+    max_tokens: 8192
+    concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}
     async_mode: threaded
     retry_strategy: native
     max_retries: 15                   # <-- Increased retry cushion for rate limits
@@ -33,7 +34,7 @@ models:
     # deployment_name: <azure_model_deployment_name>
     encoding_model: cl100k_base # automatically set by tiktoken if left undefined
     model_supports_json: true # recommended if this is available for your model.
-    concurrent_requests: 25            # <-- Keep embedding concurrency aligned
+    concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}            # <-- Keep embedding concurrency aligned
     async_mode: threaded # or asyncio
     retry_strategy: native
     max_retries: 10
