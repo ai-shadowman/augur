@@ -679,6 +679,67 @@ class DependencyAnalyzer:
             self._evidence = relevant_files.Evidence.indexed_only(corpus)
         return self._evidence
 
+    def _advisory_database(self):
+        """The advisory snapshot this run joins against, or None if there is none.
+
+        AUGUR_ADVISORY_SNAPSHOT names a local file for runs assembled by hand;
+        otherwise it is the latest one published to the results experiment.
+        """
+        import json
+
+        from provenance import vulns
+
+        path = os.getenv(vulns.SNAPSHOT_ENV)
+        try:
+            if path:
+                with open(path, encoding="utf-8") as f:
+                    return vulns.from_snapshot(json.load(f))
+            from loaders.default_asset_loader import DefaultAssetLoader
+            from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+            data = DefaultAssetLoader().download(
+                f"{vulns.SNAPSHOT_ARTIFACT_DIR}/{vulns.SNAPSHOT_FILENAME}",
+                experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
+                asset_tags=vulns.SNAPSHOT_TAGS,
+            )
+            return vulns.from_snapshot(data) if data else None
+        except Exception as e:
+            logging.warning(f"No advisory snapshot for the Known Vulnerabilities section: {e}")
+            return None
+
+    def _append_section(self, append: str, answer: str, prompt_path: str) -> str:
+        """Deterministic content added after a model answer, opted into by `append:`."""
+        import datetime as dt
+
+        from provenance import eol, known_vulnerabilities
+        from provenance.corpus import from_documents
+        from provenance.pipeline import load_facts
+
+        if append != "known-vulnerabilities":
+            raise ValueError(
+                f"{prompt_path} asks to append {append!r}; the only one is 'known-vulnerabilities'"
+            )
+        # Each input degrades to "not assessed" on its own; none of them is
+        # worth losing the report over.
+        facts = load_facts(f"{self.root_dir}/output")
+        runtime = None
+        documents = f"{self.root_dir}/output/documents.parquet"
+        if os.path.exists(documents):
+            runtime = from_documents(pd.read_parquet(documents)).runtime
+        try:
+            table = eol.load()
+        except (OSError, ValueError, KeyError) as e:
+            logging.warning(f"Lifecycle table unreadable; end-of-life not assessed: {e}")
+            table = None
+        return known_vulnerabilities.render(
+            answer,
+            packages=facts.packages if facts is not None else None,
+            database=self._advisory_database(),
+            runtime=runtime,
+            table=table,
+            today=dt.date.today(),
+        )
+
     def _check_answer(self, result: str) -> str:
         """Put a verdict beside every relevant_files entry a model answer claims."""
         from provenance import relevant_files
@@ -821,6 +882,8 @@ class DependencyAnalyzer:
                                                        bypass_index=bypass_index,
                                                        use_global=use_global)
                     result = self._check_answer(result)
+                    if meta.get('append'):
+                        result += "\n\n" + self._append_section(meta['append'], result, prompt_path)
                 if dur_tracker:
                     p_dur = time.perf_counter() - p_start
                     p_title = meta.get('title') or prompt_path
