@@ -9,7 +9,7 @@
 AUGUR automates the analysis of legacy repositories to produce actionable modernization and migration roadmaps. It ingests one or more Git repositories, extracts language-specific AST and documentation metadata, builds a comprehensive **GraphRAG (Graph-based Retrieval-Augmented Generation)** knowledge graph with vector embeddings, identifies architectural layers and dependencies, and produces a complete **Migration Report** (`migration_report.md`) with a machine-readable JSON migration plan.
 
 ### Core Pipelines
-1. **Data Generation**: Clones repositories, detects programming languages, calculates repository size & lines of code (SLOC), and extracts structured code/config metadata using LLMs.
+1. **Data Generation**: Clones repositories, detects programming languages, calculates repository size & lines of code (SLOC), and writes a header for each file from parsers: declared symbols and imports from tree-sitter, and declared libraries from dependency manifests. It makes no model call by default; setting `AUGUR_STAGE_ONE_PURPOSE=1` adds a one-line model-written summary per file.
 2. **Indexing**: Ingests generated code metadata into an in-process GraphRAG engine, building entity-relationship graphs, hierarchical Leiden communities, and vector embeddings.
 3. **Analysis**: Queries the GraphRAG index to map dependency layers, generate interactive visualizations (PyVis/NetworkX), and synthesize migration recommendations and modernization roadmaps.
 
@@ -57,6 +57,8 @@ export GRAPHRAG_LLM_API_BASE="http://vllm-endpoint:8000/v1"
 export GRAPHRAG_LLM_MODEL="openai/gpt-oss-120b"
 export EMBED_LLM_API_BASE="http://vllm-endpoint:8000/v1"
 export EMBED_LLM_MODEL="e5-mistral-7b-instruct"
+# Optional: ask the model for a one-line Purpose summary per file in Data Generation
+# export AUGUR_STAGE_ONE_PURPOSE=1
 
 # Run all 3 stages locally (Data Generation -> Indexing -> Analysis)
 python workflows/examples/code_understanding/pipelines/orchestrator.py
