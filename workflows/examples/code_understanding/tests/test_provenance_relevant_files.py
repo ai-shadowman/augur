@@ -14,6 +14,8 @@ from pathlib import Path
 from provenance import cli
 from provenance import relevant_files as rf
 from provenance.corpus import Corpus, CorpusFile
+from provenance.facts import checkout_files
+from provenance.models import RepoFacts
 
 REPO = "https://github.com/celery/celery"
 INDEXED = ("celery/app/base.py", "celery/app/__init__.py", "celery/worker/state.py")
@@ -185,6 +187,29 @@ class TestEvidence(CheckoutTestCase):
     def test_refuses_a_missing_checkout(self):
         with self.assertRaises(FileNotFoundError):
             rf.Evidence.from_checkout(corpus(), self.root / "absent")
+
+
+class TestEvidenceFromFacts(CheckoutTestCase):
+    """The clone-time inventory must size the evidence exactly as the walk does."""
+
+    def facts(self, **kwargs):
+        kwargs.setdefault("checkout_files", checkout_files(self.checkout))
+        return RepoFacts(root=str(self.checkout), **kwargs)
+
+    def test_equals_the_checkout_walk(self):
+        self.assertEqual(self.evidence, rf.Evidence.from_facts(corpus(), self.facts()))
+
+    def test_refusals(self):
+        cases = [
+            ("predate", corpus(), self.facts(checkout_files=[])),
+            ("facts are multi-repo", corpus(), self.facts(multi_repo=True)),
+            ("corpus is multi-repo", corpus(multi=True), self.facts()),
+            ("1 of 4 indexed paths.*inventory.*celery/gone.py",
+             corpus((*INDEXED, "celery/gone.py")), self.facts()),
+        ]
+        for pattern, indexed, facts in cases:
+            with self.subTest(pattern), self.assertRaisesRegex(ValueError, pattern):
+                rf.Evidence.from_facts(indexed, facts)
 
 
 class TestAnnotate(CheckoutTestCase):

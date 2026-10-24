@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from provenance.models import RepoFacts
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -108,6 +110,29 @@ class TestReportRelevantFiles(unittest.TestCase):
         self.checkout.rename(self.work / "src" / "celery-v2-5-5")
         with patch.dict(os.environ, {"PARENT_SOURCE_PATH": str(self.work / "src")}):
             self.assertIn("1 not-indexed", self.report())
+
+    def write_facts(self, files):
+        from provenance import facts, pipeline
+
+        facts.write(RepoFacts(root="/repo", checkout_files=files),
+                    self.work / "output" / pipeline.FACTS_FILENAME)
+
+    def test_the_published_facts_stand_in_for_the_checkout(self):
+        # The deployed stage: no checkout anywhere, the inventory in output/.
+        self.write_facts([*INDEXED, "setup.py"])
+        with patch.dict(os.environ, {"PARENT_SOURCE_PATH": str(self.work / "absent")}):
+            report = self.report()
+        self.assertIn("1 confirmed, 1 not-indexed, 1 matches-nothing", report)
+
+    def test_the_facts_win_over_a_checkout_on_disk(self):
+        self.write_facts([*INDEXED, "setup.py", "celery/worker/task.py"])
+        self.analyzer.checkout_dir = str(self.checkout)
+        self.assertIn("2 not-indexed", self.report())
+
+    def test_facts_without_an_inventory_fall_back_to_the_checkout(self):
+        self.write_facts([])
+        self.analyzer.checkout_dir = str(self.checkout)
+        self.assertIn("1 not-indexed, 1 matches-nothing", self.report())
 
     def test_evidence_is_built_once(self):
         self.analyzer.checkout_dir = str(self.checkout)

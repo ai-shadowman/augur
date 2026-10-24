@@ -639,31 +639,43 @@ class DependencyAnalyzer:
     def _relevant_files_evidence(self):
         """What a plan's relevant_files are checked against, built once.
 
-        Without a checkout an unindexed path is reported `not-confirmed`
-        rather than invented, because the index alone is a subset of the
-        repository.
+        The inventory captured at clone time comes first, since it is the
+        checkout the index was built from and the deployed stage has no other.
+        A checkout on disk is the fallback for runs assembled by hand. Without
+        either an unindexed path is reported `not-confirmed` rather than
+        invented, because the index alone is a subset of the repository.
         """
         if self._evidence is not None:
             return self._evidence
 
         from provenance import relevant_files
         from provenance.corpus import from_documents
+        from provenance.pipeline import load_facts
 
         documents = f"{self.root_dir}/output/documents.parquet"
         if not os.path.exists(documents):
             logging.warning(f"{documents} not found; relevant_files left unchecked")
             return None
         corpus = from_documents(pd.read_parquet(documents))
+        facts = load_facts(f"{self.root_dir}/output")
         checkout = self.checkout_dir or (
             os.path.join(os.getenv("PARENT_SOURCE_PATH", "source"), self.git_slug)
             if self.git_slug else None
         )
+        reasons = []
+        if facts is not None:
+            try:
+                self._evidence = relevant_files.Evidence.from_facts(corpus, facts)
+                return self._evidence
+            except ValueError as e:
+                reasons.append(str(e))
         try:
             if not checkout or not os.path.isdir(checkout):
                 raise FileNotFoundError(f"no checkout at {checkout}")
             self._evidence = relevant_files.Evidence.from_checkout(corpus, Path(checkout))
         except (ValueError, FileNotFoundError) as e:
-            logging.warning(f"relevant_files checked against the index only: {e}")
+            reasons.append(str(e))
+            logging.warning(f"relevant_files checked against the index only: {'; '.join(reasons)}")
             self._evidence = relevant_files.Evidence.indexed_only(corpus)
         return self._evidence
 

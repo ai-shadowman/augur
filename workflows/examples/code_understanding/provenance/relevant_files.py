@@ -58,11 +58,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .corpus import Corpus, canonical_key
+from .facts import checkout_files
+from .models import RepoFacts
 
 FIELD = "relevant_files"
-
-#: Directories under a checkout that hold no source a document could carry.
-_SKIP_DIRS = frozenset({".git", ".hg", ".svn"})
 
 _FENCE = re.compile(r"```[a-zA-Z0-9_-]*[ \t]*\n(.*?)```", re.S)
 
@@ -135,20 +134,35 @@ class Evidence:
 
     @classmethod
     def from_checkout(cls, corpus: Corpus, root: Path) -> Evidence:
-        if corpus.multi_repo:
-            raise ValueError(
-                "the corpus is multi-repo; one checkout cannot size its evidence set"
-            )
+        _single_repo(corpus)
         root = Path(root)
         if not root.is_dir():
             raise FileNotFoundError(f"checkout {root} is not a directory")
-        checkout = frozenset(_walk(root))
+        return cls._sized(corpus, checkout_files(root), f"under {root}")
+
+    @classmethod
+    def from_facts(cls, corpus: Corpus, facts: RepoFacts) -> Evidence:
+        """The same evidence, from the inventory captured at clone time.
+
+        What the analysis stage uses, since the checkout is deleted before
+        indexing and never reaches its pod.
+        """
+        _single_repo(corpus)
+        if facts.multi_repo:
+            raise ValueError("the facts are multi-repo; one inventory cannot size the evidence set")
+        if not facts.checkout_files:
+            raise ValueError("the facts carry no checkout inventory; they predate checkout_files")
+        return cls._sized(corpus, facts.checkout_files, "in the facts' checkout inventory")
+
+    @classmethod
+    def _sized(cls, corpus: Corpus, paths: Iterable[str], where: str) -> Evidence:
+        checkout = frozenset(paths)
         indexed = frozenset(f.path for f in corpus.files)
         missing = sorted(indexed - checkout)
         if missing:
             raise ValueError(
-                f"{len(missing)} of {len(indexed)} indexed paths are not files under "
-                f"{root}, so it is not the checkout this index was built from: "
+                f"{len(missing)} of {len(indexed)} indexed paths are not files {where}, "
+                "so it is not the checkout this index was built from: "
                 + ", ".join(missing[:5])
             )
         return cls(indexed=indexed, checkout=checkout)
@@ -173,11 +187,9 @@ class Evidence:
         return Resolution(str(entry), unmatched, shape=shape_of(entry))
 
 
-def _walk(root: Path) -> Iterator[str]:
-    for path in root.rglob("*"):
-        rel = path.relative_to(root)
-        if path.is_file() and not _SKIP_DIRS.intersection(rel.parts):
-            yield rel.as_posix()
+def _single_repo(corpus: Corpus) -> None:
+    if corpus.multi_repo:
+        raise ValueError("the corpus is multi-repo; one checkout cannot size its evidence set")
 
 
 def shape_of(entry: Any) -> Shape:
