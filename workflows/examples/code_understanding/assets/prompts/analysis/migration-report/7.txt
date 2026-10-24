@@ -1,5 +1,6 @@
 ---
 title: "### Regression Risk Assessment"
+key: "regression-risk"
 skip_prompt: "multi_repo"
 ---
 What areas of the codebase are most at risk of breaking during migration?

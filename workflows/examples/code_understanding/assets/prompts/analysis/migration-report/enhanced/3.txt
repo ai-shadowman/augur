@@ -1,5 +1,6 @@
 ---
 title: "### End-to-End RHEL Migration Plan (JSON)"
+key: "rhel-e2e-migration-plan-json"
 skip_prompt: "multi_repo"
 ---
 {{system_prompt_rhel_admin}}
@@ -14,7 +15,7 @@ Use it to structure your migration plan.
 The following is a summary of the codebase being migrated.
 
 --- BEGIN HOSTED APPLICATIONS ---
-{{answers[1]}}
+{{answers['summary']}}
 --- END HOSTED APPLICATIONS ---
 
 Recommend a high-level migration plan for migrating this RHEL 8 system to RHEL 10, taking into account any hosted applications above.

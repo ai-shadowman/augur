@@ -1,5 +1,6 @@
 ---
 title: "### Code Migration Plan (JSON)"
+key: "migration-plan-json"
 skip_prompt: "multi_repo"
 ---
 {{system_prompt_data_extraction}}
@@ -7,7 +8,7 @@ skip_prompt: "multi_repo"
 The following is a previously generated migration plan for a software project:
 
 --- BEGIN MIGRATION PLAN ---
-{{answers[5]}}
+{{answers['migration-plan']}}
 --- END MIGRATION PLAN ---
 
 Generate the migration plan in JSON format using the following schema:

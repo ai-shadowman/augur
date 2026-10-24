@@ -1,5 +1,6 @@
 ---
 title: "### RHEL-Enhanced Code Migration Plan (JSON)"
+key: "rhel-migration-plan-json"
 skip_prompt: "multi_repo"
 ---
 {{system_prompt_rhel_admin}}
@@ -14,7 +15,7 @@ Use it to structure your migration plan.
 The following is a generic migration plan for the applications hosted on this system.
 
 --- BEGIN GENERIC RECOMMENDED MIGRATION PLAN ---
-{{answers[5]}}
+{{answers['migration-plan']}}
 --- END GENERIC RECOMMENDED MIGRATION PLAN ---
 
 Revise the high-level migration plan provided above by enhancing it to take

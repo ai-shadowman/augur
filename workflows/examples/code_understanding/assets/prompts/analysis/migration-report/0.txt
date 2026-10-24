@@ -1,5 +1,6 @@
 ---
 title: "### Dependency Graph"
+key: "dependency-graph"
 search_mode: "local"
 ---
 {% if multi_repo %}

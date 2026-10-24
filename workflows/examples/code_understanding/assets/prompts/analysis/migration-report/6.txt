@@ -1,5 +1,6 @@
 ---
 title: "### Integration Points"
+key: "integration-points"
 skip_prompt: "multi_repo"
 ---
 What external systems does this codebase integrate with?

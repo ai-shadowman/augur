@@ -1,5 +1,6 @@
 ---
 title: "### Characterization Tests Generation Plan"
+key: "characterization-tests"
 skip_prompt: "multi_repo"
 ---
 {{system_prompt_characterization_tests}}
@@ -7,7 +8,7 @@ skip_prompt: "multi_repo"
 The following is a summary of the application that is currently being migrated:
 
 --- BEGIN APPLICATION SUMMARY ---
-{{answers[1]}}
+{{answers['summary']}}
 --- END APPLICATION SUMMARY ---
 
 Using this context, generate a plan for generating characterization tests for this application.

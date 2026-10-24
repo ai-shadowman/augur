@@ -1,3 +1,4 @@
+import collections
 import os
 import re
 import ssl
@@ -622,7 +623,10 @@ class DependencyAnalyzer:
 
         prompts = graphrag_prompts + enhanced_prompts
 
-        answers = ["N/A"] * len(prompts)
+        # Keyed by each prompt's front-matter `key:` so a template reads
+        # {{answers['summary']}} rather than a position that shifts when a
+        # prompt is added or removed. A skipped prompt still renders "N/A".
+        answers = collections.defaultdict(lambda: "N/A")
 
         dur_tracker = None
         try:
@@ -749,7 +753,7 @@ class DependencyAnalyzer:
 
                 result = f"{meta.get('title')}\n\n{result}"
 
-                answers[i] = result
+                answers[meta.get("key", prompt_path)] = result
 
                 report += f"{result}\n\n"
 

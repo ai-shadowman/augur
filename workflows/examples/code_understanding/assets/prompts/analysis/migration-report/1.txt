@@ -1,5 +1,6 @@
 ---
 title: "### High-Level Summary"
+key: "summary"
 ---
 {% if multi_repo %}
 Provide a brief high-level summary of the repos in this codebase covering the

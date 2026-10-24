@@ -1,5 +1,6 @@
 ---
 title: "### Known Vulnerabilities"
+key: "vulnerabilities"
 search_mode: "local"
 skip_prompt: "multi_repo"
 ---

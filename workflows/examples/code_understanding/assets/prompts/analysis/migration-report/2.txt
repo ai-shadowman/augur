@@ -1,5 +1,6 @@
 ---
 title: "### Recommended Migration Order"
+key: "migration-order"
 ---
 {% if multi_repo %}
 What migration order would be recommended for the repos in this codebase to reduce risk?
