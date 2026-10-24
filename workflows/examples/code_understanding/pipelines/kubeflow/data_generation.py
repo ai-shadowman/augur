@@ -158,7 +158,7 @@ def prepare_environment_op(git_repo: str,
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
             CodeMetricsTracker.reset_instance()
-            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
             code_tracker.measure_repository(tmp_source)
             code_tracker.save_to_file(os.path.join(tmp_source, "project_metrics.json"))
             code_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation")
@@ -240,7 +240,7 @@ def generate_code_and_meta_op(
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
             CodeMetricsTracker.reset_instance()
-            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug)
+            code_tracker = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
             try:
                 code_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
             except Exception as e:
@@ -343,6 +343,7 @@ def generate_code_and_meta_op(
 
             if code_tracker:
                 try:
+                    code_tracker.record_ignored_locations(ignore_policy)
                     code_tracker.save_to_file(os.path.join(tmp_target, "project_metrics.json"))
                 except Exception as e:
                     logging.debug(f"Failed to save project_metrics.json in generate_code_and_meta_op: {e}")

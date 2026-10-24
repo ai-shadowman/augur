@@ -77,11 +77,20 @@ def prepare_environment(source_path: str,
 
         cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
         with cm_clone:
-            clone_from_repo(git_repo, 
-                            source_path, 
+            clone_from_repo(git_repo,
+                            source_path,
                             branch=git_branch,
                             git_username=git_username,
                             git_token=git_token)
+
+        # Declared dependencies have to be read while the checkout exists;
+        # indexing runs in another pod, long after reset_environment removes
+        # it. Syft is skipped: it reports resolved versions, and the stitch
+        # consumes declared constraints, which come from the manifests.
+        cm_facts = dur_tracker.measure(stage="Data Generation", step="Extract Provenance Facts") if dur_tracker else nullcontext()
+        with cm_facts:
+            from provenance.pipeline import capture as capture_provenance
+            capture_provenance(source_path, target_path, run_syft=False)
 
     except Exception as e:
 
@@ -539,6 +548,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             dur_tracker = None
 
+        ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
         parse_cm = dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})") if dur_tracker else nullcontext()
         with parse_cm:
             code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
@@ -586,7 +596,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             pass
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
-            c_tr = CodeMetricsTracker.get_instance()
+            c_tr = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            c_tr.record_ignored_locations(ignore_policy)
             c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
@@ -755,6 +766,7 @@ class DataGenerationPipeline:
         except Exception:
             code_tracker = None
 
+        ignore_policy = None
         try:
             if dur_tracker:
                 try:
@@ -893,6 +905,8 @@ class DataGenerationPipeline:
             try:
                 from utils.code_metrics_tracker import CodeMetricsTracker
                 code_tr = CodeMetricsTracker.get_instance()
+                if ignore_policy is not None:
+                    code_tr.record_ignored_locations(ignore_policy)
                 if target_path:
                     code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
                 code_tr.log_to_mlflow()
