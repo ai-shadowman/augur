@@ -1230,7 +1230,8 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             with open(f2, "w") as f:
                 f.write("public class Util { public static void helper() {} }")
 
-            res = extract_data_generation_tokens(tmp_dir, tracker)
+            with patch.dict(os.environ, {"AUGUR_STAGE_ONE_PURPOSE": "1"}):
+                res = extract_data_generation_tokens(tmp_dir, tracker)
             self.assertTrue(res)
             rec = tracker.records["Data Generation (java) (gpt-oss-120b)"]
             self.assertGreater(rec["prompt_tokens"], 0)

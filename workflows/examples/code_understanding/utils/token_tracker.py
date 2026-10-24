@@ -1297,6 +1297,13 @@ def extract_data_generation_tokens(search_paths: Union[str, List[str]], token_tr
     if not search_paths or not token_tracker:
         return False
 
+    # Stage one makes no model call unless asked to, and files on disk are
+    # then parser output rather than evidence of inference. Estimating from
+    # them would bill a run for calls it never made.
+    from utils.stage_one import purpose_enabled
+    if not purpose_enabled():
+        return False
+
     # If tracker already contains Data Generation records with valid tokens, do nothing
     has_valid_data_gen = any(
         "Data Generation" in k and (r.get("prompt_tokens", 0) > 0 or r.get("output_tokens", 0) > 0)

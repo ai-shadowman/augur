@@ -276,7 +276,8 @@ class TestFallbackExtraction(unittest.TestCase):
             f.write("Functions: run\nSummary: Prints hello world\nDependencies: none\n")
 
         tracker = TokenCostTracker()
-        extracted = extract_data_generation_tokens(self.temp_dir, tracker)
+        with patch.dict(os.environ, {"AUGUR_STAGE_ONE_PURPOSE": "1"}):
+            extracted = extract_data_generation_tokens(self.temp_dir, tracker)
 
         self.assertTrue(extracted)
         matching = [k for k in tracker.records if "Data Generation" in k]
@@ -285,6 +286,27 @@ class TestFallbackExtraction(unittest.TestCase):
         self.assertEqual(record["calls"], 1)
         self.assertGreater(record["prompt_tokens"], 0)
         self.assertGreater(record["output_tokens"], 0)
+
+    def test_no_usage_is_reconstructed_for_a_stage_that_called_no_model(self):
+        """Parser-written files are not evidence of inference.
+
+        Stage one makes no model call unless AUGUR_STAGE_ONE_PURPOSE is set,
+        and estimating from its output anyway billed a zero-call celery run
+        237 calls and $1.35 that never happened.
+        """
+        from utils.token_tracker import extract_data_generation_tokens
+
+        input_dir = os.path.join(self.temp_dir, "input")
+        os.makedirs(input_dir, exist_ok=True)
+        with open(os.path.join(input_dir, "app.py_metadata.txt"), "w", encoding="utf-8") as f:
+            f.write("Functions: run\n")
+
+        tracker = TokenCostTracker()
+        with patch.dict(os.environ, {}, clear=True):
+            extracted = extract_data_generation_tokens(self.temp_dir, tracker)
+
+        self.assertFalse(extracted)
+        self.assertEqual([], [k for k in tracker.records if "Data Generation" in k])
 
     def test_extract_data_generation_durations_from_metadata_files(self):
         """Verify extract_data_generation_durations reconstructs canonical duration steps."""

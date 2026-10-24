@@ -14,6 +14,7 @@ from utils.repository_ignore import (
     RepositoryIgnoreError,
     RepositoryIgnorePolicy,
 )
+from utils.stage_one import PURPOSE_ENV, purpose_enabled  # noqa: E402,F401  re-exported
 
 
 def clone_from_repo(repo_url, 
@@ -97,22 +98,6 @@ def prepare_environment(source_path: str,
         logging.error(f"Error preparing environment: {e}")
 
         raise e
-
-
-#: Stage one makes no model call unless this is set. The one answer left to
-#: ask for was ``Purpose:``, and Arm A (2026-10-24, celery full, gpt-oss-120b)
-#: measured a header carrying it against the same header without: worse symbol
-#: precision on two graders, 121 fewer declared symbols after the join, and no
-#: gain outside the band registered in advance as not counting. The prompt is
-#: kept rather than deleted because what it might help, the descriptions a
-#: report is written from, was not graded. Figures in ``provenance/arms.py``.
-PURPOSE_ENV = "AUGUR_STAGE_ONE_PURPOSE"
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
-
-
-def purpose_enabled() -> bool:
-    """Whether stage one asks a model for each file's ``Purpose:`` line."""
-    return os.getenv(PURPOSE_ENV, "").strip().lower() in _TRUTHY
 
 
 def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_branch: str,
