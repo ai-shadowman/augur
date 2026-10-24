@@ -163,14 +163,27 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]:
-                    for fname in [f"{base_t}.json", f"{base_t}.txt", f"{base_t}_metadata.txt"]:
-                        fpath = os.path.join(f"{graphrag_source_path}/input", fname)
-                        if os.path.exists(fpath):
-                            try:
-                                os.remove(fpath)
-                            except Exception:
-                                pass
+                for fname in [
+                    f"{base_t}{suffix}"
+                    for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]
+                    for suffix in [".json", ".txt", "_metadata.txt"]
+                ]:
+                    fpath = os.path.join(f"{graphrag_source_path}/input", fname)
+                    if os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+                # The provenance sidecars rode along with the code metadata.
+                # Lift them out of the corpus and merge them at the project
+                # root, where the in-pipeline stitch stage reads them.
+                try:
+                    from provenance.pipeline import consolidate as consolidate_provenance
+                    consolidate_provenance(f"{graphrag_source_path}/input",
+                                           graphrag_source_path,
+                                           multi_repo=multi_repo)
+                except Exception as e:
+                    logging.warning(f"Provenance facts not consolidated: {e}")
                 txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
                 if not txt_files:
                     raise RuntimeError(
