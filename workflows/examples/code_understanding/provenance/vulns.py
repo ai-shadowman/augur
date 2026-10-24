@@ -60,6 +60,20 @@ NAMESPACES = {"python": frozenset({"github:language:python", "nvd:language:pytho
 #: Advisory status meaning the advisory was withdrawn.
 REJECTED = "rejected"
 
+#: Where the analysis stage finds the advisory snapshot. It joins against a
+#: snapshot rather than running grype because the analysis image carries
+#: neither the binary nor its 3.3 GB database; the Python advisories alone
+#: are 4.6 MB as JSON. Published to the results experiment, not the static
+#: assets, because every upload-assets run replaces the static set.
+SNAPSHOT_ENV = "AUGUR_ADVISORY_SNAPSHOT"
+SNAPSHOT_FILENAME = "advisories-python.json"
+SNAPSHOT_ARTIFACT_DIR = "results/advisories"
+SNAPSHOT_TAGS = {"category": "advisories"}
+#: The snapshot's own layout, independent of grype's database schema. Bumped
+#: whenever :class:`AffectedRange` changes shape, so an old snapshot is
+#: refused rather than misread.
+SNAPSHOT_FORMAT = 1
+
 INSTALL_HINT = (
     "grype is required for the vulnerability join and was not found on PATH. Install it "
     "with 'brew install grype' (macOS), or see https://github.com/anchore/grype."
@@ -286,6 +300,37 @@ def load_database(ecosystems: Iterable[str] = ("python",)) -> Database:
         records = _grype(binary, "db", "search", "--ecosystem", ecosystem, "--limit", "0")
         index.update(parse_search(records, ecosystem))
     return Database(built=status["built"], schema=status.get("schemaVersion", ""), ranges=index)
+
+
+def to_snapshot(database: Database) -> dict[str, Any]:
+    """The database as plain JSON, so a stage without grype can join against it."""
+    return {
+        "format": SNAPSHOT_FORMAT,
+        "built": database.built,
+        "schema": database.schema,
+        "ranges": [
+            {"ecosystem": ecosystem, "name": name, "ranges": [asdict(r) for r in recorded]}
+            for (ecosystem, name), recorded in sorted(database.ranges.items())
+        ],
+    }
+
+
+def from_snapshot(data: dict[str, Any]) -> Database:
+    if data.get("format") != SNAPSHOT_FORMAT:
+        raise ValueError(
+            f"advisory snapshot format {data.get('format')!r}, expected {SNAPSHOT_FORMAT}; "
+            "regenerate it with 'python -m provenance advisories'"
+        )
+    return Database(
+        built=data["built"],
+        schema=data["schema"],
+        ranges={
+            (entry["ecosystem"], entry["name"]): tuple(
+                AffectedRange(**{**r, "aliases": tuple(r["aliases"])}) for r in entry["ranges"]
+            )
+            for entry in data["ranges"]
+        },
+    )
 
 
 def render(findings: list[Finding], database: Database) -> str:

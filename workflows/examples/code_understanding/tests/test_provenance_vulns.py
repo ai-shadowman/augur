@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 from provenance import vulns
-from provenance.models import Layer, Package
+from provenance.models import Layer, Package, RepoFacts
 from provenance.vulns import AffectedRange, Database, Verdict
 
 BUILT = "2026-10-23T06:30:15Z"
@@ -181,6 +181,73 @@ class TestParseSearch(unittest.TestCase):
         self.assertIsNone(index[("python", "x")][0].constraint)
         finding = vulns.assess(_package("x", "==1.0"), Database(BUILT, "v6", index))
         self.assertEqual(finding.verdict, Verdict.DECLINED)
+
+
+class TestSnapshot(unittest.TestCase):
+    def test_round_trips_through_json_exactly(self):
+        database = Database(built=BUILT, schema="v6.1.10", ranges={
+            ("python", "kombu"): (
+                AffectedRange("GHSA-a", "<2.2.0", "fixed", "2.2.0", ("CVE-2020-1",), "High"),
+                AffectedRange("GHSA-b", None, "unknown"),
+            ),
+        })
+        restored = vulns.from_snapshot(json.loads(json.dumps(vulns.to_snapshot(database))))
+        self.assertEqual(restored, database)
+        self.assertEqual(vulns.assess(_package(constraint="<2"), restored).verdict,
+                         Verdict.ALL_AFFECTED)
+
+    def test_another_format_is_refused_rather_than_misread(self):
+        snapshot = {**vulns.to_snapshot(_database("<2")), "format": 0}
+        with self.assertRaisesRegex(ValueError, "format 0, expected 1"):
+            vulns.from_snapshot(snapshot)
+
+
+class TestCli(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.dir = Path(directory.name)
+
+    def run_cli(self, *argv):
+        import contextlib
+        import io
+
+        from provenance import cli
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_publish_refuses_before_touching_grype(self):
+        cases = [
+            ("other.json", "mlflow", "publish a file named advisories-python.json"),
+            (vulns.SNAPSHOT_FILENAME, "local", "needs ASSET_LOADER=mlflow"),
+        ]
+        for name, loader, message in cases:
+            with self.subTest(name), \
+                 mock.patch.dict("os.environ", {"ASSET_LOADER": loader}), \
+                 mock.patch.object(vulns, "load_database") as load:
+                code, _, err = self.run_cli("advisories", str(self.dir / name), "--publish")
+                self.assertEqual(code, 2)
+                self.assertIn(message, err)
+                load.assert_not_called()
+
+    def test_vulns_joins_a_snapshot_without_grype(self):
+        from provenance import facts
+
+        facts.write(RepoFacts(root="/r", packages=[_package(constraint="<2")]),
+                    self.dir / "facts.json")
+        (self.dir / "snap.json").write_text(json.dumps(vulns.to_snapshot(_database("<2.2.0"))))
+        with mock.patch.object(vulns, "load_database") as load:
+            code, out, _ = self.run_cli("vulns", str(self.dir / "facts.json"),
+                                        "--snapshot", str(self.dir / "snap.json"))
+        load.assert_not_called()
+        self.assertEqual(code, 1, out)
+        self.assertIn("1 all-affected", out)
 
 
 class TestLoadDatabase(unittest.TestCase):

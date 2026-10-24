@@ -8,6 +8,9 @@ checks what came out against what went in.
 
 ``vulns`` joins the facts record's declared constraints against the
 affected ranges in Grype's local database, and needs no index at all.
+``advisories`` writes that database's Python ranges as a JSON snapshot, and
+optionally publishes it, for the analysis stage, which has no grype.
+``eol-table`` regenerates the dated lifecycle table from endoflife.date.
 
 ``relevant-files`` checks the paths a migration plan's JSON claims against
 the indexed documents and the checkout they came from.
@@ -25,6 +28,8 @@ repeating the work, and so the facts file can be inspected by hand.
     python -m provenance stitch facts/celery.json output/
     python -m provenance verify facts/celery.json output/
     python -m provenance vulns facts/celery.json
+    python -m provenance advisories advisories-python.json --publish
+    python -m provenance eol-table
     python -m provenance relevant-files output/ /path/to/repo answer.md
     python -m provenance compare facts/celery.json positional/out parser/out
     python -m provenance compare --arm purpose facts/celery.json parser/out purpose/out
@@ -172,7 +177,10 @@ def cmd_vulns(args: argparse.Namespace) -> int:
 
     collected = facts_module.read(Path(args.facts))
     try:
-        database = vulns.load_database()
+        database = (
+            vulns.from_snapshot(json.loads(Path(args.snapshot).read_text(encoding="utf-8")))
+            if args.snapshot else vulns.load_database()
+        )
     except vulns.GrypeNotAvailable as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -190,6 +198,53 @@ def cmd_vulns(args: argparse.Namespace) -> int:
     # a runner that reads only the exit status should still see it.
     affected = any(f.verdict in vulns.AFFECTED for f in findings)
     return EXIT_FINDINGS if affected else EXIT_OK
+
+
+def cmd_advisories(args: argparse.Namespace) -> int:
+    import os
+
+    from . import vulns
+
+    output = Path(args.output)
+    if args.publish and output.name != vulns.SNAPSHOT_FILENAME:
+        print(f"error: publish a file named {vulns.SNAPSHOT_FILENAME}; the analysis "
+              "stage looks for it by name", file=sys.stderr)
+        return EXIT_ERROR
+    if args.publish and os.getenv("ASSET_LOADER") != "mlflow":
+        print("error: --publish needs ASSET_LOADER=mlflow and MLflow credentials; the local "
+              f"loader publishes nothing. Point {vulns.SNAPSHOT_ENV} at the file instead.",
+              file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        database = vulns.load_database()
+    except vulns.GrypeNotAvailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    output.write_text(json.dumps(vulns.to_snapshot(database)), encoding="utf-8")
+    ranges = sum(len(r) for r in database.ranges.values())
+    print(f"{output}: {len(database.ranges)} packages, {ranges} ranges, built {database.built}")
+    if not args.publish:
+        return EXIT_OK
+    from loaders.default_asset_loader import DefaultAssetLoader
+
+    DefaultAssetLoader().log_results(str(output), artifact_path=vulns.SNAPSHOT_ARTIFACT_DIR,
+                                     tags={**vulns.SNAPSHOT_TAGS, "db_built": database.built})
+    print(f"published to {vulns.SNAPSHOT_ARTIFACT_DIR}/{vulns.SNAPSHOT_FILENAME}")
+    return EXIT_OK
+
+
+def cmd_eol_table(args: argparse.Namespace) -> int:
+    import datetime as dt
+
+    from . import eol
+
+    table = eol.fetch(dt.date.today())
+    output = Path(args.output) if args.output else eol.TABLE_PATH
+    output.write_text(json.dumps(table, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    cycles = sum(len(p["cycles"]) for p in table["products"].values())
+    print(f"{output}: {len(table['products'])} products, {cycles} cycles, "
+          f"retrieved {table['retrieved']}")
+    return EXIT_OK
 
 
 def cmd_relevant_files(args: argparse.Namespace) -> int:
@@ -302,8 +357,25 @@ def build_parser() -> argparse.ArgumentParser:
         "vulns", help="join declared constraints against grype's advisory ranges"
     )
     vulns.add_argument("facts", help="facts JSON written by extract")
+    vulns.add_argument("--snapshot", help="join against this snapshot instead of grype")
     vulns.add_argument("--json", action="store_true")
     vulns.set_defaults(func=cmd_vulns)
+
+    advisories = sub.add_parser(
+        "advisories", help="write grype's Python advisory ranges as a JSON snapshot"
+    )
+    advisories.add_argument("output", help="where to write the snapshot")
+    advisories.add_argument(
+        "--publish", action="store_true", help="log it to MLflow for the analysis stage"
+    )
+    advisories.set_defaults(func=cmd_advisories)
+
+    eol_table = sub.add_parser(
+        "eol-table", help="regenerate the lifecycle table from endoflife.date"
+    )
+    eol_table.add_argument("-o", "--output", default=None,
+                           help="where to write it (default: the committed asset)")
+    eol_table.set_defaults(func=cmd_eol_table)
 
     relevant = sub.add_parser(
         "relevant-files",
