@@ -6,7 +6,10 @@ pipeline. ``extract`` runs before indexing and writes the ground-truth record.
 indexing and writes the deterministic facts into the graph. ``verify`` then
 checks what came out against what went in.
 
-``compare`` is the fifth and sits outside that sequence. It verifies two
+``vulns`` joins the facts record's declared constraints against the
+affected ranges in Grype's local database, and needs no index at all.
+
+``compare`` also sits outside that sequence. It verifies two
 indexes built from the same checkout and reports how the metrics moved between
 them, which is the shape of an ingest experiment rather than a stage.
 
@@ -18,6 +21,7 @@ repeating the work, and so the facts file can be inspected by hand.
     python -m provenance health facts/celery.json --cache .veripak-cache
     python -m provenance stitch facts/celery.json output/
     python -m provenance verify facts/celery.json output/
+    python -m provenance vulns facts/celery.json
     python -m provenance compare facts/celery.json positional/out parser/out
     python -m provenance compare --arm purpose facts/celery.json parser/out purpose/out
 """
@@ -159,6 +163,31 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return EXIT_OK if report.ok else EXIT_FINDINGS
 
 
+def cmd_vulns(args: argparse.Namespace) -> int:
+    from . import vulns
+
+    collected = facts_module.read(Path(args.facts))
+    try:
+        database = vulns.load_database()
+    except vulns.GrypeNotAvailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    findings = vulns.assess_all(collected.packages, database)
+    if args.json:
+        payload = {
+            "db_built": database.built,
+            "db_schema": database.schema,
+            "findings": [f.to_dict() for f in findings],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        print(vulns.render(findings, database))
+    # A declared range admitting a known-vulnerable version is a result, but
+    # a runner that reads only the exit status should still see it.
+    affected = any(f.verdict in vulns.AFFECTED for f in findings)
+    return EXIT_FINDINGS if affected else EXIT_OK
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     arm = arms_module.ARMS[args.arm]
     labels = tuple(args.labels) if args.labels else arm.labels
@@ -238,6 +267,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--json", action="store_true")
     verify.add_argument("--limit", type=int, default=20, help="findings shown per category")
     verify.set_defaults(func=cmd_verify)
+
+    vulns = sub.add_parser(
+        "vulns", help="join declared constraints against grype's advisory ranges"
+    )
+    vulns.add_argument("facts", help="facts JSON written by extract")
+    vulns.add_argument("--json", action="store_true")
+    vulns.set_defaults(func=cmd_vulns)
 
     compare = sub.add_parser(
         "compare",
