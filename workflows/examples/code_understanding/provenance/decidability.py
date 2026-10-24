@@ -126,6 +126,11 @@ QUESTIONS = (
 #: :func:`model_justified` is what shrank this tuple, not an opinion about it:
 #: of the seven fields the prompt used to ask, ``purpose`` is the only one it
 #: returns True for in any language the table records.
+#:
+#: Being justified is not being worth asking. Since 2026-10-24 the prompt runs
+#: only when ``AUGUR_STAGE_ONE_PURPOSE`` is set, because Arm A measured the
+#: graph no better for the answer; see ``provenance/arms.py``. This tuple
+#: still pins what the prompt asks when it does run.
 PROMPTED = (PURPOSE,)
 
 

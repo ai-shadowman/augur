@@ -34,13 +34,12 @@ blocks:
   - block_type: PromptBuilderBlock
     block_config:
       block_name: code_to_metadata_prompt
+      # Only what the template interpolates, as in code_generation. The
+      # identity fields are written into the header from the row, and a
+      # config file's libraries come from the manifest parsers.
       input_cols:
-      - git_repo
-      - git_slug
-      - file_path
       - language
       - code
-      - multi_repo
       output_cols: extract_metadata_prompt
       prompt_config_path: prompts/data_from_config.yaml
       format_as_messages: true
@@ -50,14 +49,12 @@ blocks:
       block_name: get_code_metadata
       input_cols: extract_metadata_prompt
       output_cols: extracted_code_metadata
-      # 32,000 preserves what this flow actually ran with: the 64,000 written
-      # here never took effect, because pipelines/base/data_generation.py
-      # passed max_tokens=32_000 to set_model_config for both flows. That
-      # override is gone, so the number has to be stated rather than inherited.
-      # Unlike data_from_code.yaml this prompt still asks for a list — every
-      # library in the file, with its version and the line it came from — and
-      # nothing here has measured how long that gets. Not lowered on a guess.
-      max_tokens: 32000
+      # The prompt now asks for one field, as data_from_code.yaml does, so
+      # it takes that flow's budget. It used to ask for every library with
+      # its version and source line at 32,000; that list is now read from
+      # the manifest by provenance.facts.declared_packages, and the flow runs
+      # only when AUGUR_STAGE_ONE_PURPOSE is set.
+      max_tokens: 1024
       async_mode: true
       n: 1
 

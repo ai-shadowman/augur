@@ -99,6 +99,22 @@ def prepare_environment(source_path: str,
         raise e
 
 
+#: Stage one makes no model call unless this is set. The one answer left to
+#: ask for was ``Purpose:``, and Arm A (2026-10-24, celery full, gpt-oss-120b)
+#: measured a header carrying it against the same header without: worse symbol
+#: precision on two graders, 121 fewer declared symbols after the join, and no
+#: gain outside the band registered in advance as not counting. The prompt is
+#: kept rather than deleted because what it might help, the descriptions a
+#: report is written from, was not graded. Figures in ``provenance/arms.py``.
+PURPOSE_ENV = "AUGUR_STAGE_ONE_PURPOSE"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def purpose_enabled() -> bool:
+    """Whether stage one asks a model for each file's ``Purpose:`` line."""
+    return os.getenv(PURPOSE_ENV, "").strip().lower() in _TRUTHY
+
+
 def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_branch: str,
                          language: str = "python", split_sections=True, config=False,
                          multi_repo: bool = False, ignore_policy=None):
@@ -455,13 +471,17 @@ def save_metadata_file(metadata: dict, target_path: str, relative_file_path: str
 
 
 def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, language: str, config=False,
-                                 external_metadata: dict = None):
-    """Writes annotated code and flattened metadata files to target_path."""
+                                 external_metadata: dict = None, source_path: str | None = None):
+    """Writes annotated code and flattened metadata files to target_path.
+
+    ``source_path`` is the checkout root. A config file's libraries are read
+    from it by the manifest parsers, and without it none are claimed.
+    """
     import os
     from pathlib import Path
     from utils import json_utils
     from loaders.default_asset_loader import DefaultAssetLoader
-    from provenance import symbols
+    from provenance import facts, symbols
 
     try:
 
@@ -503,6 +523,20 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
             # about it; for a language no parser here reads, nothing is
             # claimed and the two evidence keys say which case this was.
             metadata.update(symbols.sections_for(rel_file_path, code))
+
+            # A config file's libraries, on the same terms again. The manifest
+            # parsers read requirements files and pyproject.toml; for anything
+            # else, a pom.xml or a package.json, no library line is written,
+            # and the extraction model still reads the file itself below.
+            if config:
+                declared = (
+                    facts.declared_packages(Path(source_path, rel_file_path), Path(source_path))
+                    if source_path else []
+                )
+                metadata['libraries'] = [
+                    {"library_name": p.name, "library_version": p.constraint or p.version or ""}
+                    for p in declared
+                ]
 
             target_file_path = os.path.join(target_path, Path(rel_file_path).with_suffix(".txt"))
 
@@ -566,22 +600,24 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             result["status"] = "skipped"
             return
 
-        try:
-            llm_cm = dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})") if dur_tracker else nullcontext()
-            with llm_cm:
-                code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
-        except Exception as e:
-            logging.warning(
-                f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
-                f"Falling back to saving raw code files without LLM metadata."
-            )
-            code_and_metadata_df = code_df
+        code_and_metadata_df = code_df
+        if purpose_enabled():
+            try:
+                llm_cm = dur_tracker.measure(stage="Data Generation", step=f"LLM Metadata Extraction ({step_label})") if dur_tracker else nullcontext()
+                with llm_cm:
+                    code_and_metadata_df = get_parsed_code_metadata(code_df, language=language, config=config)
+            except Exception as e:
+                logging.warning(
+                    f"LLM Metadata Extraction failed for {language} (config={config}): {e}. "
+                    f"Falling back to saving raw code files without LLM metadata."
+                )
 
         save_cm = dur_tracker.measure(stage="Data Generation", step=f"Save Metadata Files ({step_label})") if dur_tracker else nullcontext()
         with save_cm:
             save_code_and_metadata_files(code_and_metadata_df, target_path, git_repo=git_repo,
                                          git_slug=git_slug, language=language, config=config,
-                                         external_metadata=external_metadata)
+                                         external_metadata=external_metadata,
+                                         source_path=source_path)
 
         logging.info(f"Successfully generated code metadata for '{git_repo}'.")
 

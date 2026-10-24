@@ -169,23 +169,30 @@ class TestOneNumberGovernsTheOutputBudget(MetadataChatHarness):
         self.assertEqual(1_024, budget)
         self.assertEqual(31.25, self.WAS / budget)
 
-    def test_the_config_flow_keeps_what_it_actually_ran_with(self):
-        """Removing the override must not silently double a budget.
+    def test_the_config_flow_takes_the_same_budget_once_it_asks_the_same_question(self):
+        """32,000 was kept while the config prompt asked for every library.
 
-        ``config_generation``'s YAML said 64,000 and it ran at 32,000. Left
-        alone it would have jumped to 64,000 on this commit, which is a
-        behaviour change nobody asked for and no measurement supports: that
-        prompt still asks for a list of every library in the file, and
-        nothing here has measured how long that gets.
+        It asks for ``purpose`` alone now, the libraries coming from the
+        manifest parsers, so the reason for a list-sized budget is gone and
+        the two flows agree. Each YAML still owns its number; they happen to
+        say the same thing because they ask the same thing.
         """
-        self.assertEqual(self.WAS, self.budget_for(config=True))
+        budget = self.budget_for(config=True)
 
-    def test_the_two_flows_are_free_to_disagree_which_is_the_point(self):
-        for config in (False, True):
-            get_parsed_code_metadata(self.frame, language="java", config=config)
-        code, configuration = (call["max_tokens"] for call in self.reached_client)
+        self.assertEqual(1_024, budget)
+        self.assertEqual(31.25, self.WAS / budget)
 
-        self.assertLess(code, configuration)
+    def test_the_two_prompts_ask_the_same_question(self):
+        """A drift here would put a list back into one flow without a budget for it."""
+        prompts = BASE_DIR / "assets" / "sdghub"
+        code = (prompts / "code_generation" / "prompts" / "data_from_code.yaml").read_text(
+            encoding="utf-8"
+        )
+        configuration = (
+            prompts / "config_generation" / "prompts" / "data_from_config.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(code, configuration)
 
 
 if __name__ == "__main__":
