@@ -121,6 +121,20 @@ def _is_requirements(path: Path) -> bool:
     return name.endswith(".txt") and ("requirement" in name or path.parent.name == "requirements")
 
 
+def declared_packages(path: Path, root: Path) -> list[Package]:
+    """The packages one manifest declares, or ``[]`` for a file no parser here reads.
+
+    The per-file view of :func:`discover`, for a caller holding one path rather
+    than a tree. ``setup.py`` is left to ``discover`` because it is a source
+    file, not a config file, and its parser returns warnings this shape drops.
+    """
+    if _is_requirements(path):
+        return manifests.parse_requirements(path, root)
+    if path.name.lower() == "pyproject.toml":
+        return manifests.parse_pyproject(path, root)
+    return []
+
+
 def discover(root: Path) -> tuple[list[Package], list, list[str]]:
     """Parse every dependency manifest in the tree.
 
@@ -134,10 +148,8 @@ def discover(root: Path) -> tuple[list[Package], list, list[str]]:
     for path in _iter_files(root):
         name = path.name.lower()
         try:
-            if _is_requirements(path):
-                packages.extend(manifests.parse_requirements(path, root))
-            elif name == "pyproject.toml":
-                packages.extend(manifests.parse_pyproject(path, root))
+            if _is_requirements(path) or name == "pyproject.toml":
+                packages.extend(declared_packages(path, root))
             elif name == "setup.py":
                 found, notes = manifests.parse_setup_py(path, root)
                 packages.extend(found)
