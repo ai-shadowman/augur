@@ -38,6 +38,13 @@ HEADER = Arm(
 # ---------------------------------------------------------------------------
 # Arm A: does the one prompt left in stage one earn its place?
 #
+# Measured 2026-10-24: 15 of 16 bounds held, and the treatment did not beat
+# ``parser``. The block below is left as registered. Its volume premise was
+# false: "208 chunks" was GraphRAG's progress counter, which counts failed
+# chunks, and the finished treatment wrote 25.6 entity records per chunk, not
+# 21.4. The one broken bound, unjoined misattribution's delta, is that
+# premise failing. Figures in ``augur-test/corpus/MANIFEST.md``.
+#
 # Registered 2026-10-23, before ``purpose-full-120b`` finished and before any
 # reading of its graph. Stage one now makes exactly one model call per file,
 # for ``Purpose:``. The ``purpose`` header is the ``parser`` header plus that
