@@ -193,6 +193,11 @@ class RepoFacts:
     #: no file at all was assembled on the spot. Both are wrong and only the
     #: full inventory can tell them apart.
     source_files: list[str] = field(default_factory=list)
+    #: Every file in the checkout, not only source. What a migration plan's
+    #: ``relevant_files`` is checked against once the checkout is gone; empty
+    #: on facts written before it existed, which callers must read as "not
+    #: captured" rather than "no files".
+    checkout_files: list[str] = field(default_factory=list)
     #: Every name each module in the checkout declares, keyed by the dotted
     #: module name. The same separation ``source_files`` gives the module
     #: layer, one level down: a function entity naming a symbol that exists in
@@ -229,6 +234,7 @@ class RepoFacts:
             "own_modules": list(self.own_modules),
             "imported_names": list(self.imported_names),
             "source_files": list(self.source_files),
+            "checkout_files": list(self.checkout_files),
             "declared_symbols": {k: sorted(v) for k, v in self.declared_symbols.items()},
             "warnings": list(self.warnings),
         }

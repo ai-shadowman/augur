@@ -125,6 +125,7 @@ class TestMergeFacts(unittest.TestCase):
                 imported_names=["kombu"], warnings=["a"],
                 packages=[package("kombu", ">=2.1.8")],
                 source_files=["celery/app/base.py", "shared/compat.py"],
+                checkout_files=["celery/app/base.py", "setup.py"],
                 declared_symbols={
                     "celery.app.base": ["app"],
                     "shared.compat": ["bytes_to_str"],
@@ -179,6 +180,11 @@ class TestMergeFacts(unittest.TestCase):
         self.assertEqual(sorted(merged.declared_symbols), [
             "celery.app.base", "kombu.entity", "shared.compat",
         ])
+
+    def test_the_checkout_inventory_is_not_pooled(self):
+        # Its paths are relative to one tree: pooled, setup.py from kombu's
+        # checkout would confirm a plan naming setup.py in celery's.
+        self.assertEqual(pipeline.merge_facts(self.records(), root="/x").checkout_files, [])
 
     def test_a_module_both_repositories_declare_keeps_every_symbol(self):
         # A vendored file appearing in two checkouts is one module key with
@@ -268,6 +274,24 @@ class TestLoadFacts(TempDirTestCase):
         (self.root / pipeline.FACTS_FILENAME).write_text("{ not json", encoding="utf-8")
         with self.assertLogs("provenance.pipeline", level="WARNING"):
             self.assertIsNone(pipeline.load_facts(self.root))
+
+
+class TestPublish(TempDirTestCase):
+    def setUp(self):
+        self.root = self.tempdir()
+        self.output = self.root / "output"
+        self.output.mkdir()
+
+    def test_the_facts_travel_with_the_uploaded_directory(self):
+        facts_module.write(RepoFacts(root="/repo", checkout_files=["setup.py"]),
+                           self.root / pipeline.FACTS_FILENAME)
+        destination = pipeline.publish(self.root, self.output)
+        self.assertEqual(destination, self.output / pipeline.FACTS_FILENAME)
+        self.assertEqual(pipeline.load_facts(self.output).checkout_files, ["setup.py"])
+
+    def test_no_facts_publishes_nothing(self):
+        self.assertIsNone(pipeline.publish(self.root, self.output))
+        self.assertEqual(list(self.output.iterdir()), [])
 
 
 class FakeStorage:

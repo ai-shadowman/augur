@@ -225,6 +225,32 @@ def source_files(root: Path, paths: Iterable[Path] | None = None) -> list[str]:
     return sorted(found)
 
 
+#: Directories a version-control system keeps inside a checkout, and the only
+#: ones the full inventory leaves out. Unlike :data:`SKIP_DIRS`, a committed
+#: ``build/`` or vendored tree stays in: the inventory sizes what a report may
+#: legitimately name, and a file the repository tracks is nameable.
+VCS_DIRS = frozenset({".git", ".hg", ".svn"})
+
+
+def checkout_files(root: Path) -> list[str]:
+    """Every file in the checkout, repository-relative and POSIX style.
+
+    :func:`source_files` is narrow on purpose and this is complete on purpose.
+    A migration plan that names ``Makefile`` or ``tox.ini`` names a real file,
+    and checked against the narrow list it would read as invented, which is
+    the partial-evidence failure the checkout walk exists to prevent. Captured
+    here because the checkout is gone by the time the report is written.
+    """
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in VCS_DIRS]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            if path.is_file():
+                found.append(path.relative_to(root).as_posix())
+    return sorted(found)
+
+
 def _merge(declared: list[Package], resolved: list[Package]) -> list[Package]:
     """Combine manifest and Syft records, preferring the declared constraint.
 
@@ -260,6 +286,7 @@ def collect(
     # large checkout, and the two readers want the same files.
     walked = list(_iter_files(root))
     facts.source_files = source_files(root, walked)
+    facts.checkout_files = checkout_files(root)
     symbols, symbol_warnings = declarations.scan_files(root, walked)
     facts.declared_symbols = {key: sorted(names) for key, names in symbols.items()}
     facts.warnings.extend(symbol_warnings)
@@ -305,6 +332,7 @@ def read(path: Path) -> RepoFacts:
         own_modules=data.get("own_modules", []),
         imported_names=data.get("imported_names", []),
         source_files=data.get("source_files", []),
+        checkout_files=data.get("checkout_files", []),
         declared_symbols=data.get("declared_symbols", {}),
         warnings=data.get("warnings", []),
     )

@@ -321,6 +321,7 @@ class TestRoundTrip(TempTreeTestCase):
             multi_repo=True,
             own_modules=["celery"],
             source_files=["celery/worker/state.py"],
+            checkout_files=["Makefile", "celery/worker/state.py"],
             declared_symbols={"celery.worker.state": ["localcache", "task_accepted"]},
             warnings=["setup.py: computed at runtime"],
             packages=[
@@ -375,6 +376,8 @@ class TestCollect(TempTreeTestCase):
                             "def task_accepted(): pass\n",
             "requirements.txt": "kombu>=2.1.8,<2.2.0\n",
             "Containerfile": "FROM registry.access.redhat.com/ubi9/python-311:latest\n",
+            "build/lib/app/state.py": "",
+            ".git/HEAD": "ref: refs/heads/main\n",
         })
         self.facts = facts.collect(self.root, run_syft=False)
 
@@ -401,6 +404,15 @@ class TestCollect(TempTreeTestCase):
         # as declarations would make real inventions look grounded.
         self.assertNotIn("requirements", self.facts.declared_symbols)
         self.assertIn("requirements.txt", self.facts.source_files)
+
+    def test_the_checkout_inventory_is_every_file_but_version_control(self):
+        # source_files drops the Containerfile and the committed build tree;
+        # a plan naming either names a real file, so this inventory keeps them.
+        self.assertNotIn("Containerfile", self.facts.source_files)
+        self.assertEqual(self.facts.checkout_files, [
+            "Containerfile", "app/__init__.py", "app/state.py",
+            "build/lib/app/state.py", "requirements.txt",
+        ])
 
 
 if __name__ == "__main__":

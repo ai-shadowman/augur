@@ -245,6 +245,14 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                 except Exception as e:
                     logging.debug(f"Failed to log code metrics summary: {e}")
 
+        # Only output/ is uploaded, and the analysis stage checks its report
+        # against these facts after the checkout is gone.
+        try:
+            from provenance.pipeline import publish as publish_provenance
+            publish_provenance(graphrag_source_path, f"{graphrag_source_path}/output")
+        except Exception as e:
+            logging.warning(f"Provenance facts not published with the index: {e}")
+
         artifact_path = DefaultAssetLoader.get_log_results_artifact_path(
             DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
             git_slug=git_slug,

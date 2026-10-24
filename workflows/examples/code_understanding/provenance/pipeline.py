@@ -16,7 +16,8 @@ constraints into the descriptions.
 
 Getting the facts to that point takes three steps, because the checkout the
 facts come from is gone by indexing time: ``reset_environment`` deletes it, and
-under Kubeflow indexing is a different pod entirely.
+under Kubeflow indexing is a different pod entirely. A fourth carries them on
+to the analysis stage, which is a different pod again.
 
 1. :func:`capture` runs at clone time and writes ``provenance.json`` beside the
    generated code metadata, which is the artifact that already travels between
@@ -25,6 +26,8 @@ under Kubeflow indexing is a different pod entirely.
    copied input tree, and leaves one file at the project root.
 3. :func:`install` adds the workflow to the pipeline, and :func:`run_workflow`
    reads that file and stitches the entity table in place.
+4. :func:`publish` copies the file into ``output/`` after the index finishes,
+   so the analysis stage, which downloads that directory alone, gets it too.
 
 Every step degrades to a no-op with a log line. A missing sidecar means the
 graph keeps the descriptions the model wrote, which is exactly where it was
@@ -121,6 +124,9 @@ def merge_facts(records: list[RepoFacts], root: str) -> RepoFacts:
         # but unindexed was recalled rather than read. Dropping them here left
         # every multi-repo index unable to tell leakage from invention.
         merged.source_files.extend(record.source_files)
+        # checkout_files is not merged. Its paths are relative to one tree, so
+        # a union would confirm a path in one repository by finding it in
+        # another; left empty, a multi-repo report says "not confirmed".
         for key, names in record.declared_symbols.items():
             symbols.setdefault(key, set()).update(names)
         merged.warnings.extend(record.warnings)
@@ -163,6 +169,22 @@ def consolidate(input_dir: str | Path, root: str | Path,
     destination = facts_module.write(merged, Path(root) / FACTS_FILENAME)
     logger.info("provenance: merged %d sidecar(s) into %s (%d declarations)",
                 len(records), destination, len(merged.packages))
+    return destination
+
+
+def publish(root: str | Path, output_dir: str | Path) -> Path | None:
+    """Copy the consolidated facts into the directory the index is uploaded from.
+
+    Indexing uploads ``output/`` and nothing beside it, so facts left at the
+    project root reach the stitch and stop there. The analysis stage needs them
+    too, to check a report against a checkout that no longer exists.
+    """
+    source = facts_path(root)
+    if not source.exists():
+        logger.info("provenance: no facts at %s to publish", source)
+        return None
+    destination = Path(output_dir) / FACTS_FILENAME
+    destination.write_bytes(source.read_bytes())
     return destination
 
 
