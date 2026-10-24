@@ -609,6 +609,28 @@ class DependencyAnalyzer:
                 "text_units": self.text_unit_df
         }
 
+    def _render_section(self, render: str, prompt_path: str) -> str:
+        """A report section built from the index instead of asked of a model.
+
+        A prompt opts in with `render:` in its front matter, which keeps its
+        slot, title and key while dropping the model call.
+        """
+        from provenance import dependency_graph
+
+        if render != "dependency-graph":
+            raise ValueError(
+                f"{prompt_path} asks for renderer {render!r}; the only one is 'dependency-graph'"
+            )
+        if not self.multi_repo:
+            return dependency_graph.render(self.entity_df, self.relationship_df)
+
+        from provenance.corpus import from_documents
+
+        documents = pd.read_parquet(f"{self.root_dir}/output/documents.parquet")
+        return dependency_graph.render_repositories(
+            f.git_repo for f in from_documents(documents).files
+        )
+
     @timed("analysis.report")
     async def generate_migration_report(self):
         """Generate a high-level migration report"""
@@ -734,9 +756,13 @@ class DependencyAnalyzer:
                     use_global = self.multi_repo
 
                 p_start = time.perf_counter()
-                result = await self.query_with_llm(prompt,
-                                                   bypass_index=bypass_index,
-                                                   use_global=use_global)
+                render = meta.get('render')
+                if render:
+                    result = self._render_section(render, prompt_path)
+                else:
+                    result = await self.query_with_llm(prompt,
+                                                       bypass_index=bypass_index,
+                                                       use_global=use_global)
                 if dur_tracker:
                     p_dur = time.perf_counter() - p_start
                     p_title = meta.get('title') or prompt_path
