@@ -9,6 +9,9 @@ checks what came out against what went in.
 ``vulns`` joins the facts record's declared constraints against the
 affected ranges in Grype's local database, and needs no index at all.
 
+``relevant-files`` checks the paths a migration plan's JSON claims against
+the indexed documents and the checkout they came from.
+
 ``compare`` also sits outside that sequence. It verifies two
 indexes built from the same checkout and reports how the metrics moved between
 them, which is the shape of an ingest experiment rather than a stage.
@@ -22,6 +25,7 @@ repeating the work, and so the facts file can be inspected by hand.
     python -m provenance stitch facts/celery.json output/
     python -m provenance verify facts/celery.json output/
     python -m provenance vulns facts/celery.json
+    python -m provenance relevant-files output/ /path/to/repo answer.md
     python -m provenance compare facts/celery.json positional/out parser/out
     python -m provenance compare --arm purpose facts/celery.json parser/out purpose/out
 """
@@ -188,6 +192,32 @@ def cmd_vulns(args: argparse.Namespace) -> int:
     return EXIT_FINDINGS if affected else EXIT_OK
 
 
+def cmd_relevant_files(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from . import relevant_files
+    from .corpus import from_documents
+
+    documents = Path(args.output_dir) / "documents.parquet"
+    if not documents.is_file():
+        raise FileNotFoundError(f"{documents} does not exist; is this a GraphRAG output directory?")
+    try:
+        evidence = relevant_files.Evidence.from_checkout(
+            from_documents(pd.read_parquet(documents)), Path(args.checkout)
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    answers = [
+        relevant_files.check(Path(a).name, Path(a).read_text(), evidence) for a in args.answers
+    ]
+    if args.json:
+        print(json.dumps(relevant_files.to_dict(answers, evidence), indent=2))
+    else:
+        print(relevant_files.render(answers, evidence))
+    return EXIT_OK if relevant_files.clean(answers) else EXIT_FINDINGS
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     arm = arms_module.ARMS[args.arm]
     labels = tuple(args.labels) if args.labels else arm.labels
@@ -274,6 +304,16 @@ def build_parser() -> argparse.ArgumentParser:
     vulns.add_argument("facts", help="facts JSON written by extract")
     vulns.add_argument("--json", action="store_true")
     vulns.set_defaults(func=cmd_vulns)
+
+    relevant = sub.add_parser(
+        "relevant-files",
+        help="check a migration plan's relevant_files against the index and checkout",
+    )
+    relevant.add_argument("output_dir", help="GraphRAG output directory holding documents.parquet")
+    relevant.add_argument("checkout", help="the repository checkout the index was built from")
+    relevant.add_argument("answers", nargs="+", help="answer text files, one plan each")
+    relevant.add_argument("--json", action="store_true")
+    relevant.set_defaults(func=cmd_relevant_files)
 
     compare = sub.add_parser(
         "compare",
