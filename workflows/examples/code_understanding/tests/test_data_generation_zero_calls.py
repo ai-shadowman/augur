@@ -8,6 +8,7 @@ the one field the config flow used to ask a model for besides ``purpose``, its
 libraries, now comes from the manifest parsers or not at all.
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -110,7 +111,7 @@ class TestAnUnsetSwitchMeansNoCall(unittest.TestCase):
 class TestConfigLibrariesComeFromTheManifest(unittest.TestCase):
     """One config file through the real ``save_code_and_metadata_files``."""
 
-    def save(self, rel_path, content, extracted=None, source_path=True):
+    def save(self, rel_path, content, extracted=None, source_path=True, flatten=True):
         checkout = tempfile.TemporaryDirectory()
         target = tempfile.TemporaryDirectory()
         self.addCleanup(checkout.cleanup)
@@ -126,8 +127,11 @@ class TestConfigLibrariesComeFromTheManifest(unittest.TestCase):
         df = MagicMock()
         df.iterrows.return_value = [(0, row)]
 
-        with no_asset_loader(), \
-                patch("utils.json_utils.flatten_code_metadata", return_value="stub: true"):
+        flattened = (
+            patch("utils.json_utils.flatten_code_metadata", return_value="stub: true")
+            if flatten else contextlib.nullcontext()
+        )
+        with no_asset_loader(), flattened:
             data_generation.save_code_and_metadata_files(
                 df=df, target_path=target.name, git_repo=REPO, git_slug=SLUG,
                 language="python", config=True,
@@ -141,6 +145,22 @@ class TestConfigLibrariesComeFromTheManifest(unittest.TestCase):
         self.assertIn("Dependencies:", written)
         self.assertRegex(written, r"- \[library\] kombu (>=2\.1\.8,<2\.2\.0|<2\.2\.0,>=2\.1\.8)")
         self.assertIn("- [library] anyjson ==0.3.1", written)
+
+    def test_each_library_names_the_manifest_line_it_was_read_from(self):
+        """What the model was asked to reconstruct, the parser already holds verbatim."""
+        captured = {}
+
+        def capture(obj, schema=None):
+            captured.update(obj)
+            return "stub: true"
+
+        with patch("utils.json_utils.flatten_code_metadata", side_effect=capture):
+            self.save("requirements/default.txt", "anyjson==0.3.1\n", flatten=False)
+
+        self.assertEqual(
+            "requirements/default.txt: anyjson==0.3.1",
+            captured["libraries"][0]["library_version_source"],
+        )
 
     def test_a_model_volunteered_library_list_is_overwritten_rather_than_merged(self):
         written = self.save(

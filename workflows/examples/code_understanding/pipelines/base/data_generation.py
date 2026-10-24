@@ -534,7 +534,13 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
                     if source_path else []
                 )
                 metadata['libraries'] = [
-                    {"library_name": p.name, "library_version": p.constraint or p.version or ""}
+                    {
+                        "library_name": p.name,
+                        "library_version": p.constraint or p.version or "",
+                        "library_version_source": (
+                            f"{p.source_file}: {p.declared_line}" if p.declared_line else p.source_file
+                        ),
+                    }
                     for p in declared
                 ]
 
