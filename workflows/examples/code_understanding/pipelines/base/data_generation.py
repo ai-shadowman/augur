@@ -525,6 +525,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             dur_tracker = None
 
+        ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
         parse_cm = dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})") if dur_tracker else nullcontext()
         with parse_cm:
             code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
@@ -572,7 +573,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             pass
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
-            c_tr = CodeMetricsTracker.get_instance()
+            c_tr = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            c_tr.record_ignored_locations(ignore_policy)
             c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
@@ -683,6 +685,7 @@ class DataGenerationPipeline:
         except Exception:
             code_tracker = None
 
+        ignore_policy = None
         try:
             if dur_tracker:
                 try:
@@ -807,6 +810,8 @@ class DataGenerationPipeline:
             try:
                 from utils.code_metrics_tracker import CodeMetricsTracker
                 code_tr = CodeMetricsTracker.get_instance()
+                if ignore_policy is not None:
+                    code_tr.record_ignored_locations(ignore_policy)
                 if target_path:
                     code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
                 code_tr.log_to_mlflow()
