@@ -57,7 +57,8 @@ def select_nodes(entities, relationships, cap: int = MAX_NODES) -> list[tuple[st
     chosen: list[tuple[str, str]] = []
     seen: set[str] = set()
     for kind in PRIORITY:
-        titles = {t for t in entities.loc[types == kind, "title"] if t not in seen}
+        level_titles = entities.loc[types == kind, "title"].dropna().astype(str)
+        titles = {t for t in level_titles if t and t not in seen}
         level = sorted(titles, key=lambda t: (-degree.get(t, 0), t))
         room = cap - len(chosen)
         chosen.extend((title, kind) for title in level[:room])

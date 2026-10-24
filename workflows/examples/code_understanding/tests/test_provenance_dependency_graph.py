@@ -78,6 +78,14 @@ class TestSelection(unittest.TestCase):
         nodes = dg.select_nodes(entities, pd.DataFrame(columns=["source", "target"]))
         self.assertEqual(nodes, [("a", "MODULE")])
 
+    def test_missing_and_non_string_titles_neither_crash_nor_render_as_nan(self):
+        import pandas as pd
+
+        entities = pd.DataFrame([(7, "MODULE"), (None, "MODULE"), ("b", "MODULE"), ("", "MODULE")],
+                                columns=["title", "type"])
+        nodes = dg.select_nodes(entities, pd.DataFrame(columns=["source", "target"]))
+        self.assertEqual(nodes, [("7", "MODULE"), ("b", "MODULE")])
+
 
 class TestRender(unittest.TestCase):
 
