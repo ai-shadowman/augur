@@ -13,7 +13,11 @@ ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
 
 COPY --chown=1001:0 resources/images/data-analysis/requirements.txt ./requirements.txt
 
+# Remove workbench-only extras from the base image that pipeline steps never use.
+# Their pins (urllib3<2, pydantic<2, protobuf<5, click==8.1.8, opentelemetry-sdk~=1.36)
+# conflict with requirements.txt and only produce dependency-resolver warnings at build time.
 RUN pip install --upgrade pip \
+	&& pip uninstall -y odh-elyra codeflare-sdk appengine-python-standard kfp-kubernetes opentelemetry-exporter-prometheus \
 	&& pip install -r requirements.txt
 
 COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
