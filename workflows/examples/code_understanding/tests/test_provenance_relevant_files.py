@@ -96,6 +96,43 @@ class TestResolve(CheckoutTestCase):
                 self.assertEqual((verdict, resolved, folded), (got.verdict, got.resolved, got.folded))
 
 
+class TestShape(CheckoutTestCase):
+    """Entries taken from the smoke run's RHEL plan, 2026-10-24."""
+
+    def test_shapes(self):
+        cases = [
+            ("/etc/fstab", rf.Shape.HOST_PATH),
+            ("/etc/NetworkManager/dispatcher.d/", rf.Shape.HOST_PATH),
+            ("~/.celeryconfig", rf.Shape.HOST_PATH),
+            ("/etc/sysconfig/network-scripts/ifcfg-*", rf.Shape.GLOB),
+            ("src/**/*.py", rf.Shape.GLOB),
+            ("deployment/**/*.war", rf.Shape.GLOB),
+            ("pom.xml", rf.Shape.REPO_PATH),
+            ("celery/contrib/django.py", rf.Shape.REPO_PATH),
+            ("`requirements.txt`", rf.Shape.REPO_PATH),
+            ("https://github.com/celery/celery/blob/v2.5.5/setup.py", rf.Shape.URL),
+            ("", rf.Shape.NOT_A_PATH),
+            ("  ", rf.Shape.NOT_A_PATH),
+            (None, rf.Shape.NOT_A_PATH),
+            ({"path": "x.py"}, rf.Shape.NOT_A_PATH),
+        ]
+        for entry, shape in cases:
+            with self.subTest(entry=entry):
+                got = self.evidence.resolve(entry)
+                self.assertEqual((rf.Verdict.MATCHES_NOTHING, shape), (got.verdict, got.shape))
+
+    def test_only_unmatched_entries_get_a_shape(self):
+        for entry in ("celery/app/base.py", "setup.py", "/celery/app/base.py"):
+            with self.subTest(entry=entry):
+                self.assertIsNone(self.evidence.resolve(entry).shape)
+
+    def test_render_and_totals_break_down_the_bucket(self):
+        result = rf.check("2.md", plan(["/etc/fstab", "src/**/*.py", "pom.xml", "nope.py"]), self.evidence)
+        self.assertIn("[1 glob, 1 host-path, 2 repo-path]", rf.render([result], self.evidence))
+        self.assertIn("  matches-nothing /etc/fstab (host-path)", rf.render([result], self.evidence))
+        self.assertEqual(2, rf.totals([result])[rf.Shape.REPO_PATH])
+
+
 class TestCheck(CheckoutTestCase):
     def test_counts_every_entry_and_row(self):
         answer = "```json\n" + plan(

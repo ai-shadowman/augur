@@ -18,6 +18,13 @@ Each entry gets one of three verdicts:
 ``matches-nothing``
     neither the index nor the checkout holds it.
 
+An entry that matches nothing is further given a :class:`Shape`, read off the
+entry text alone. Only a ``repo-path`` is a file the model invented inside the
+repository; a ``host-path`` such as ``/etc/fstab`` names the machine rather
+than the checkout, and a ``glob`` names no file at all. All three break the
+"verbatim from source data" contract, but they are different failures, and a
+hallucinated-path rate should count the first.
+
 A match is exact on the repo-relative path first. Failing that, both sides are
 folded with :func:`provenance.corpus.canonical_key`, so ``celery.app.base`` or
 ``CELERY/APP/BASE`` still resolve to ``celery/app/base.py``; such a match is
@@ -56,6 +63,19 @@ class Verdict(StrEnum):
     MATCHES_NOTHING = "matches-nothing"
 
 
+class Shape(StrEnum):
+    """What an entry that matches nothing looks like. Checked in this order."""
+
+    NOT_A_PATH = "not-a-path"
+    URL = "url"
+    GLOB = "glob"
+    HOST_PATH = "host-path"
+    REPO_PATH = "repo-path"
+
+
+_GLOB_CHARS = frozenset("*?[")
+
+
 class Form(StrEnum):
     """How the plan JSON was found in the answer text."""
 
@@ -72,6 +92,8 @@ class Resolution:
     #: ambiguous, empty where nothing matched.
     resolved: tuple[str, ...] = ()
     folded: bool = False
+    #: Set only on ``matches-nothing``.
+    shape: Shape | None = None
 
 
 @dataclass
@@ -86,6 +108,9 @@ class Answer:
 
     def counts(self) -> Counter:
         return Counter(r.verdict for r in self.resolutions)
+
+    def shapes(self) -> Counter:
+        return Counter(r.shape for r in self.resolutions if r.shape)
 
 
 @dataclass(frozen=True)
@@ -127,7 +152,7 @@ class Evidence:
             folded = tuple(sorted(p for p in paths if canonical_key(p) == key))
             if folded:
                 return Resolution(str(entry), verdict, folded, folded=True)
-        return Resolution(str(entry), Verdict.MATCHES_NOTHING)
+        return Resolution(str(entry), Verdict.MATCHES_NOTHING, shape=shape_of(entry))
 
 
 def _walk(root: Path) -> Iterator[str]:
@@ -135,6 +160,23 @@ def _walk(root: Path) -> Iterator[str]:
         rel = path.relative_to(root)
         if path.is_file() and not _SKIP_DIRS.intersection(rel.parts):
             yield rel.as_posix()
+
+
+def shape_of(entry: Any) -> Shape:
+    """Classify an unmatched entry by its text, before normalization strips a
+    leading slash that is the whole of the difference between host and repo."""
+    if not isinstance(entry, str):
+        return Shape.NOT_A_PATH
+    text = entry.strip().strip("`'\"").strip()
+    if not text:
+        return Shape.NOT_A_PATH
+    if "://" in text:
+        return Shape.URL
+    if _GLOB_CHARS.intersection(text):
+        return Shape.GLOB
+    if text.startswith(("/", "~")):
+        return Shape.HOST_PATH
+    return Shape.REPO_PATH
 
 
 def normalize(entry: Any) -> str:
@@ -190,6 +232,7 @@ def totals(answers: Iterable[Answer]) -> Counter:
     total: Counter = Counter()
     for a in answers:
         total.update(a.counts())
+        total.update(a.shapes())
         total[a.form] += 1
     return total
 
@@ -223,11 +266,17 @@ def render(answers: list[Answer], evidence: Evidence) -> str:
             f"{a.label}: {a.form.value}, {a.rows} rows, {len(a.resolutions)} entries: "
             + ", ".join(f"{counts[v]} {v.value}" for v in Verdict)
             + (f" ({folded} by folded spelling)" if folded else "")
+            + (
+                " [" + ", ".join(f"{n} {k.value}" for k, n in sorted(a.shapes().items())) + "]"
+                if a.shapes()
+                else ""
+            )
             + (f"; {a.off_schema_rows} rows with a non-list field" if a.off_schema_rows else "")
         )
         for r in a.resolutions:
             if r.verdict is Verdict.CONFIRMED and not r.folded:
                 continue
             target = f" -> {', '.join(r.resolved)}" if r.resolved else ""
-            lines.append(f"  {r.verdict.value:15} {r.entry}{target}")
+            shape = f" ({r.shape.value})" if r.shape else ""
+            lines.append(f"  {r.verdict.value:15} {r.entry}{target}{shape}")
     return "\n".join(lines)
