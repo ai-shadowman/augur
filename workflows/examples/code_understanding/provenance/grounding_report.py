@@ -60,6 +60,9 @@ class GroundingReport:
     repository: str | None = None
     repository_absorbed: list[str] = field(default_factory=list)
     belongs_to_added: int = 0
+    #: Containment edges written from the declarations, between entities the
+    #: model named but no row linked.
+    defined_in_added: int = 0
     self_loops_removed: int = 0
     edges_rewritten: int = 0
 
@@ -145,6 +148,7 @@ def render(report: GroundingReport, limit: int = 15) -> str:
             report.ungrounded_modules, limit, lambda t: f"  {t}",
         )
     lines.append(f"BELONGS_TO added: {report.belongs_to_added}")
+    lines.append(f"DEFINED_IN added: {report.defined_in_added}")
     lines.append(f"self-loops dropped: {report.self_loops_removed}")
     lines.append(f"edge endpoints rewritten: {report.edges_rewritten}")
     return "\n".join(lines)

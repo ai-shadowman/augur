@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import declarations, languages, packages
+from . import containment, declarations, languages, packages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .grounding_report import GroundingReport
 from .tables import collapse, document_for, rewrite_edges, text_unit_documents, types_of
@@ -536,6 +536,7 @@ def ground(
         entities, relationships = ground_symbols(
             entities, relationships, report, documents, facts,
         )
+        relationships = containment.synthesize(entities, relationships, documents, report)
     entities, relationships = ground_repository(corpus, entities, relationships, report)
 
     report.entities_after = len(entities)
