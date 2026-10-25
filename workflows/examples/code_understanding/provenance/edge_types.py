@@ -38,18 +38,25 @@ PRECEDENCE = (
     "DEPENDS_ON",
 )
 
+#: Types AUGUR writes itself, from a join rather than a model call:
+#: ``BELONGS_TO`` in ``provenance.graph._belongs_to`` and ``DEFINED_IN`` in
+#: ``provenance.containment``. Read after the prompt's vocabulary, so a model
+#: row is typed by what the model claimed. No model row on the three measured
+#: corpora names either token.
+AUGUR_WRITTEN = ("BELONGS_TO", "DEFINED_IN")
+
 #: The value for a description that names no type.
 UNTYPED = "UNTYPED"
 
 #: Every value the derived column can hold.
-VOCABULARY = frozenset(PRECEDENCE) | {UNTYPED}
+VOCABULARY = frozenset(PRECEDENCE + AUGUR_WRITTEN) | {UNTYPED}
 
 #: The column :func:`with_type` adds.
 TYPE_COLUMN = "type"
 
 # Case-sensitive, and ``\b`` treats ``_`` as a word character, so
 # ``DEPENDS_ON`` cannot match inside ``CROSS_REPO_DEPENDS_ON``.
-_TOKEN = re.compile(r"\b(" + "|".join(PRECEDENCE) + r")\b")
+_TOKEN = re.compile(r"\b(" + "|".join(PRECEDENCE + AUGUR_WRITTEN) + r")\b")
 
 
 def types_in(description: str | None) -> frozenset[str]:
@@ -62,7 +69,7 @@ def types_in(description: str | None) -> frozenset[str]:
 def type_of(description: str | None) -> str:
     """The one type the column carries: the most specific named, or UNTYPED."""
     named = types_in(description)
-    return next((t for t in PRECEDENCE if t in named), UNTYPED)
+    return next((t for t in PRECEDENCE + AUGUR_WRITTEN if t in named), UNTYPED)
 
 
 def with_type(relationships: Any) -> Any:

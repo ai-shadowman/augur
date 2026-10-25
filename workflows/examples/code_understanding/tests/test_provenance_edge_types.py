@@ -16,7 +16,15 @@ name two types.
 import unittest
 
 from provenance import edge_types
-from provenance.edge_types import PRECEDENCE, UNTYPED, VOCABULARY, type_of, types_in, with_type
+from provenance.edge_types import (
+    AUGUR_WRITTEN,
+    PRECEDENCE,
+    UNTYPED,
+    VOCABULARY,
+    type_of,
+    types_in,
+    with_type,
+)
 
 CASES = [
     # (description, every type named, the type the column carries)
@@ -60,6 +68,10 @@ CASES = [
      {"CROSS_REPO_IMPORTS", "DEPENDS_ON"}, "CROSS_REPO_IMPORTS"),
     # A token inside a longer word is not a type.
     ("RECALLS and REUSES are not CALLS_X or XUSES", set(), UNTYPED),
+    # AUGUR-written rows carry their own type, and a model claim outranks it.
+    ("CELERY/WORKER/STATE.PY BELONGS_TO the CELERY-V2-5-5 repository", {"BELONGS_TO"}, "BELONGS_TO"),
+    ("PKG.MOD.TOP DEFINED_IN PKG/MOD.PY", {"DEFINED_IN"}, "DEFINED_IN"),
+    ("PKG.MOD.TOP DEFINED_IN PKG/MOD.PY\nPKG.MOD.TOP CALLS PKG/MOD.PY", {"CALLS", "DEFINED_IN"}, "CALLS"),
     ("", set(), UNTYPED),
     (None, set(), UNTYPED),
 ]
@@ -72,9 +84,9 @@ class TestTypes(unittest.TestCase):
                 self.assertEqual(types_in(description), named)
                 self.assertEqual(type_of(description), column)
 
-    def test_vocabulary_is_the_prompts_seven_plus_untyped(self):
+    def test_vocabulary_is_the_prompts_seven_augurs_two_and_untyped(self):
         self.assertEqual(len(PRECEDENCE), 7)
-        self.assertEqual(VOCABULARY, set(PRECEDENCE) | {UNTYPED})
+        self.assertEqual(VOCABULARY, set(PRECEDENCE) | set(AUGUR_WRITTEN) | {UNTYPED})
 
     def test_oracle_checkable_types_outrank_the_rest(self):
         # provenance.edges settles INHERITS and IMPORTS; nothing settles the
