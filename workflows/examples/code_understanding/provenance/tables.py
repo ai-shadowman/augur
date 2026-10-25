@@ -165,3 +165,43 @@ def text_unit_documents(text_units) -> dict[str, str]:
         if len(ids) == 1:
             mapping[unit_id] = str(ids[0])
     return mapping
+
+
+def merge_duplicate_edges(relationships, report: GroundingReport):
+    """Fold rows that name one ``(source, target)`` pair into a single row.
+
+    A raw extraction never holds two: graphrag merges each pair. Grounding can
+    create them, when a rename lands two of the model's edges on one pair
+    (``..utils.functional.memoize`` resolved beside a row that already said
+    ``celery.utils.functional.memoize``). ``finalize_relationships`` would drop
+    all but the first, and in graphrag 2.6.0 it does so without resetting the
+    index before assigning ``combined_degree`` from a freshly indexed Series.
+    The labels misalign, so the tail rows get NaN, which local search's
+    ``to_optional_int`` cannot read, and the rows between take another row's
+    degree. 71 pairs on the celery 120b arm.
+
+    Merged the way graphrag merges a pair across chunks: descriptions joined
+    on a newline, chunks unioned, weights summed. Orientation counts, as it
+    does in ``finalize_relationships``.
+    """
+    if relationships is None or not len(relationships):
+        return relationships
+    duplicated = relationships.duplicated(subset=["source", "target"], keep=False)
+    if not duplicated.any():
+        return relationships
+
+    frame = relationships.reset_index(drop=True)
+    drop: list[int] = []
+    for _, group in frame[duplicated.to_numpy()].groupby(["source", "target"], sort=False):
+        keep, *rest = list(group.index)
+        if "description" in frame:
+            descriptions = dict.fromkeys(str(d) for d in group["description"] if not _missing(d))
+            frame.at[keep, "description"] = "\n".join(descriptions)
+        if "text_unit_ids" in frame:
+            frame.at[keep, "text_unit_ids"] = _union_ids(group["text_unit_ids"])
+        if "weight" in frame:
+            frame.at[keep, "weight"] = float(group["weight"].fillna(0).sum())
+        drop.extend(rest)
+    report.duplicate_edges_merged += len(drop)
+    return frame.drop(index=drop).reset_index(drop=True)
+

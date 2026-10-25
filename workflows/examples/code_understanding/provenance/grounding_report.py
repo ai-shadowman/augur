@@ -68,6 +68,9 @@ class GroundingReport:
     evidence_entities: int = 0
     evidence_relationships: int = 0
     self_loops_removed: int = 0
+    #: Rows folded into another that named the same ``(source, target)``
+    #: after a rename, which ``finalize_relationships`` cannot take.
+    duplicate_edges_merged: int = 0
     edges_rewritten: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,5 +161,6 @@ def render(report: GroundingReport, limit: int = 15) -> str:
         f"{report.evidence_relationships} relationship(s)"
     )
     lines.append(f"self-loops dropped: {report.self_loops_removed}")
+    lines.append(f"duplicate edges folded: {report.duplicate_edges_merged}")
     lines.append(f"edge endpoints rewritten: {report.edges_rewritten}")
     return "\n".join(lines)

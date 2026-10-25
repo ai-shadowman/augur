@@ -32,7 +32,14 @@ from typing import Any
 from . import containment, declarations, evidence, languages, packages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .grounding_report import GroundingReport
-from .tables import collapse, document_for, rewrite_edges, text_unit_documents, types_of
+from .tables import (
+    collapse,
+    document_for,
+    merge_duplicate_edges,
+    rewrite_edges,
+    text_unit_documents,
+    types_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +546,7 @@ def ground(
         relationships = containment.synthesize(entities, relationships, documents, report)
     entities, relationships = ground_repository(corpus, entities, relationships, report)
     entities, relationships = evidence.backfill(entities, relationships, documents, report)
+    relationships = merge_duplicate_edges(relationships, report)
 
     report.entities_after = len(entities)
     report.relationships_after = 0 if relationships is None else len(relationships)
