@@ -614,18 +614,24 @@ _RUBY = {
         "time is not here and is not claimed",
     ),
     IMPORT_EDGES: (
-        PARSEABLE,
-        "tree-sitter ruby require and require_relative calls",
-        "require_relative is a path and require resolves against the "
-        "checkout's lib/; the dependency capture keeps one segment and has no "
-        "require_relative at all. Not captured yet",
+        PARTIAL,
+        "provenance.edges.ruby.RubyResolver",
+        "require_relative is a path and settles. require resolves against the "
+        "load path, which the source does not state: a gem's lib/ is on it by "
+        "convention, and a file the checkout holds anywhere else may or may not "
+        "be. On jekyll 49 of 56 unresolved loads are the test suite's require "
+        "'helper', which only rake test's -Itest puts on the path",
     ),
     INHERITANCE: (
         PARTIAL,
-        "tree-sitter ruby class superclass field",
-        "class Foo < Bar is syntax and not captured yet. include and extend "
-        "are method calls that mix a module in at runtime, not inheritance "
-        "syntax, and stay a named gap rather than being folded in",
+        "provenance.edges.ruby.RubyResolver",
+        "class Foo < Bar is syntax and Bar resolves by lexical constant lookup, "
+        "within what the checkout declares, so 88 of 101 jekyll superclasses "
+        "resolve; a bare name falling through from a reopened gem namespace "
+        "may be the gem's. include and extend are method "
+        "calls that mix a module in at runtime, not inheritance syntax, and "
+        "stay a named gap; a superclass written as Struct.new(...) is an "
+        "expression",
     ),
 }
 

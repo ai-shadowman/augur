@@ -29,11 +29,14 @@ dialect     IMPORTS INHERITS oracle
 python      yes     yes      ``ast``, exact agreement with tree-sitter
 java        yes     yes      none; constructed cases and a commons-lang pin
 typescript  yes     yes      none; constructed cases and a nest pin
-ruby        gap     gap      none
+ruby        yes     yes      none; constructed cases and a jekyll pin
 =========== ======= ======== ===========================================
 
-Gaps that stay gaps whatever lands: CALLS everywhere; ``__future__`` counted
-as an import, as it is in every other import capture this package has.
+Named gaps, which no figure here covers: CALLS in every dialect; Ruby's
+``include`` and ``extend``, which are method calls rather than inheritance
+syntax; and Python's ``__future__``, counted as an import as every other
+import capture in this package counts it. Each dialect's module names the
+residue it leaves unresolved and why.
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from .model import (
     checkout_files,
 )
 from .python import PythonResolver
+from .ruby import RubyResolver
 from .typescript import TypeScriptResolver
 
 logger = logging.getLogger(__name__)
@@ -80,7 +84,7 @@ __all__ = [
 
 #: Dialect name to resolver class. A dialect absent here has no edge capture
 #: and its files are counted under ``no-capture``, never silently skipped.
-RESOLVERS = {"python": PythonResolver, "java": JavaResolver, "typescript": TypeScriptResolver}
+RESOLVERS = {"python": PythonResolver, "java": JavaResolver, "typescript": TypeScriptResolver, "ruby": RubyResolver}
 
 AST, TREE_SITTER, RECOVERED, UNREADABLE, NO_CAPTURE = (
     "ast", "tree-sitter", "tree-sitter-recovered", "unreadable", "no-capture",

@@ -77,6 +77,14 @@ class ImportCapture:
     #: TypeScript's ``export … from``: an edge, and a name the module passes on,
     #: but nothing bound in the file itself.
     reexport: bool = False
+    #: The method that loads it, where a language spells an import as a call:
+    #: Ruby's ``require`` resolves against the load path, ``require_relative``
+    #: against the file. ``None`` for import syntax.
+    loader: str | None = None
+    #: ``False`` when the argument is computed (``File.expand_path(...)``, an
+    #: interpolated string): :attr:`written` is then the expression, and no
+    #: resolver can settle it.
+    literal: bool = True
     #: Inside a function or class body. Still an edge, since the file depends
     #: on the module either way, but the name it binds is local to that body
     #: and is not a module-level name a class statement can refer to.
