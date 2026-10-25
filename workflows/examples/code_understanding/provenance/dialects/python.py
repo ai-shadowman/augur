@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ..treesitter import BINDING, Dialect, node_text
+from ..treesitter import BINDING, Dialect, ImportCapture, node_text, squeeze
 
 if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from tree_sitter import Node
@@ -106,6 +106,87 @@ def _imported_names(node: Node) -> Iterator[str]:
             yield top
 
 
+def _dotted(node: Node) -> str:
+    """``a.b.c`` from a ``dotted_name``, ignoring any whitespace between parts."""
+    return ".".join(node_text(c) for c in node.named_children if c.type == "identifier")
+
+
+def _alias_pair(node: Node) -> tuple[str, str | None] | None:
+    """``("a.b", "x")`` for ``a.b as x``, ``("a.b", None)`` for a bare name."""
+    if node.type == "aliased_import":
+        name, alias = node.child_by_field_name("name"), node.child_by_field_name("alias")
+        if name is None:
+            return None
+        return _dotted(name), node_text(alias) if alias is not None else None
+    if node.type == "dotted_name":
+        return _dotted(node), None
+    return None
+
+
+def _import_edges(node: Node) -> Iterator[ImportCapture]:
+    """Mirror of ``imports.import_captures_in_source`` over one node.
+
+    Unlike :func:`_imported_names` this keeps the whole module, keeps a
+    relative import with its dots, and keeps the names a ``from`` import
+    binds, because an edge needs to know which file and which name.
+    """
+    if node.type == "import_statement":
+        for child in node.children_by_field_name("name"):
+            if pair := _alias_pair(child):
+                yield ImportCapture(pair[0], alias=pair[1])
+        return
+    if node.type == "future_import_statement":
+        module = "__future__"
+    elif node.type == "import_from_statement":
+        source = node.child_by_field_name("module_name")
+        if source is None:
+            return
+        if source.type == "relative_import":
+            prefix = next((c for c in source.named_children if c.type == "import_prefix"), None)
+            dotted = next((c for c in source.named_children if c.type == "dotted_name"), None)
+            module = squeeze(node_text(prefix)) if prefix is not None else ""
+            module += _dotted(dotted) if dotted is not None else ""
+        else:
+            module = _dotted(source)
+    else:
+        return
+    names: list[tuple[str, str | None]] = []
+    for child in node.named_children:
+        if child.type == "wildcard_import":
+            names.append(("*", None))
+    names.extend(pair for c in node.children_by_field_name("name") if (pair := _alias_pair(c)))
+    yield ImportCapture(module, names=tuple(names))
+
+
+#: ``class A(metaclass=M)`` and ``**kw`` configure the class rather than name
+#: a base, and ``ast`` files them under ``keywords``. Comments are named nodes
+#: in this grammar and name nothing.
+_NOT_BASES = frozenset({"keyword_argument", "dictionary_splat", "comment"})
+
+
+def _base_names(node: Node) -> Iterator[tuple[str, str | None]]:
+    """Mirror of ``declarations.base_captures_in_source`` over one class.
+
+    Every positional base, as written. ``class A:`` and ``class A():`` name
+    none; a base that is an expression rather than a name (``f(E)``,
+    ``*bases``) is still yielded verbatim and the resolver calls it
+    unresolved, so it is counted rather than lost.
+    """
+    arguments = node.child_by_field_name("superclasses")
+    if arguments is None:
+        return
+    for child in arguments.named_children:
+        if child.type in _NOT_BASES:
+            continue
+        # ``class A((B))``: ``ast`` drops the parentheses and so must this.
+        while child.type == "parenthesized_expression":
+            inner = [c for c in child.named_children if c.type != "comment"]
+            if len(inner) != 1:
+                break
+            child = inner[0]
+        yield squeeze(node_text(child)), None
+
+
 PYTHON = Dialect(
     name="python",
     suffixes=(".py", ".pyx", ".pyi"),
@@ -117,4 +198,6 @@ PYTHON = Dialect(
     unwrap={"decorated_definition": "definition"},
     bound_names=_bound_names,
     imported_names=_imported_names,
+    import_edges=_import_edges,
+    base_names=_base_names,
 )

@@ -30,7 +30,7 @@ import logging
 from pathlib import Path
 
 from .dialects import PYTHON, Dialect, dialect_for
-from .treesitter import imports_in_tree
+from .treesitter import ImportCapture, import_captures_in_tree, imports_in_tree
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,46 @@ def imports_in(source: str, dialect: Dialect) -> tuple[set[str], bool]:
         except (SyntaxError, ValueError, RecursionError):
             pass  # Python 2, or nested past the recursion limit.
     return imports_in_tree(source, dialect), False
+
+
+def import_captures_in_source(source: str) -> set[ImportCapture]:
+    """Every import in one Python source string, as an edge needs it.
+
+    Not :func:`imports_in_source` with more detail bolted on. That function
+    answers which *distribution* a file depends on, so it keeps ``celery``
+    of ``celery.utils`` and drops relative imports outright; reused for edges
+    it would collapse every internal edge onto one node. This keeps the whole
+    module, the dots of a relative import and the names a ``from`` import
+    binds, and resolves nothing: :mod:`provenance.edges` does that, after
+    the two readers have been compared on what they read.
+    """
+    found: set[ImportCapture] = set()
+    stack: list[tuple[ast.AST, bool]] = [(ast.parse(source), False)]
+    while stack:
+        node, scoped = stack.pop()
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found.add(ImportCapture(alias.name, alias=alias.asname, scoped=scoped))
+        elif isinstance(node, ast.ImportFrom):
+            written = "." * node.level + (node.module or "")
+            names = tuple((alias.name, alias.asname) for alias in node.names)
+            found.add(ImportCapture(written, names=names, scoped=scoped))
+        inside = scoped or isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        stack.extend((child, inside) for child in ast.iter_child_nodes(node))
+    return found
+
+
+def import_captures_in(source: str, dialect: Dialect) -> tuple[set[ImportCapture], bool]:
+    """Import captures in one source string, and whether ``ast`` read it.
+
+    The same fallback as :func:`imports_in`, for the same reason.
+    """
+    if dialect is PYTHON:
+        try:
+            return import_captures_in_source(source), True
+        except (SyntaxError, ValueError, RecursionError):
+            pass  # Python 2, or nested past the recursion limit.
+    return import_captures_in_tree(source, dialect), False
 
 
 def scan_tree(root: Path, skip_dirs: frozenset[str]) -> tuple[set[str], list[str]]:

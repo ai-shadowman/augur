@@ -47,7 +47,7 @@ from typing import Any
 from .corpus import dotted_key, parse_header
 from .dialects import PYTHON, Dialect, dialect_for, suffixes
 from .models import Finding, FindingKind, RepoFacts
-from .treesitter import declarations_in_tree, parse
+from .treesitter import BaseCapture, base_captures_in_tree, declarations_in_tree, parse, squeeze
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,48 @@ def declarations_in(source: str, dialect: Dialect) -> tuple[set[str], bool]:
         except (SyntaxError, ValueError, RecursionError):
             pass  # Python 2, or nested past the recursion limit.
     return declarations_in_tree(source, dialect), False
+
+
+def _collect_bases(
+    nodes: Iterable[ast.AST], prefix: tuple[str, ...], source: str, found: set[BaseCapture]
+) -> None:
+    """:func:`_collect`'s walk, keeping each class's positional bases.
+
+    The same branches, so a base is recorded exactly for the classes the
+    declaration inventory holds. ``metaclass=`` and ``**kw`` are keywords
+    and name no base; a base that is not a name is kept verbatim, because
+    dropping it would make an unresolvable base indistinguishable from none.
+    """
+    for node in nodes:
+        if isinstance(node, ast.ClassDef):
+            qualified = (*prefix, node.name)
+            owner = ".".join(qualified)
+            for base in node.bases:
+                text = ast.get_source_segment(source, base) or ast.unparse(base)
+                found.add(BaseCapture(owner, squeeze(text)))
+            _collect_bases(node.body, qualified, source, found)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Assign | ast.AnnAssign):
+            continue
+        else:
+            for body in _nested_bodies(node):
+                _collect_bases(body, prefix, source, found)
+
+
+def base_captures_in_source(source: str) -> set[BaseCapture]:
+    """Every base every declared class names, read by ``ast``."""
+    found: set[BaseCapture] = set()
+    _collect_bases(ast.parse(source).body, (), source, found)
+    return found
+
+
+def base_captures_in(source: str, dialect: Dialect) -> tuple[set[BaseCapture], bool]:
+    """Base captures in one source string, and whether ``ast`` read it."""
+    if dialect is PYTHON:
+        try:
+            return base_captures_in_source(source), True
+        except (SyntaxError, ValueError, RecursionError):
+            pass  # Python 2, or nested past the recursion limit.
+    return base_captures_in_tree(source, dialect), False
 
 
 # --------------------------------------------------------------------------

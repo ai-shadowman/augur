@@ -37,7 +37,7 @@ degrading to something less accurate.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -48,6 +48,52 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
 #: :mod:`provenance.symbols` because this is the module that assigns them and
 #: the other way round would be a cycle; ``symbols`` re-exports them.
 CLASS, FUNCTION, METHOD, BINDING = "class", "function", "method", "binding"
+
+
+# --------------------------------------------------------------------------
+# What an edge capture reads, before anything resolves it
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ImportCapture:
+    """One import as the source writes it, unresolved.
+
+    Kept apart from resolution so the two Python readers can be compared on
+    what they read rather than on what a shared resolver made of it: a
+    resolution bug applied to both sides would otherwise agree with itself.
+    """
+
+    #: The module, in full and with any leading dots: ``celery.utils``,
+    #: ``..datastructures``, ``.`` for ``from . import x``.
+    written: str
+    #: ``import a.b as x`` binds ``x``.
+    alias: str | None = None
+    #: ``from m import a, b as c`` as ``(("a", None), ("b", "c"))``, in source
+    #: order; ``("*", None)`` for a star import. Empty for a plain import.
+    names: tuple[tuple[str, str | None], ...] = ()
+    #: Inside a function or class body. Still an edge, since the file depends
+    #: on the module either way, but the name it binds is local to that body
+    #: and is not a module-level name a class statement can refer to.
+    scoped: bool = False
+
+
+@dataclass(frozen=True)
+class BaseCapture:
+    """One base a class names, unresolved."""
+
+    #: The walker's qualified class name, real casing, as :func:`symbols_in_tree`
+    #: reports it.
+    owner: str
+    #: The base's source text with whitespace removed, so ``a . B`` and ``a.B``
+    #: are one spelling and an expression base is still recorded verbatim.
+    written: str
+    #: ``extends`` or ``implements`` where the grammar distinguishes them.
+    detail: str | None = None
+
+
+def squeeze(text: str) -> str:
+    """Source text with every run of whitespace removed."""
+    return "".join(text.split())
 
 
 # --------------------------------------------------------------------------
@@ -89,6 +135,13 @@ class Dialect:
     #: as it is in Python; Java states the package in the file and its
     #: directory layout says something else entirely.
     package_of: Callable[[str, Node], str | None] | None = None
+    #: Every import one node makes, as an edge needs it: the full module as
+    #: written, not the dependency :attr:`imported_names` reduces it to.
+    #: ``None`` for a dialect whose edge capture is not written yet.
+    import_edges: Callable[[Node], Iterator[ImportCapture]] | None = None
+    #: ``(written, detail)`` for each base one class node names. ``None`` for
+    #: a dialect whose edge capture is not written yet.
+    base_names: Callable[[Node], Iterator[tuple[str, str | None]]] | None = None
 
     @cached_property
     def namespaces(self) -> frozenset[str]:
@@ -247,3 +300,70 @@ def imports_in_tree(source: str, dialect: Dialect) -> set[str]:
         names.update(dialect.imported_names(node))
         stack.extend(node.named_children)
     return names
+
+
+# --------------------------------------------------------------------------
+# Edge captures
+# --------------------------------------------------------------------------
+
+def _classes(node: Node, prefix: tuple[str, ...], dialect: Dialect) -> Iterator[tuple[str, Node]]:
+    """``(qualified name, class node)`` for every class :func:`_walk` records.
+
+    The same branches in the same order, keeping only the class branch's
+    output. An edge's owner therefore always names a class the symbol
+    inventory also holds, so a class nested in a function, which ``_walk``
+    never enters, has no edge for the same reason it has no node.
+    """
+    for raw in node.named_children:
+        child = _unwrap(raw, dialect)
+        if child.type in dialect.classes:
+            name = child.child_by_field_name("name")
+            if name is None:
+                continue
+            qualified = (*prefix, node_text(name))
+            yield ".".join(qualified), child
+            if body := child.child_by_field_name("body"):
+                yield from _classes(body, qualified, dialect)
+        elif child.type in dialect.functions or child.type in dialect.bindings:
+            continue
+        elif child.type in dialect.blocks:
+            yield from _classes(child, prefix, dialect)
+        else:
+            for block in _blocks(child, dialect):
+                yield from _classes(block, prefix, dialect)
+
+
+def _require(dialect: Dialect, field: str) -> Callable:
+    capture = getattr(dialect, field)
+    if capture is None:
+        raise ValueError(
+            f"no edge capture written for dialect {dialect.name!r} ({field}); "
+            f"tree-sitter reading a language is not the same as extracting its edges"
+        )
+    return capture
+
+
+def base_captures_in_tree(source: str, dialect: Dialect) -> set[BaseCapture]:
+    """Every base every recorded class names."""
+    base_names = _require(dialect, "base_names")
+    return {
+        BaseCapture(owner, written, detail)
+        for owner, node in _classes(parse(source, dialect).root_node, (), dialect)
+        for written, detail in base_names(node)
+    }
+
+
+def import_captures_in_tree(source: str, dialect: Dialect) -> set[ImportCapture]:
+    """Every import anywhere in the source, as written.
+
+    Every node is visited, for the reason :func:`imports_in_tree` gives.
+    """
+    import_edges = _require(dialect, "import_edges")
+    found: set[ImportCapture] = set()
+    stack = [(parse(source, dialect).root_node, False)]
+    while stack:
+        node, scoped = stack.pop()
+        found.update(replace(c, scoped=scoped) for c in import_edges(node))
+        inside = scoped or node.type in dialect.functions or node.type in dialect.classes
+        stack.extend((child, inside) for child in node.named_children)
+    return found

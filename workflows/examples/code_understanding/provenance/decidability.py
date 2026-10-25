@@ -99,6 +99,12 @@ CLASSES = "classes"
 FUNCTIONS = "functions"
 METHODS = "methods"
 
+#: The edges :mod:`provenance.edges` reads: which module a file's imports
+#: name, and which class a class's bases name. Not header fields and never
+#: prompted; recorded so the relationship layer argues from a row too.
+IMPORT_EDGES = "import_edges"
+INHERITANCE = "inherits"
+
 QUESTIONS = (
     PURPOSE,
     METHOD_CODE,
@@ -113,6 +119,8 @@ QUESTIONS = (
     CLASSES,
     FUNCTIONS,
     METHODS,
+    IMPORT_EDGES,
+    INHERITANCE,
 )
 
 #: The questions ``data_from_code.yaml`` currently puts to a model, which since
@@ -245,6 +253,23 @@ _PYTHON = {
         "declares is in the file; what it inherits is a different question and "
         "is not claimed here",
     ),
+    IMPORT_EDGES: (
+        PARSED,
+        "provenance.edges.python.PythonResolver",
+        "the module an import names is syntax, and whether it is a file is a "
+        "lookup against the whole checkout rather than the indexed subset. ast "
+        "and tree-sitter capture the same 1,140 imports on the 187 celery files "
+        "both read. A Python 2 implicit relative import whose sibling and "
+        "absolute readings both exist is reported unresolved, not chosen",
+    ),
+    INHERITANCE: (
+        PARTIAL,
+        "provenance.edges.python.PythonResolver",
+        "the base as written is syntax and resolves through the file's own "
+        "bindings: 547 of 556 celery bases do. A base computed by a call "
+        "(with_metaclass) is not a name at all, and what a re-exported name "
+        "finally points at needs a second file's bindings, which is not chased",
+    ),
 }
 
 _JAVA = {
@@ -337,6 +362,19 @@ _JAVA = {
         "a constructor is part of the API the inventory vouches for. Always "
         "nested in a type, so the qualifier the header writes arrives from "
         "the grammar rather than being reconstructed from indentation",
+    ),
+    IMPORT_EDGES: (
+        PARSEABLE,
+        "tree-sitter java import_declaration",
+        "the dependency capture already reads the fully-qualified type, which "
+        "is an edge target as written; resolving it against the checkout is "
+        "not written yet",
+    ),
+    INHERITANCE: (
+        PARSEABLE,
+        "tree-sitter java superclass, super_interfaces, extends_interfaces",
+        "superclass, super_interfaces and an interface's extends_interfaces are "
+        "grammar fields, and extends versus implements is stated. Not captured yet",
     ),
 }
 
@@ -443,6 +481,19 @@ _TYPESCRIPT = {
         "3,654 qualified names off 2,141 files. Overload signatures repeat a "
         "name the implementation also declares and are collapsed onto it, so "
         "the count is of methods rather than of declarations",
+    ),
+    IMPORT_EDGES: (
+        PARSEABLE,
+        "tree-sitter typescript import and export source, import() and require()",
+        "a relative specifier is a path to resolve against the importing file "
+        "and a bare one is an npm package; the dependency capture discards the "
+        "first, so the edge capture is a separate one, not written yet",
+    ),
+    INHERITANCE: (
+        PARSEABLE,
+        "tree-sitter typescript class_heritage, extends_type_clause",
+        "class_heritage's extends and implements clauses and an interface's "
+        "extends are syntax. Not captured yet",
     ),
 }
 
@@ -551,6 +602,20 @@ _RUBY = {
         "class << self, which the walk reaches by declining to treat a "
         "singleton class as a named scope. What define_method builds at load "
         "time is not here and is not claimed",
+    ),
+    IMPORT_EDGES: (
+        PARSEABLE,
+        "tree-sitter ruby require and require_relative calls",
+        "require_relative is a path and require resolves against the "
+        "checkout's lib/; the dependency capture keeps one segment and has no "
+        "require_relative at all. Not captured yet",
+    ),
+    INHERITANCE: (
+        PARTIAL,
+        "tree-sitter ruby class superclass field",
+        "class Foo < Bar is syntax and not captured yet. include and extend "
+        "are method calls that mix a module in at runtime, not inheritance "
+        "syntax, and stay a named gap rather than being folded in",
     ),
 }
 
