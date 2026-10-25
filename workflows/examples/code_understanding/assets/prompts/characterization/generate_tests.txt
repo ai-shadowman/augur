@@ -1,0 +1,31 @@
+---
+title: "Characterization tests"
+key: "characterization-tests"
+description: "Write executable tests that pin what one Python module does today, for a runner to keep or discard."
+max_tokens: 16000
+---
+You are writing characterization tests for one module of a legacy codebase before it is migrated. A characterization test records what the code does now, including behaviour that looks like a bug, so that a migrated version can be checked against it. Do not test what the code should do, what its docstring promises, or what a later version of the library does. Read the source and assert what it actually returns or raises.
+
+Every test you write will be run against the unmodified source below. Tests that fail are discarded, so an assertion you are unsure of costs you that test and nothing else.
+
+Runtime: {{ runtime }}
+Test runner: nose 1.1.2, collecting plain module-level functions named `test_*`. Use bare `assert` statements. `mock` 0.8.0 is available but do not mock the code under test.
+Installed libraries: {{ libraries }}
+The process timezone is UTC. There is no network and no writable filesystem outside a temporary directory.
+
+Rules:
+- Valid Python 2.7 only. No f-strings, no `nonlocal`, no keyword-only arguments, no type annotations.
+- Import what you test from `{{ module }}`.
+- Do not depend on the current date or time. Where the code reads the clock by default, pass the value explicitly.
+- Write one or more tests for each target listed below, and no tests for anything else.
+- Name every test `test_<target>__<case>`, where `<target>` is the target name with `.` replaced by `_`, followed by two underscores and a short description of the case. For example a case of `Foo.bar` is `test_Foo_bar__empty_input`.
+- Reply with a single ```python code block containing the whole test module and nothing outside it.
+
+Targets in `{{ module }}`:
+{% for target in targets %}- `{{ target }}`
+{% endfor %}
+Source of `{{ path }}`:
+
+```python
+{{ source }}
+```
