@@ -37,9 +37,12 @@ BELONGS_TO edge are added from the header after extraction. Report what the code
 For each pair of related entities, extract the following information:
 - source_entity: name of the source entity, as identified in step 1
 - target_entity: name of the target entity, as identified in step 1
-- relationship_description: explanation of how the source entity depends on or uses the target entity
+- relationship_description: begins "<source_entity> <TYPE> <target_entity>", TYPE being exactly one
+  of the Relationship Types below, in capitals; then one clause of explanation. The source is the
+  entity that imports, inherits, calls, uses or depends.
 - relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
-For dependencies that cross repository boundaries, use CROSS_REPO_IMPORTS or CROSS_REPO_DEPENDS_ON as the relationship type in the description.
+For dependencies that cross repository boundaries, TYPE is CROSS_REPO_IMPORTS or CROSS_REPO_DEPENDS_ON.
+Do not emit a relationship stating where something is defined; AUGUR writes those from the source.
 
 ######################
 -Entity Types-
@@ -151,9 +154,9 @@ Output:
 {record_delimiter}
 ("entity"<|>requests<|>library<|>External HTTP library used by src/utils/my_service.py to perform HTTP GET requests.)
 {record_delimiter}
-("relationship"<|>my_service.fetch_data<|>src/utils/my_service.py<|>my_service.fetch_data is defined in src/utils/my_service.py<|>10)
+("relationship"<|>my_service.fetch_data<|>requests<|>my_service.fetch_data USES requests, calling requests.get and decoding the JSON body<|>9)
 {record_delimiter}
-("relationship"<|>src/utils/my_service.py<|>requests<|>src/utils/my_service.py IMPORTS the requests library<|>8)
+("relationship"<|>src/utils/my_service.py<|>requests<|>src/utils/my_service.py IMPORTS requests, the HTTP client fetch_data calls<|>8)
 {record_delimiter}
 {completion_delimiter}
 
