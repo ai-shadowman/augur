@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import symbols
+from . import evidence, symbols
 from .corpus import dotted_key, parse_header
 from .declarations import namespace_for
 from .dialects import dialect_for
@@ -132,11 +132,16 @@ def synthesize(entities, relationships, documents, report: GroundingReport | Non
             for s, t in zip(relationships["source"], relationships["target"], strict=False)
         }
 
+    # The declaring document's chunks are the edge's evidence, and GraphRAG's
+    # community workflow cannot take a row that cites none.
+    units = evidence.units_by_document(documents)
+
     rows = []
     for text in documents["text"]:
         header = parse_header(str(text))
         if header is None:
             continue
+        cited = units.get(header.path, [])
         file_titles = {header.title} & titles
         for child_key, parent_key in _pairs(header.path, str(text)):
             parents = spellings.get(parent_key, set()) if parent_key else file_titles
@@ -151,7 +156,7 @@ def synthesize(entities, relationships, documents, report: GroundingReport | Non
                         "target": parent,
                         "description": f"{child} {DEFINED_IN} {parent}",
                         "weight": DEFINED_IN_WEIGHT,
-                        "text_unit_ids": [],
+                        "text_unit_ids": list(cited),
                     })
 
     if report is not None:

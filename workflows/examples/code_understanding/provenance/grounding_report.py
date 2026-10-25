@@ -63,6 +63,10 @@ class GroundingReport:
     #: Containment edges written from the declarations, between entities the
     #: model named but no row linked.
     defined_in_added: int = 0
+    #: Written rows given the chunks of the documents they derive from, since
+    #: GraphRAG's community workflow fails on a relationship citing none.
+    evidence_entities: int = 0
+    evidence_relationships: int = 0
     self_loops_removed: int = 0
     edges_rewritten: int = 0
 
@@ -149,6 +153,10 @@ def render(report: GroundingReport, limit: int = 15) -> str:
         )
     lines.append(f"BELONGS_TO added: {report.belongs_to_added}")
     lines.append(f"DEFINED_IN added: {report.defined_in_added}")
+    lines.append(
+        f"chunks cited on written rows: {report.evidence_entities} entity(ies), "
+        f"{report.evidence_relationships} relationship(s)"
+    )
     lines.append(f"self-loops dropped: {report.self_loops_removed}")
     lines.append(f"edge endpoints rewritten: {report.edges_rewritten}")
     return "\n".join(lines)
