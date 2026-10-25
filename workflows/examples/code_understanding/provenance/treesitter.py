@@ -74,6 +74,9 @@ class ImportCapture:
     #: Java's ``import static``: :attr:`written` names a type's member, or with
     #: a star every static member of the type, rather than a type or package.
     static: bool = False
+    #: TypeScript's ``export … from``: an edge, and a name the module passes on,
+    #: but nothing bound in the file itself.
+    reexport: bool = False
     #: Inside a function or class body. Still an edge, since the file depends
     #: on the module either way, but the name it binds is local to that body
     #: and is not a module-level name a class statement can refer to.

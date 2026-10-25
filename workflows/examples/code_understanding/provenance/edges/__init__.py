@@ -28,7 +28,7 @@ dialect     IMPORTS INHERITS oracle
 =========== ======= ======== ===========================================
 python      yes     yes      ``ast``, exact agreement with tree-sitter
 java        yes     yes      none; constructed cases and a commons-lang pin
-typescript  gap     gap      none
+typescript  yes     yes      none; constructed cases and a nest pin
 ruby        gap     gap      none
 =========== ======= ======== ===========================================
 
@@ -60,6 +60,7 @@ from .model import (
     checkout_files,
 )
 from .python import PythonResolver
+from .typescript import TypeScriptResolver
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ __all__ = [
 
 #: Dialect name to resolver class. A dialect absent here has no edge capture
 #: and its files are counted under ``no-capture``, never silently skipped.
-RESOLVERS = {"python": PythonResolver, "java": JavaResolver}
+RESOLVERS = {"python": PythonResolver, "java": JavaResolver, "typescript": TypeScriptResolver}
 
 AST, TREE_SITTER, RECOVERED, UNREADABLE, NO_CAPTURE = (
     "ast", "tree-sitter", "tree-sitter-recovered", "unreadable", "no-capture",

@@ -488,17 +488,22 @@ _TYPESCRIPT = {
         "the count is of methods rather than of declarations",
     ),
     IMPORT_EDGES: (
-        PARSEABLE,
-        "tree-sitter typescript import and export source, import() and require()",
-        "a relative specifier is a path to resolve against the importing file "
-        "and a bare one is an npm package; the dependency capture discards the "
-        "first, so the edge capture is a separate one, not written yet",
+        PARSED,
+        "provenance.edges.typescript.TypeScriptResolver",
+        "a specifier is syntax, and the compiler's resolution order (the "
+        "nearest tsconfig's paths, then baseUrl, then node_modules) reads "
+        "files in the checkout. node_modules is not in the checkout, and the "
+        "one part of it the checkout settles is an npm workspace's links. On "
+        "nest 5,603 of 7,329 imports are internal and 5 unresolved",
     ),
     INHERITANCE: (
-        PARSEABLE,
-        "tree-sitter typescript class_heritage, extends_type_clause",
-        "class_heritage's extends and implements clauses and an interface's "
-        "extends are syntax. Not captured yet",
+        PARTIAL,
+        "provenance.edges.typescript.TypeScriptResolver",
+        "extends and implements are syntax, and a name resolves through the "
+        "file's imports and every re-export behind them, so 433 of 449 nest "
+        "bases resolve. A class may extend any expression (a mixin call), and "
+        "a type-only lib name such as Iterable or Pick has no declaration in "
+        "the checkout to resolve to",
     ),
 }
 
