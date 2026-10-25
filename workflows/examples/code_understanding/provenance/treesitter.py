@@ -71,6 +71,9 @@ class ImportCapture:
     #: ``from m import a, b as c`` as ``(("a", None), ("b", "c"))``, in source
     #: order; ``("*", None)`` for a star import. Empty for a plain import.
     names: tuple[tuple[str, str | None], ...] = ()
+    #: Java's ``import static``: :attr:`written` names a type's member, or with
+    #: a star every static member of the type, rather than a type or package.
+    static: bool = False
     #: Inside a function or class body. Still an edge, since the file depends
     #: on the module either way, but the name it binds is local to that body
     #: and is not a module-level name a class statement can refer to.
@@ -367,3 +370,12 @@ def import_captures_in_tree(source: str, dialect: Dialect) -> set[ImportCapture]
         inside = scoped or node.type in dialect.functions or node.type in dialect.classes
         stack.extend((child, inside) for child in node.named_children)
     return found
+
+
+def class_nodes_in_tree(source: str, dialect: Dialect) -> list[tuple[str, Node]]:
+    """``(qualified name, node)`` for every class :func:`symbols_in_tree` records.
+
+    For a caller that needs more of a declaration than its name, as Java's
+    edge resolver needs a member type's access modifiers.
+    """
+    return list(_classes(parse(source, dialect).root_node, (), dialect))

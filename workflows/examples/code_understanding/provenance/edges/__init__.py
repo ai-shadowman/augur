@@ -27,7 +27,7 @@ extracting its edges.
 dialect     IMPORTS INHERITS oracle
 =========== ======= ======== ===========================================
 python      yes     yes      ``ast``, exact agreement with tree-sitter
-java        gap     gap      none
+java        yes     yes      none; constructed cases and a commons-lang pin
 typescript  gap     gap      none
 ruby        gap     gap      none
 =========== ======= ======== ===========================================
@@ -46,6 +46,7 @@ from pathlib import Path
 from ..dialects import dialect_for
 from ..facts import SKIP_DIRS
 from ..treesitter import has_error
+from .java import JavaResolver
 from .model import (
     EXTERNAL,
     IMPORTS,
@@ -78,7 +79,7 @@ __all__ = [
 
 #: Dialect name to resolver class. A dialect absent here has no edge capture
 #: and its files are counted under ``no-capture``, never silently skipped.
-RESOLVERS = {"python": PythonResolver}
+RESOLVERS = {"python": PythonResolver, "java": JavaResolver}
 
 AST, TREE_SITTER, RECOVERED, UNREADABLE, NO_CAPTURE = (
     "ast", "tree-sitter", "tree-sitter-recovered", "unreadable", "no-capture",

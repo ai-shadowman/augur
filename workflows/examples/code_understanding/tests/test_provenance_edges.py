@@ -29,7 +29,7 @@ from pathlib import Path
 
 from provenance.corpus import dotted_key
 from provenance.declarations import base_captures_in_source, namespace_for
-from provenance.dialects import DIALECTS, JAVA, PYTHON, dialect_for
+from provenance.dialects import DIALECTS, PYTHON, TYPESCRIPT, dialect_for
 from provenance.edges import (
     EXTERNAL,
     IMPORTS,
@@ -296,8 +296,8 @@ class TestCoverageIsClaimedOnlyWhereWritten(unittest.TestCase):
         self.assertEqual(set(RESOLVERS), captured)
 
     def test_a_dialect_without_a_capture_raises(self):
-        with self.assertRaisesRegex(ValueError, "no edge capture written for dialect 'java'"):
-            import_captures_in_tree("import java.io.File;", JAVA)
+        with self.assertRaisesRegex(ValueError, "no edge capture written for dialect 'typescript'"):
+            import_captures_in_tree("import { x } from './x';", TYPESCRIPT)
 
 
 @unittest.skipUnless(CELERY.is_dir(), WHY_SKIPPED)

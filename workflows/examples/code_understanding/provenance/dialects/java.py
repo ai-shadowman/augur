@@ -33,7 +33,7 @@ from collections.abc import Iterator
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from ..treesitter import BINDING, Dialect, node_text
+from ..treesitter import BINDING, Dialect, ImportCapture, node_text, squeeze
 
 if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from tree_sitter import Node
@@ -88,6 +88,62 @@ def _imported_names(node: Node) -> Iterator[str]:
         name = name.rpartition(".")[0] or name
     if name:
         yield name
+
+
+def _import_edges(node: Node) -> Iterator[ImportCapture]:
+    """One ``import`` as an edge needs it, with nothing reduced.
+
+    :func:`_imported_names` drops the member of a static import, which is right
+    for a dependency and wrong for ``import static org.ex.Util.*``, where the
+    scoped name already stops at the type and dropping a segment leaves the
+    package. Here the star and the ``static`` keyword are both kept and the
+    resolver decides what the name is.
+    """
+    if node.type != "import_declaration":
+        return
+    scoped = next((c for c in node.named_children if c.type in _NAME_NODES), None)
+    if scoped is None:
+        return
+    star = any(c.type == "asterisk" for c in node.named_children)
+    yield ImportCapture(
+        squeeze(node_text(scoped)),
+        names=(("*", None),) if star else (),
+        static=any(c.type == "static" for c in node.children),
+    )
+
+
+#: Clause node to the relation it states. ``extends`` on a class names its
+#: one superclass and on an interface its superinterfaces; ``implements`` is
+#: a class, enum or record taking on an interface. The grammar says which, so
+#: collapsing the two would discard a distinction the source makes.
+_CLAUSES = {
+    "superclass": "extends",
+    "extends_interfaces": "extends",
+    "super_interfaces": "implements",
+}
+
+
+#: Node types that spell a type in an extends or implements clause.
+_TYPE_NODES = frozenset({"type_identifier", "scoped_type_identifier", "generic_type", "annotated_type"})
+
+
+def _base_names(node: Node) -> Iterator[tuple[str, str | None]]:
+    """Each type a class, interface, enum or record extends or implements.
+
+    Written in full, type arguments included (``Comparable<Range<T>>``); the
+    resolver reads the type name out of it.
+    """
+    for clause in node.named_children:
+        relation = _CLAUSES.get(clause.type)
+        if relation is None:
+            continue
+        for child in clause.named_children:
+            types = child.named_children if child.type == "type_list" else (child,)
+            for written in types:
+                # A recovered parse leaves ``ERROR`` and punctuation here,
+                # which name no type.
+                if written.type in _TYPE_NODES:
+                    yield squeeze(node_text(written)), relation
 
 
 def package_of(path: str, root: Node) -> str | None:
@@ -153,4 +209,6 @@ JAVA = Dialect(
     bound_names=_bound_names,
     imported_names=_imported_names,
     package_of=package_of,
+    import_edges=_import_edges,
+    base_names=_base_names,
 )

@@ -364,17 +364,22 @@ _JAVA = {
         "the grammar rather than being reconstructed from indentation",
     ),
     IMPORT_EDGES: (
-        PARSEABLE,
-        "tree-sitter java import_declaration",
-        "the dependency capture already reads the fully-qualified type, which "
-        "is an edge target as written; resolving it against the checkout is "
-        "not written yet",
+        PARSED,
+        "provenance.edges.java.JavaResolver",
+        "an import names a fully-qualified type, a package on demand, or a "
+        "static member of a type, and whether the checkout declares it is a "
+        "lookup on declared packages rather than paths. On commons-lang every "
+        "one of 3,569 resolves, 732 inside the checkout",
     ),
     INHERITANCE: (
-        PARSEABLE,
-        "tree-sitter java superclass, super_interfaces, extends_interfaces",
-        "superclass, super_interfaces and an interface's extends_interfaces are "
-        "grammar fields, and extends versus implements is stated. Not captured yet",
+        PARTIAL,
+        "provenance.edges.java.JavaResolver",
+        "extends and implements are grammar fields, and JLS 6.4.1 fixes the "
+        "precedence a simple name resolves by. Inherited member types are "
+        "enumerated through supertypes the checkout declares and through a "
+        "table generated from the JDK image, and all 708 commons-lang bases "
+        "resolve. A supertype in neither may supply any member type, and a "
+        "name behind one is unresolved",
     ),
 }
 
