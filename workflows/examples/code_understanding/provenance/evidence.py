@@ -15,7 +15,7 @@ The rule is the honest one. A row AUGUR writes is derived from documents, so
 it cites their chunks:
 
 * an entity for an indexed file cites that file's chunks;
-* a package entity cites the chunks of the documents under it;
+* a package entity cites the chunks of one member document, the shallowest;
 * a relationship cites its source entity's chunks, or failing that its
   target's.
 
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .corpus import canonical_key, dotted_key, from_documents
+from .corpus import dotted_key, from_documents
 from .grounding_report import GroundingReport
 from .tables import _missing
 
@@ -72,13 +72,26 @@ def backfill(entities, relationships, documents, report: GroundingReport | None 
     def for_entity(title: str) -> list[str]:
         if title in by_title:
             return by_title[title]
-        key = canonical_key(title)
+        # ``dotted_key``, not ``canonical_key``: a package is a directory, and
+        # the suffix strip would read ``app/ts`` as ``app``.
+        key = dotted_key(title)
         prefix = key + "."
-        found: list[str] = []
-        for path, chunk_ids in units.items():
-            if any(k == key or k.startswith(prefix) for k in keys.get(path, ())):
-                found.extend(u for u in chunk_ids if u not in found)
-        return found
+        members = [
+            (min(k.count(".") for k in ks if k == key or k.startswith(prefix)), path)
+            for path, ks in keys.items()
+            if path in units and any(k == key or k.startswith(prefix) for k in ks)
+        ]
+        if not members:
+            return []
+        # One document under a directory proves it as well as all of them do,
+        # so the package cites one: the shallowest, ties broken by path so the
+        # choice is stable. Citing every member gave Maven's ``ORG`` and
+        # jekyll's ``LIB`` every chunk in the repository, and a shallowest-level
+        # rule still left them 121 of 128 and 28 of 32, since both are flat
+        # beneath their first real directory. Local search fills its source
+        # budget from the chunks an entity cites, so those were crowding out
+        # the chunks a query was about.
+        return list(units[min(members)[1]])
 
     entities = entities.copy()
     filled = 0

@@ -84,7 +84,29 @@ class TestWhatEachRowCites(unittest.TestCase):
     def test_a_synthesized_package_cites_the_documents_under_it(self):
         ents, _, report = ground()
         self.assertIn("PKG.SUB", report.packages_created)
-        self.assertEqual(sorted(cited(ents, "title", "PKG.SUB")), ["u1", "u2", "u3"])
+        # One member proves the directory: the shallowest, first by path.
+        self.assertEqual(cited(ents, "title", "PKG.SUB"), ["u1", "u2"])
+
+    def test_a_package_cites_one_shallowest_member(self):
+        """Maven's ``ORG`` cited all 128 commons-lang chunks before this."""
+        files = {
+            "app/x/deep.py": ("d2", ["u2"], "Y = 1\n"),
+            "app/zeta.py": ("d3", ["u3"], "Z = 1\n"),
+            "app/core.py": ("d1", ["u1"], "X = 1\n"),
+        }
+        docs = documents(files)
+        ents = evidence.backfill(entities([("APP", "PACKAGE", []), ("APP.X", "PACKAGE", [])]), None, docs)[0]
+        self.assertEqual(cited(ents, "title", "APP"), ["u1"])
+        self.assertEqual(cited(ents, "title", "APP.X"), ["u2"])
+
+    def test_a_directory_named_like_a_suffix_is_not_folded_onto_its_parent(self):
+        """``canonical_key`` would strip ``.ts`` and read ``app/ts`` as ``app``."""
+        files = {
+            "app/ts/one.py": ("d1", ["u1"], "X = 1\n"),
+            "app/core.py": ("d2", ["u2"], "Y = 1\n"),
+        }
+        ents = evidence.backfill(entities([("APP.TS", "PACKAGE", [])]), None, documents(files))[0]
+        self.assertEqual(cited(ents, "title", "APP.TS"), ["u1"])
 
     def test_belongs_to_cites_its_source_entity(self):
         _, rels, _ = ground()
