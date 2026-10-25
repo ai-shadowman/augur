@@ -18,12 +18,21 @@ can check outrank the ones it cannot. A description naming none is
 
 The rule was registered before it was counted; the measured split is in
 ``augur-test/corpus/MANIFEST.md`` under Relationship layer Phase 2.
+
+The row's ``source`` and ``target`` carry no direction either: graphrag
+builds each chunk's edges in an undirected ``nx.Graph``, so the columns come
+out in node insertion order. The description keeps it, since the prompt asks
+for ``<source> <TYPE> <target>``. :func:`subject_of` reads which column the
+claim's subject names, one line at a time, because a per-chunk merge joins
+A->B and B->A on a newline and such a row really does point both ways.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+from .corpus import dotted_key
 
 #: The prompt's vocabulary, most specific first. ``type_of`` takes the first
 #: of these a description names. ``INHERITS`` and ``IMPORTS`` lead the
@@ -80,4 +89,88 @@ def with_type(relationships: Any) -> Any:
     """
     out = relationships.copy()
     out[TYPE_COLUMN] = [type_of(d) for d in out["description"]]
+    return out
+
+
+#: The column :func:`with_subject` adds, and the values it can hold.
+SUBJECT_COLUMN = "subject"
+SOURCE = "source"
+TARGET = "target"
+BOTH = "both"
+UNKNOWN = "unknown"
+
+# Punctuation that ends the object name in "X CALLS Y, to ..." or "... Y."
+_TRAILING = ",.;:()"
+
+# Skipped before the object: "IMPORTS the java.util.concurrent module".
+_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def _related(name: str, column: str) -> bool:
+    """Whether a name in the text plausibly spells a column, by whole segments.
+
+    Covers the three shapes exact folding misses: a bare name for a qualified
+    column (``run`` for ``celery.app.shell.shell.run``), a qualified name for
+    a bare column (``FileUtils.mkdir_p`` for ``FILEUTILS``), and the reverse
+    of each.
+    """
+    if not name or not column:
+        return False
+    return (
+        name == column
+        or column.endswith("." + name) or name.endswith("." + column)
+        or name.startswith(column + ".") or column.startswith(name + ".")
+    )
+
+
+def _side(line: str, source: str, target: str) -> str | None:
+    """Which column one line's subject names, or ``None`` if it cannot say.
+
+    The subject is the text before the line's first type token, and the
+    object the first word after it. Exact folding is tried first, subject
+    then object; failing both, :func:`_related` is tried the same way and
+    counts only when it fits exactly one column. The prompt makes the subject
+    one of the two endpoints, so the two columns are the whole candidate set
+    and a unique fit is not partial evidence. A row whose two columns fold to
+    one key says nothing about direction.
+    """
+    match = _TOKEN.search(line)
+    if match is None or source == target:
+        return None
+    subject = dotted_key(line[:match.start()].strip())
+    rest = [w for w in line[match.end():].split() if w.lower() not in _ARTICLES]
+    obj = dotted_key(rest[0].strip(_TRAILING)) if rest else ""
+    for fits in (lambda a, b: a == b, _related):
+        s_src, s_tgt = fits(subject, source), fits(subject, target)
+        if s_src != s_tgt:
+            return SOURCE if s_src else TARGET
+        o_src, o_tgt = fits(obj, source), fits(obj, target)
+        if o_src != o_tgt:
+            return TARGET if o_src else SOURCE
+    return None
+
+
+def subject_of(source: str, target: str, description: str | None) -> str:
+    """Which column the description makes the subject of its claim.
+
+    :data:`SOURCE` or :data:`TARGET` when every line that says anything
+    agrees, :data:`BOTH` when lines disagree, :data:`UNKNOWN` when none says
+    anything, which covers every untyped row and every prose summary.
+    """
+    if not description:
+        return UNKNOWN
+    src, tgt = dotted_key(str(source)), dotted_key(str(target))
+    sides = {side for line in str(description).splitlines() if (side := _side(line, src, tgt))}
+    if len(sides) > 1:
+        return BOTH
+    return next(iter(sides), UNKNOWN)
+
+
+def with_subject(relationships: Any) -> Any:
+    """A copy of a relationships frame with the derived ``subject`` column added."""
+    out = relationships.copy()
+    out[SUBJECT_COLUMN] = [
+        subject_of(s, t, d)
+        for s, t, d in zip(out["source"], out["target"], out["description"], strict=True)
+    ]
     return out

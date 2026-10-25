@@ -18,11 +18,17 @@ import unittest
 from provenance import edge_types
 from provenance.edge_types import (
     AUGUR_WRITTEN,
+    BOTH,
     PRECEDENCE,
+    SOURCE,
+    TARGET,
+    UNKNOWN,
     UNTYPED,
     VOCABULARY,
+    subject_of,
     type_of,
     types_in,
+    with_subject,
     with_type,
 )
 
@@ -94,6 +100,61 @@ class TestTypes(unittest.TestCase):
         for checkable in ("INHERITS", "IMPORTS"):
             for other in ("CALLS", "USES", "DEPENDS_ON"):
                 self.assertLess(PRECEDENCE.index(checkable), PRECEDENCE.index(other))
+
+
+SUBJECTS = [
+    # (source column, target column, description, the column the subject names).
+    # Verbatim from the same three indexes unless marked constructed.
+    ("CELERY/APPS/WORKER.PY", "CELERY.PLATFORMS",
+     "celery/apps/worker.py IMPORTS the celery.platforms module.", SOURCE),
+    # graphrag's insertion order put the subject in the target column.
+    ("CMD", "CELERY.BIN.CAMQADM.AMQSHELL",
+     "celery.bin.camqadm.AMQShell INHERITS from cmd (module)", TARGET),
+    # A bare subject for a qualified column.
+    ("CELERY/APP/SHELL.SHELL.RUN", "CELERY/APP/SHELL.SHELL.INVOKE_DEFAULT_SHELL",
+     "run CALLS invoke_default_shell when no specific shell flag is set.", SOURCE),
+    # A member call on a bare column decides through the object.
+    ("FILEUTILS", "JEKYLL.COMMANDS.NEW.PROCESS",
+     "process CALLS FileUtils.mkdir_p to create the target directory", TARGET),
+    # The article is skipped before the object.
+    ("SRC/MAIN/JAVA/ORG/APACHE/COMMONS/LANG3/CONCURRENT/UNCHECKEDTIMEOUTEXCEPTION.JAVA",
+     "JAVA.UTIL.CONCURRENT.TIMEOUTEXCEPTION",
+     "src/main/java/... IMPORTS the java.util.concurrent.TimeoutException standard library class.", SOURCE),
+    # Lines that agree.
+    ("CELERY/APP/SHELL.SHELL.INVOKE_FALLBACK_SHELL", "CODE.INTERACT",
+     "invoke_fallback_shell CALLS code.interact to start a basic Python REPL.\n"
+     "invoke_fallback_shell CALLS code.interact to start a basic REPL.", SOURCE),
+    # Constructed: lines that disagree.
+    ("PKG.A", "PKG.B", "PKG.A CALLS PKG.B to start\nPKG.B CALLS PKG.A back", BOTH),
+    # Two columns folding to one key say nothing.
+    ("LAZYINITIALIZER.BUILDER", "LAZYINITIALIZER.BUILDER",
+     "LazyInitializer.builder CALLS LazyInitializer.Builder to create a new builder instance.", UNKNOWN),
+    # Constructed: a bare name fitting both columns is not a unique fit.
+    ("PKG.A.RUN", "PKG.B.RUN", "run CALLS run", UNKNOWN),
+    # No token, no reading.
+    ("CELERY/EXCEPTIONS.PY", "CELERY.EXCEPTIONS.CPENDINGDEPRECATIONWARNING",
+     "celery.exceptions.CPendingDeprecationWarning is defined in celery/exceptions.py", UNKNOWN),
+    ("PKG.A", "PKG.B", None, UNKNOWN),
+    # What provenance.containment writes.
+    ("PKG.MOD.TOP", "PKG/MOD.PY", "PKG.MOD.TOP DEFINED_IN PKG/MOD.PY", SOURCE),
+]
+
+
+class TestSubject(unittest.TestCase):
+    def test_real_rows(self):
+        for source, target, description, side in SUBJECTS:
+            with self.subTest(description=description):
+                self.assertEqual(subject_of(source, target, description), side)
+
+    def test_with_subject_adds_the_column(self):
+        frame = {
+            "source": [r[0] for r in SUBJECTS],
+            "target": [r[1] for r in SUBJECTS],
+            "description": [r[2] for r in SUBJECTS],
+        }
+        out = with_subject(frame)
+        self.assertNotIn(edge_types.SUBJECT_COLUMN, frame)
+        self.assertEqual(out[edge_types.SUBJECT_COLUMN], [r[3] for r in SUBJECTS])
 
 
 class TestWithType(unittest.TestCase):
