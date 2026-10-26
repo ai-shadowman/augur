@@ -72,6 +72,14 @@ class GroundingReport:
     #: after a rename, which ``finalize_relationships`` cannot take.
     duplicate_edges_merged: int = 0
     edges_rewritten: int = 0
+    #: The model's edges by verdict (``provenance.edge_verdict``), every
+    #: verdict present. Empty when the facts carry no edge evidence, which
+    #: means the verdict did not run, not that nothing was checkable.
+    edge_verdicts: dict[str, int] = field(default_factory=dict)
+    #: Contradicted model edges by reason, for the drop policy to read.
+    edge_contradictions: dict[str, int] = field(default_factory=dict)
+    #: Rows AUGUR wrote from a join, which the verdict does not judge.
+    edges_written: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +91,22 @@ def _section(lines: list[str], heading: str, items, limit: int, show) -> None:
     lines.extend(show(item) for item in items[:limit])
     if len(items) > limit:
         lines.append(f"  ... and {len(items) - limit} more")
+
+
+def _edge_verdict_lines(lines: list[str], report: GroundingReport) -> None:
+    """The edge split, beside the symbol split it mirrors."""
+    v = report.edge_verdicts
+    if not v:
+        lines.append("edge verdict:  not run (the facts carry no edge evidence)")
+        return
+    checked = v["confirmed"] + v["contradicted"]
+    precision = f"{v['confirmed'] / checked:.3f}" if checked else "n/a"
+    lines.append(
+        f"edge verdict:  {sum(v.values())} model edge(s): " + ", ".join(f"{n} {k}" for k, n in v.items())
+        + f"; precision {precision}; {report.edges_written} written row(s) not judged"
+    )
+    if report.edge_contradictions:
+        lines.append("  contradicted: " + ", ".join(f"{n} {k}" for k, n in report.edge_contradictions.items()))
 
 
 def render(report: GroundingReport, limit: int = 15) -> str:
@@ -147,6 +171,7 @@ def render(report: GroundingReport, limit: int = 15) -> str:
             "(several indexed modules declare the name)",
             report.symbols_ambiguous, limit, lambda t: f"  {t}",
         )
+    _edge_verdict_lines(lines, report)
     if report.ungrounded_modules:
         _section(
             lines,

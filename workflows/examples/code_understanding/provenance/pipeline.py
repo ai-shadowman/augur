@@ -68,6 +68,17 @@ WORKFLOW_NAME = "stitch_provenance"
 #: corrected graph instead of from the extracted one.
 AFTER_WORKFLOW = "extract_graph"
 
+#: The edge verdict's per-row table is written by a second workflow, after
+#: ``finalize_graph``, because that is where relationships get the ``id`` the
+#: table is keyed on. The split itself is computed in the grounding pass and
+#: lands in its report; this re-scores the finalised rows with the same
+#: function, which sees the same rows since grounding already folded the
+#: duplicate pairs finalisation would drop.
+VERDICT_WORKFLOW_NAME = "edge_verdicts"
+VERDICT_AFTER_WORKFLOW = "finalize_graph"
+#: The table's name in output storage, so it uploads with everything else.
+VERDICT_TABLE = "edge_verdicts"
+
 
 def facts_path(root: str | Path) -> Path:
     """Where the consolidated facts for an indexing run live."""
@@ -283,6 +294,24 @@ async def run_workflow(config, context):
     return WorkflowFunctionOutput(result=result)
 
 
+async def run_verdict_workflow(config, context):
+    """GraphRAG workflow entry point that writes ``edge_verdicts`` to ``output/``."""
+    from graphrag.index.typing.workflow import WorkflowFunctionOutput
+    from graphrag.utils.storage import load_table_from_storage, write_table_to_storage
+
+    from . import edge_verdict
+
+    relationships = await load_table_from_storage("relationships", context.output_storage)
+    table = edge_verdict.table(relationships, load_facts(config.root_dir))
+    if table is None:
+        logger.info("provenance: no edge evidence in the facts; %s not written", VERDICT_TABLE)
+        return WorkflowFunctionOutput(result=None)
+    await write_table_to_storage(table, VERDICT_TABLE, context.output_storage)
+    counts = table[edge_verdict.VERDICT_COLUMN].value_counts().to_dict()
+    logger.info("provenance: %s written, %d row(s): %s", VERDICT_TABLE, len(table), counts)
+    return WorkflowFunctionOutput(result={"edge_verdicts": counts})
+
+
 def install(config, method: str = "standard") -> bool:
     """Insert the stitch into ``config``'s workflow list, after ``finalize_graph``.
 
@@ -295,6 +324,7 @@ def install(config, method: str = "standard") -> bool:
     from graphrag.index.workflows.factory import PipelineFactory
 
     PipelineFactory.register(WORKFLOW_NAME, run_workflow)
+    PipelineFactory.register(VERDICT_WORKFLOW_NAME, run_verdict_workflow)
 
     names = list(config.workflows or PipelineFactory.pipelines.get(method, []))
     if WORKFLOW_NAME in names:
@@ -308,6 +338,22 @@ def install(config, method: str = "standard") -> bool:
         return False
 
     names.insert(names.index(AFTER_WORKFLOW) + 1, WORKFLOW_NAME)
+    _install_verdict(names)
     config.workflows = names
     logger.info("provenance: stitch installed after %s", AFTER_WORKFLOW)
     return True
+
+
+def _install_verdict(names: list[str]) -> None:
+    """Place the verdict table after finalisation, or say why it is absent.
+
+    Missing it costs the per-row table only; the split is still in the
+    grounding report, so the stitch installs either way.
+    """
+    if VERDICT_WORKFLOW_NAME in names:
+        return
+    if VERDICT_AFTER_WORKFLOW not in names:
+        logger.warning("provenance: no %r in the pipeline, so %s is not written",
+                       VERDICT_AFTER_WORKFLOW, VERDICT_TABLE)
+        return
+    names.insert(names.index(VERDICT_AFTER_WORKFLOW) + 1, VERDICT_WORKFLOW_NAME)

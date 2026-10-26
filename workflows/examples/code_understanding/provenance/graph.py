@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import containment, declarations, evidence, languages, packages
+from . import containment, declarations, edge_verdict, evidence, languages, packages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .edge_evidence import EdgeEvidence
 from .grounding_report import GroundingReport
@@ -569,6 +569,7 @@ def ground(
     entities, relationships = ground_repository(corpus, entities, relationships, report)
     entities, relationships = evidence.backfill(entities, relationships, documents, report)
     relationships = merge_duplicate_edges(relationships, report)
+    edge_verdict.record(relationships, facts, report)
 
     report.entities_after = len(entities)
     report.relationships_after = 0 if relationships is None else len(relationships)

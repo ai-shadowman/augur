@@ -14,6 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -340,6 +341,44 @@ class WorkflowTestCase(TempDirTestCase):
         return asyncio.run(pipeline.run_workflow(self.config, self.context))
 
 
+class TestVerdictWorkflow(WorkflowTestCase):
+    """The per-row edge verdict table, written after finalisation."""
+
+    EDGES = (
+        ("PKG/A.PY", "PKG/B.PY", "pkg/a.py IMPORTS pkg.b", 1.0),
+        ("PKG/B.PY", "PKG/A.PY", "pkg/b.py IMPORTS pkg.a", 1.0),
+        ("PKG/A.PY", "REPO", "pkg/a.py BELONGS_TO repo", 1.0),
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.storage.tables["relationships"]["id"] = ["r0", "r1", "r2"]
+
+    def run_verdict(self):
+        return asyncio.run(pipeline.run_verdict_workflow(self.config, self.context))
+
+    def test_one_row_per_relationship_keyed_on_id(self):
+        from provenance.edge_evidence import EdgeEvidence
+
+        evidence = EdgeEvidence(
+            [("IMPORTS", "pkg.a", "pkg.b", "internal", "pkg/a.py")],
+            {"pkg.a": ["pkg/a.py"], "pkg.b": ["pkg/b.py"]},
+        ).to_dict()
+        facts_module.write(replace(self.FACTS, edge_evidence=evidence),
+                           Path(self.root) / pipeline.FACTS_FILENAME)
+        self.run_verdict()
+        table = self.storage.tables[pipeline.VERDICT_TABLE]
+        self.assertEqual(
+            list(zip(table["id"], table["verdict"], table["reason"], strict=True)),
+            [("r0", "confirmed", "exact"), ("r1", "contradicted", "reversed"), ("r2", "written", "")],
+        )
+
+    def test_without_evidence_nothing_is_written(self):
+        facts_module.write(self.FACTS, Path(self.root) / pipeline.FACTS_FILENAME)
+        self.run_verdict()
+        self.assertNotIn(pipeline.VERDICT_TABLE, self.storage.writes)
+
+
 class TestRunWorkflow(WorkflowTestCase):
     """Without headers, so these cases stay about the stitch."""
 
@@ -572,8 +611,30 @@ class TestInstall(unittest.TestCase):
 
     def test_the_rest_of_the_pipeline_is_preserved_in_order(self):
         pipeline.install(self.config)
-        kept = [n for n in self.config.workflows if n != pipeline.WORKFLOW_NAME]
+        ours = (pipeline.WORKFLOW_NAME, pipeline.VERDICT_WORKFLOW_NAME)
+        kept = [n for n in self.config.workflows if n not in ours]
         self.assertEqual(kept, STANDARD)
+
+    def test_the_verdict_table_is_written_once_relationships_have_ids(self):
+        # finalize_graph assigns the relationship ids the table is keyed on.
+        pipeline.install(self.config)
+        names = self.config.workflows
+        self.assertEqual(
+            names.index(pipeline.VERDICT_WORKFLOW_NAME), names.index("finalize_graph") + 1
+        )
+        self.assertIs(
+            FakePipelineFactory.workflows[pipeline.VERDICT_WORKFLOW_NAME],
+            pipeline.run_verdict_workflow,
+        )
+
+    def test_without_finalize_graph_the_stitch_still_installs(self):
+        self.config.workflows = ["extract_graph", "create_communities"]
+        with self.assertLogs("provenance.pipeline", level="WARNING"):
+            self.assertTrue(pipeline.install(self.config))
+        self.assertEqual(
+            self.config.workflows,
+            ["extract_graph", pipeline.WORKFLOW_NAME, "create_communities"],
+        )
 
     def test_the_workflow_is_registered_under_its_name(self):
         pipeline.install(self.config)
@@ -588,7 +649,8 @@ class TestInstall(unittest.TestCase):
         pipeline.install(self.config)
         self.assertEqual(
             self.config.workflows,
-            ["extract_graph", pipeline.WORKFLOW_NAME, "finalize_graph"],
+            ["extract_graph", pipeline.WORKFLOW_NAME, "finalize_graph",
+             pipeline.VERDICT_WORKFLOW_NAME],
         )
 
     def test_installing_twice_does_not_duplicate_the_stage(self):

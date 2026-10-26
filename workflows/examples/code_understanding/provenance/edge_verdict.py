@@ -48,6 +48,15 @@ INIT = "__init__"
 #: The columns :func:`score` adds.
 VERDICT_COLUMN, REASON_COLUMN = "verdict", "reason"
 
+#: The verdict for a row AUGUR wrote from a join (``BELONGS_TO``,
+#: ``DEFINED_IN``). Not a model claim, so not judged, but kept in the table so
+#: every row is accounted for.
+WRITTEN = "written"
+
+#: The side table's columns, keyed on the finalised relationship ``id``.
+TABLE_COLUMNS = ("id", "source", "target", edge_types.TYPE_COLUMN,
+                 edge_types.SUBJECT_COLUMN, VERDICT_COLUMN, REASON_COLUMN)
+
 
 #: Whether importing ``a.b.c`` imports the package ``a`` too, per dialect.
 #: Python executes every ancestor package's ``__init__`` on the way down, so
@@ -203,6 +212,54 @@ def score(ev: EdgeEvidence, relationships: Any) -> Any:
     out[VERDICT_COLUMN] = [v for v, _ in found]
     out[REASON_COLUMN] = [r for _, r in found]
     return out
+
+
+def assess(ev: EdgeEvidence, relationships: Any) -> Any:
+    """:func:`score` over every row, with AUGUR-written rows marked rather than judged.
+
+    Model rows are told apart by type, not by id, because the grounding pass
+    runs before ``finalize_graph`` assigns ids. No model row on the measured
+    corpora names an AUGUR-written type, and a merged row carrying both is
+    typed by the model's claim (:data:`provenance.edge_types.PRECEDENCE`).
+    """
+    out = score(ev, relationships)
+    written = out[edge_types.TYPE_COLUMN].isin(edge_types.AUGUR_WRITTEN)
+    out.loc[written, VERDICT_COLUMN] = WRITTEN
+    out.loc[written, REASON_COLUMN] = ""
+    return out
+
+
+def _evidence(facts: Any) -> EdgeEvidence | None:
+    data = getattr(facts, "edge_evidence", None) if facts is not None else None
+    return EdgeEvidence.from_dict(data) if data else None
+
+
+def record(relationships: Any, facts: Any, report: Any) -> None:
+    """Put the verdict split on a :class:`GroundingReport`, or note why there is none.
+
+    Facts written before the evidence was captured carry none. That is
+    reported as the verdict not having run, never as every edge out of reach,
+    which would read as a measurement.
+    """
+    ev = _evidence(facts)
+    if ev is None or relationships is None or not len(relationships):
+        report.edge_verdicts = {}
+        return
+    scored = assess(ev, relationships)
+    model = scored[scored[VERDICT_COLUMN] != WRITTEN]
+    report.edge_verdicts = split(model)
+    report.edge_contradictions = dict(sorted(Counter(
+        model.loc[model[VERDICT_COLUMN] == CONTRADICTED, REASON_COLUMN]).items()))
+    report.edges_written = len(scored) - len(model)
+
+
+def table(relationships: Any, facts: Any) -> Any:
+    """The per-row side table for ``output/``, or ``None`` without evidence."""
+    ev = _evidence(facts)
+    if ev is None or relationships is None:
+        return None
+    scored = assess(ev, relationships)
+    return scored[[c for c in TABLE_COLUMNS if c in scored.columns]].reset_index(drop=True)
 
 
 def split(scored: Any) -> dict[str, int]:

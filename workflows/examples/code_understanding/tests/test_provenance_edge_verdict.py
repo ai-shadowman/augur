@@ -265,6 +265,29 @@ class TestVerdictByReason(unittest.TestCase):
         merged = EdgeEvidence.merge([part, part, {}])
         self.assertEqual(merged, part)
 
+    def test_report_accounts_for_every_row(self):
+        from types import SimpleNamespace
+
+        from provenance.grounding_report import GroundingReport, render
+
+        rows = [c[:3] for c in CASES] + [("PKG/A.PY", "REPO", "pkg/a.py BELONGS_TO repo")]
+        report = GroundingReport()
+        edge_verdict.record(self._frame(rows), SimpleNamespace(edge_evidence=self.ev.to_dict()), report)
+        self.assertEqual(sum(report.edge_verdicts.values()), len(CASES))
+        self.assertEqual(report.edges_written, 1)
+        self.assertEqual(sum(report.edge_contradictions.values()), report.edge_verdicts["contradicted"])
+        text = render(report)
+        self.assertIn(f"edge verdict:  {len(CASES)} model edge(s)", text)
+        self.assertIn("1 written row(s) not judged", text)
+
+    def test_without_evidence_the_report_says_it_did_not_run(self):
+        from provenance.grounding_report import GroundingReport, render
+
+        report = GroundingReport()
+        edge_verdict.record(self._frame([c[:3] for c in CASES]), None, report)
+        self.assertEqual(report.edge_verdicts, {})
+        self.assertIn("edge verdict:  not run", render(report))
+
     def test_empty_evidence_checks_nothing(self):
         scored = edge_verdict.score(EdgeEvidence.from_dict(None), self._frame([c[:3] for c in CASES]))
         self.assertEqual(edge_verdict.precision(edge_verdict.split(scored)), None)
@@ -299,6 +322,22 @@ class TestCeleryArmsPin(unittest.TestCase):
             counts = edge_verdict.split(edge_verdict.score(ev, rel))
             with self.subTest(run=run):
                 self.assertEqual(tuple(counts[v] for v in edge_verdict.VERDICTS), want, counts)
+
+    def test_the_product_selects_the_same_model_rows_by_type(self):
+        """The harness picks model rows by raw id; the product, before ids exist, by type."""
+        from types import SimpleNamespace
+
+        import pandas as pd
+
+        from provenance.grounding_report import GroundingReport
+
+        facts = SimpleNamespace(edge_evidence=EdgeEvidence.from_checkout(CELERY).to_dict())
+        for run, want in PINNED.items():
+            report = GroundingReport()
+            rel = pd.read_parquet(RUNS / f"{run}-dedup" / "output" / "relationships.parquet")
+            edge_verdict.record(rel, facts, report)
+            with self.subTest(run=run):
+                self.assertEqual(tuple(report.edge_verdicts[v] for v in edge_verdict.VERDICTS), want)
 
 
 if __name__ == "__main__":
