@@ -68,10 +68,14 @@ class EdgeEvidence:
         self.unresolved: collections.Counter = collections.Counter()
         #: Direct internal INHERITS targets of each type key.
         self.parents: dict[str, set[str]] = collections.defaultdict(set)
+        #: Internal targets each file's edges reach, with their kinds.
+        self.targets: dict[str, dict[str, set[str]]] = collections.defaultdict(
+            lambda: collections.defaultdict(set))
         self._supertypes: dict[str, set[str]] = {}
         for kind, source, target, target_class, path in self.edges:
             if target_class == INTERNAL:
                 self.pairs[(source, target)].add(kind)
+                self.targets[path][target].add(kind)
                 if kind == INHERITS:
                     self.parents[source].add(target)
                 for tf in self.file_of.get(target, ()):
@@ -113,6 +117,10 @@ class EdgeEvidence:
             for key, paths in (part or {}).get("node_files", {}).items():
                 files[key].update(paths)
         return cls(edges, files).to_dict()
+
+    def imported_from(self, path: str):
+        """``(target key, kinds)`` for every internal edge ``path`` states."""
+        return self.targets.get(path, {}).items()
 
     def supertypes(self, key: str) -> set[str]:
         """Every internal type ``key`` inherits from, directly or through others."""

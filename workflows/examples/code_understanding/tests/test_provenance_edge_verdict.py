@@ -55,6 +55,19 @@ FILES = {
         class Sub(B):
             pass
     """,
+    "pkg/r.rb": """
+        require_relative "rmod/inner"
+    """,
+    "pkg/rmod.rb": """
+        module Rmod
+        end
+    """,
+    "pkg/rmod/inner.rb": """
+        module Rmod
+          class Inner
+          end
+        end
+    """,
     "pkg/d.py": """
         from ...nowhere import thing
 
@@ -72,6 +85,11 @@ CASES = [
     ("PKG.B.B", "PKG.C.C", "pkg.b.B INHERITS pkg.c.C", "confirmed", "exact"),
     ("PKG.B.B", "PKG.C.C", "related through inheritance INHERITS", "confirmed", "exact, unoriented"),
     ("PKG.E.SUB", "PKG.C.C", "pkg.e.Sub INHERITS pkg.c.C", "confirmed", "transitive"),
+    # Importing pkg.b runs pkg/__init__.py, so the package is imported too.
+    ("PKG/A.PY", "PKG/__INIT__.PY", "pkg/a.py IMPORTS pkg", "confirmed", "ancestor"),
+    ("PKG.E.SUB", "PKG/C.PY", "pkg.e.Sub INHERITS pkg.c", "confirmed", "container"),
+    # Ruby's require loads one file, never the directory's namesake.
+    ("PKG/R.RB", "PKG/RMOD.RB", "pkg/r.rb IMPORTS pkg/rmod.rb", "contradicted", "no-edge"),
     ("PKG/B.PY", "PKG/A.PY", "pkg/b.py IMPORTS pkg.a", "contradicted", "reversed"),
     ("PKG.A.A", "PKG/B.PY", "pkg.a.A INHERITS pkg.b", "contradicted", "wrong-kind"),
     ("PKG.A.A", "PKG.A.HELPER", "pkg.a.A IMPORTS pkg.a.Helper", "contradicted", "same-file"),
@@ -91,6 +109,22 @@ def _checkout(root: Path) -> None:
     for path, body in FILES.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
+
+
+class TestAncestorRule(unittest.TestCase):
+    def test_every_edge_dialect_records_a_rule(self):
+        from provenance.edges import RESOLVERS
+
+        self.assertEqual(set(edge_verdict.ANCESTOR_IMPORTS), set(RESOLVERS))
+
+    def test_an_unrecorded_dialect_raises(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        cobol = SimpleNamespace(name="cobol")
+        with mock.patch.object(edge_verdict, "dialect_for", return_value=cobol), \
+                self.assertRaisesRegex(ValueError, "cobol"):
+            edge_verdict.imports_ancestors("x.cbl")
 
 
 class TestVerdictByReason(unittest.TestCase):
@@ -142,8 +176,8 @@ class TestVerdictByReason(unittest.TestCase):
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {
-    "parser-full-120b": (761, 14, 3171, 2),
-    "parser-full-120b-typed": (769, 15, 2149, 1),
+    "parser-full-120b": (769, 6, 3171, 2),
+    "parser-full-120b-typed": (774, 10, 2149, 1),
 }
 
 
