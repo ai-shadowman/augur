@@ -359,22 +359,61 @@ class TestPipelineIntegrationWithGuideLLM(unittest.TestCase):
 
                 md_section = dur_tracker.format_markdown_section()
                 self.assertIn("GuideLLM Concurrency Benchmark", md_section)
-                self.assertIn("## Pipeline Execution Duration Summary", md_section)
+                self.assertIn("### Pipeline Execution Duration Summary", md_section)
+                self.assertIn("### GuideLLM Concurrency Benchmark Summary", md_section)
+                self.assertIn("GuideLLM Concurrency Benchmark Summary\n======================================================================================", md_section)
+                self.assertIn("Recommended Concurrency : 16", md_section)
+                self.assertIn("SDG_LLM_MAX_CONCURRENCY=16", md_section)
+                self.assertIn("GRAPHRAG_CONCURRENT_REQUESTS=16", md_section)
+                self.assertLess(
+                    md_section.index("### Pipeline Execution Duration Summary"),
+                    md_section.index("### GuideLLM Concurrency Benchmark Summary"),
+                )
 
                 md_table = dur_tracker.format_markdown_table()
                 self.assertIn("GuideLLM Concurrency Benchmark", md_table)
+                self.assertIn("### GuideLLM Concurrency Benchmark Summary", md_table)
+                self.assertIn("Recommended Concurrency : 16", md_table)
 
     def test_duration_tracker_reconstructs_benchmark_step_and_sorts_first_in_report(self):
         from utils.duration_tracker import DurationTracker, extract_benchmark_duration
 
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = {
-                "best_concurrency": 16,
-                "api_base": "https://vllm.example.com/v1",
-                "model": "test-model",
-                "runner": "guidellm_cli",
+                "best_concurrency": 4,
+                "api_base": "https://openrouter.ai/api/v1",
+                "model": "openai/gpt-oss-120b",
+                "runner": "guidellm",
                 "skipped": False,
-                "levels": [],
+                "levels": [
+                    {
+                        "concurrency": 1,
+                        "output_tokens_per_second": 0.0,
+                        "requests_per_second": 0.0,
+                        "latency_mean_s": 0.0,
+                        "successful_requests": 0,
+                        "failed_requests": 2,
+                        "error_rate": 1.0,
+                    },
+                    {
+                        "concurrency": 2,
+                        "output_tokens_per_second": 0.0,
+                        "requests_per_second": 0.29,
+                        "latency_mean_s": 6.422,
+                        "successful_requests": 2,
+                        "failed_requests": 4,
+                        "error_rate": 0.667,
+                    },
+                    {
+                        "concurrency": 4,
+                        "output_tokens_per_second": 0.0,
+                        "requests_per_second": 0.47,
+                        "latency_mean_s": 6.232,
+                        "successful_requests": 5,
+                        "failed_requests": 8,
+                        "error_rate": 0.615,
+                    },
+                ],
                 "duration_seconds": 18.4,
             }
             save_benchmark_result(payload, tmpdir)
@@ -400,9 +439,36 @@ class TestPipelineIntegrationWithGuideLLM(unittest.TestCase):
             prep_idx = md_section.index("Prepare Environment")
             self.assertLess(bench_idx, prep_idx)
 
+            # Verify the full GuideLLM Concurrency Benchmark Summary table is appended after Pipeline Execution Duration Summary
+            dur_header_idx = md_section.index("### Pipeline Execution Duration Summary")
+            bench_header_idx = md_section.index("### GuideLLM Concurrency Benchmark Summary")
+            self.assertLess(dur_header_idx, bench_header_idx)
+            self.assertIn("Target Endpoint : https://openrouter.ai/api/v1", md_section)
+            self.assertIn("Model           : openai/gpt-oss-120b", md_section)
+            self.assertIn("Concurrency |   Out Tok/s |     Req/s | Mean Lat (s) | Success | Errors |  Err %", md_section)
+            self.assertIn(" *         4 |        0.00 |      0.47 |        6.232 |       5 |      8 |  61.5%", md_section)
+            self.assertIn("Recommended Concurrency : 4", md_section)
+            self.assertIn("SDG_LLM_MAX_CONCURRENCY=4", md_section)
+            self.assertIn("GRAPHRAG_CONCURRENT_REQUESTS=4", md_section)
+
+            # Verify benchmark record and summary survive DurationTracker serialization across Data Generation and Analysis stages
+            serialized = tracker.to_dict()
+            dg_stage_tracker = DurationTracker()
+            dg_stage_tracker.load_from_dict(serialized, current_stage="Data Generation")
+            self.assertIsNotNone(dg_stage_tracker.get_benchmark_result())
+            self.assertEqual(dg_stage_tracker.get_benchmark_result()["best_concurrency"], 4)
+
+            analysis_stage_tracker = DurationTracker()
+            analysis_stage_tracker.load_from_dict(serialized, current_stage="Analysis")
+            analysis_md = analysis_stage_tracker.format_markdown_section()
+            self.assertIn("### GuideLLM Concurrency Benchmark Summary", analysis_md)
+            self.assertIn("Recommended Concurrency : 4", analysis_md)
+
             md_table = tracker.format_markdown_table()
             self.assertIn("| **Data Generation** | GuideLLM Concurrency Benchmark | 18.40s |", md_table)
             self.assertLess(md_table.index("GuideLLM Concurrency Benchmark"), md_table.index("Prepare Environment"))
+            self.assertIn("### GuideLLM Concurrency Benchmark Summary", md_table)
+            self.assertIn("Recommended Concurrency : 4", md_table)
 
             ascii_summary = tracker.format_summary()
             self.assertIn("GuideLLM Concurrency Benchmark", ascii_summary)

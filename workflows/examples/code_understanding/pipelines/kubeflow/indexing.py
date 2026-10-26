@@ -52,8 +52,12 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                 try:
                     os.makedirs(save_dir, exist_ok=True)
                     from utils.duration_tracker import DurationTracker
+                    from utils.llm_benchmark import save_benchmark_result
                     dur_tr = DurationTracker.get_instance()
                     dur_tr.save_to_file(os.path.join(save_dir, "durations.json"))
+                    bench_res = dur_tr.get_benchmark_result()
+                    if bench_res:
+                        save_benchmark_result(bench_res, save_dir)
                 except Exception as e:
                     logging.debug(f"Failed to persist durations.json to {save_dir}: {e}")
 

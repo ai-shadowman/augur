@@ -680,20 +680,30 @@ def benchmark_and_configure_concurrency(target_path: str = None, dur_tracker=Non
     """Runs the GuideLLM concurrency benchmark (unless overridden or skipped) and sets concurrency env vars."""
     from utils.llm_benchmark import (
         apply_best_concurrency,
+        extract_benchmark_metadata,
         run_guidellm_benchmark,
         save_benchmark_result,
     )
 
     if override_concurrency and int(override_concurrency) > 0:
         best_c = apply_best_concurrency(int(override_concurrency))
-        bench_result = {
-            "best_concurrency": best_c,
-            "runner": "override",
-            "skipped": True,
-            "reason": "Provided via override_concurrency",
-            "levels": [],
-            "duration_seconds": 0.0,
-        }
+        existing_bench = (
+            dur_tracker.get_benchmark_result()
+            if dur_tracker and hasattr(dur_tracker, "get_benchmark_result")
+            else None
+        )
+        if existing_bench and existing_bench.get("levels"):
+            bench_result = dict(existing_bench)
+            bench_result["best_concurrency"] = best_c
+        else:
+            bench_result = {
+                "best_concurrency": best_c,
+                "runner": "override",
+                "skipped": True,
+                "reason": "Provided via override_concurrency",
+                "levels": [],
+                "duration_seconds": 0.0,
+            }
         if dur_tracker:
             has_bench = any(
                 "guidellm" in str(r.get("step", "")).lower()
@@ -704,9 +714,9 @@ def benchmark_and_configure_concurrency(target_path: str = None, dur_tracker=Non
                 dur_tracker.record_step(
                     stage="Data Generation",
                     step="GuideLLM Concurrency Benchmark",
-                    duration=0.0,
+                    duration=float(bench_result.get("duration_seconds", 0.0) or 0.0),
                     status="success",
-                    metadata={"best_concurrency": best_c, "runner": "override", "skipped": True},
+                    metadata=extract_benchmark_metadata(bench_result),
                 )
     else:
         cm_bench = (
@@ -720,9 +730,7 @@ def benchmark_and_configure_concurrency(target_path: str = None, dur_tracker=Non
             for rec in reversed(dur_tracker.records):
                 if rec.get("step") == "GuideLLM Concurrency Benchmark":
                     meta = rec.setdefault("metadata", {})
-                    meta["best_concurrency"] = bench_result.get("best_concurrency")
-                    meta["runner"] = bench_result.get("runner")
-                    meta["skipped"] = bool(bench_result.get("skipped", False))
+                    meta.update(extract_benchmark_metadata(bench_result))
                     if rec.get("duration", 0.0) <= 0.001 and float(bench_result.get("duration_seconds", 0.0) or 0.0) > 0.0:
                         rec["duration"] = float(bench_result["duration_seconds"])
                     break

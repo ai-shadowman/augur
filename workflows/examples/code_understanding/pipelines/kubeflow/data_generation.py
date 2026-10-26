@@ -30,7 +30,11 @@ def benchmark_llm_op(
     from contextlib import nullcontext
     from pipelines.base.data_generation import generate_git_slug
     from utils.kubeflow_utils import setup_logging
-    from utils.llm_benchmark import apply_best_concurrency, run_guidellm_benchmark
+    from utils.llm_benchmark import (
+        apply_best_concurrency,
+        extract_benchmark_metadata,
+        run_guidellm_benchmark,
+    )
     setup_logging()
     import logging
 
@@ -79,9 +83,7 @@ def benchmark_llm_op(
         for rec in reversed(dur_tracker.records):
             if rec.get("step") == "GuideLLM Concurrency Benchmark":
                 meta = rec.setdefault("metadata", {})
-                meta["best_concurrency"] = best_concurrency
-                meta["runner"] = result.get("runner")
-                meta["skipped"] = bool(result.get("skipped", False))
+                meta.update(extract_benchmark_metadata(result))
                 if rec.get("duration", 0.0) <= 0.001 and float(result.get("duration_seconds", 0.0) or 0.0) > 0.0:
                     rec["duration"] = float(result["duration_seconds"])
                 break
@@ -139,6 +141,10 @@ def prepare_environment_op(git_repo: str,
         if dur_tracker:
             try:
                 dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
+                bench_res = dur_tracker.get_benchmark_result()
+                if bench_res:
+                    from utils.llm_benchmark import save_benchmark_result
+                    save_benchmark_result(bench_res, tmp_source)
             except Exception as e:
                 logging.debug(f"Failed to save durations.json in prepare_environment_op: {e}")
             try:
@@ -196,15 +202,6 @@ def generate_code_and_meta_op(
             logging.debug(f"Failed to apply max_concurrency in generate_code_and_meta_op: {e}")
 
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
-        if max_concurrency and int(max_concurrency) > 0:
-            try:
-                from utils.llm_benchmark import save_benchmark_result
-                save_benchmark_result(
-                    {"best_concurrency": int(max_concurrency), "runner": "kubeflow_benchmark_llm_op"},
-                    tmp_target,
-                )
-            except Exception as e:
-                logging.debug(f"Failed to persist benchmark_results.json in generate_code_and_meta_op: {e}")
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
         ignore_policy = RepositoryIgnorePolicy.from_repository(tmp_source)
 
@@ -234,6 +231,24 @@ def generate_code_and_meta_op(
             extract_benchmark_duration([tmp_source, tmp_target], dur_tracker)
         except Exception as e:
             logging.debug(f"DurationTracker handling in generate_code_and_meta_op: {e}")
+
+        try:
+            from utils.llm_benchmark import load_benchmark_result, save_benchmark_result
+            bench_res = (
+                (dur_tracker.get_benchmark_result() if dur_tracker else None)
+                or load_benchmark_result(tmp_source)
+            )
+            if not bench_res and max_concurrency and int(max_concurrency) > 0:
+                bench_res = {
+                    "best_concurrency": int(max_concurrency),
+                    "runner": "kubeflow_benchmark_llm_op",
+                }
+            if bench_res:
+                save_benchmark_result(bench_res, tmp_target)
+            if dur_tracker:
+                extract_benchmark_duration([tmp_target], dur_tracker)
+        except Exception as e:
+            logging.debug(f"Failed to persist benchmark_results.json in generate_code_and_meta_op: {e}")
 
         token_tracker = None
         try:

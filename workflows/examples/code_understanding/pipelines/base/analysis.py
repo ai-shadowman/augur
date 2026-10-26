@@ -126,6 +126,10 @@ class AnalysisPipeline:
 
         if dur_tracker and "### Pipeline Execution Duration Summary" not in report:
             report = _inject_section(report, dur_tracker.format_markdown_section())
+        elif dur_tracker and "### GuideLLM Concurrency Benchmark Summary" not in report:
+            bench_md = dur_tracker.format_benchmark_markdown_section()
+            if bench_md:
+                report = _inject_section(report, bench_md)
 
         try:
             analyzer.token_tracker.upload_to_mlflow(git_slug=git_slug, stage="Analysis", multi_repo=multi_repo)

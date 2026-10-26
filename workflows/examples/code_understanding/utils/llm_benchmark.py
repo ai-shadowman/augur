@@ -635,6 +635,37 @@ def format_benchmark_summary(result: Dict[str, Any]) -> str:
 format_benchmark_report = format_benchmark_summary
 
 
+def format_benchmark_markdown_section(result: Dict[str, Any]) -> str:
+    """Format a Markdown section containing the GuideLLM Concurrency Benchmark Summary ASCII table."""
+    if not result or not isinstance(result, dict):
+        return ""
+    if result.get("best_concurrency") is None and not result.get("levels"):
+        return ""
+    return f"\n\n### GuideLLM Concurrency Benchmark Summary\n\n```\n{format_benchmark_summary(result)}\n```\n"
+
+
+def extract_benchmark_metadata(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract serializable benchmark result fields for storage in DurationTracker step metadata."""
+    if not isinstance(result, dict):
+        return {}
+    meta: Dict[str, Any] = {
+        "best_concurrency": result.get("best_concurrency"),
+        "runner": result.get("runner"),
+        "skipped": bool(result.get("skipped", False)),
+    }
+    if result.get("api_base"):
+        meta["api_base"] = result.get("api_base")
+    if result.get("model"):
+        meta["model"] = result.get("model")
+    if result.get("reason"):
+        meta["reason"] = result.get("reason")
+    if "levels" in result and isinstance(result.get("levels"), list):
+        meta["levels"] = result.get("levels")
+    if result.get("duration_seconds") is not None:
+        meta["duration_seconds"] = float(result.get("duration_seconds") or 0.0)
+    return meta
+
+
 def apply_best_concurrency(best_concurrency: int) -> int:
     """Apply the benchmarked concurrency to process environment variables for Data Generation & Indexing."""
     concurrency_val = max(1, int(best_concurrency))
