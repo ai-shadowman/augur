@@ -24,7 +24,24 @@ RUNS, CELERY = SANDBOX / "runs", SANDBOX / "candidates" / "celery"
 #: ``pkg/c.py`` imports nothing internal; ``pkg/d.py`` has an import the
 #: oracle cannot resolve (three dots from a two-deep package).
 FILES = {
-    "pkg/__init__.py": "",
+    "pkg/__init__.py": """
+        from .c import C as Base
+
+        VERSION = "1"
+    """,
+    # Imports the class from where it is declared; the model names the
+    # package's re-export of it.
+    "pkg/g.py": """
+        from pkg.c import C
+        from pkg import VERSION
+    """,
+    "pkg/h.py": """
+        from os.path import join
+
+        def f():
+            from os import sep
+            return sep
+    """,
     "pkg/a.py": """
         import os
         from pkg import b
@@ -86,10 +103,13 @@ CASES = [
     ("PKG.B.B", "PKG.C.C", "related through inheritance INHERITS", "confirmed", "exact, unoriented"),
     ("PKG.E.SUB", "PKG.C.C", "pkg.e.Sub INHERITS pkg.c.C", "confirmed", "transitive"),
     # Importing pkg.b runs pkg/__init__.py, so the package is imported too.
-    ("PKG/A.PY", "PKG/__INIT__.PY", "pkg/a.py IMPORTS pkg", "confirmed", "ancestor"),
+    ("PKG/B.PY", "PKG/__INIT__.PY", "pkg/b.py IMPORTS pkg", "confirmed", "ancestor"),
     ("PKG.E.SUB", "PKG/C.PY", "pkg.e.Sub INHERITS pkg.c", "confirmed", "container"),
     # Ruby's require loads one file, never the directory's namesake.
     ("PKG/R.RB", "PKG/RMOD.RB", "pkg/r.rb IMPORTS pkg/rmod.rb", "contradicted", "no-edge"),
+    # A module-level binding, and a re-export chased to its declaring file.
+    ("PKG/G.PY", "PKG.VERSION", "pkg/g.py IMPORTS pkg.VERSION", "confirmed", "lifted"),
+    ("PKG/G.PY", "PKG.BASE", "pkg/g.py IMPORTS pkg.Base", "confirmed", "lifted"),
     ("PKG/B.PY", "PKG/A.PY", "pkg/b.py IMPORTS pkg.a", "contradicted", "reversed"),
     ("PKG.A.A", "PKG/B.PY", "pkg.a.A INHERITS pkg.b", "contradicted", "wrong-kind"),
     ("PKG.A.A", "PKG.A.HELPER", "pkg.a.A IMPORTS pkg.a.Helper", "contradicted", "same-file"),
@@ -125,6 +145,35 @@ class TestAncestorRule(unittest.TestCase):
         with mock.patch.object(edge_verdict, "dialect_for", return_value=cobol), \
                 self.assertRaisesRegex(ValueError, "cobol"):
             edge_verdict.imports_ancestors("x.cbl")
+
+
+class TestImportBindings(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        _checkout(Path(cls._tmp.name))
+        cls.ev = EdgeEvidence.from_checkout(Path(cls._tmp.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_where_each_bound_name_grounds(self):
+        cases = [
+            ("PKG.H.JOIN", {"pkg/h.py"}),  # bound from outside the checkout
+            ("PKG.VERSION", {"pkg/__init__.py"}),  # a module-level assignment
+            ("PKG.BASE", {"pkg/__init__.py", "pkg/c.py"}),  # binder and declarer
+            ("PKG.H.SEP", set()),  # a function's import binds nothing in the module
+        ]
+        for title, files in cases:
+            with self.subTest(title=title):
+                self.assertEqual(self.ev.files(self.ev.ground(title)), files)
+
+    def test_every_edge_dialect_records_a_rule(self):
+        from provenance.edge_evidence import IMPORT_BINDS
+        from provenance.edges import RESOLVERS
+
+        self.assertEqual(set(IMPORT_BINDS), set(RESOLVERS))
 
 
 class TestVerdictByReason(unittest.TestCase):
@@ -176,8 +225,8 @@ class TestVerdictByReason(unittest.TestCase):
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {
-    "parser-full-120b": (769, 6, 3171, 2),
-    "parser-full-120b-typed": (774, 10, 2149, 1),
+    "parser-full-120b": (799, 6, 3141, 2),
+    "parser-full-120b-typed": (804, 11, 2118, 1),
 }
 
 
