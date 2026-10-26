@@ -29,10 +29,12 @@ import ast
 from dataclasses import dataclass
 
 from . import treesitter
+from .corpus import parse_header
 from .declarations import (
     _assigned_names,
     _nested_bodies,
     module_key,
+    namespace_for,
 )
 from .dialects import PYTHON, Dialect, dialect_for
 from .imports import imports_in
@@ -165,6 +167,26 @@ def symbols_in(source: str, dialect: Dialect) -> Symbols:
         except (SyntaxError, ValueError, RecursionError):
             pass  # Python 2, or nested past the recursion limit.
     return symbols_in_tree(source, dialect)
+
+
+def module_bindings(documents) -> set[str]:
+    """``key.name``, lowercased, for every module-level binding the indexed documents declare.
+
+    Keyed as :func:`declarations.scan_corpus` keys, so an owner it returns
+    composes with a name into a member of this set. A binding is the one kind
+    whose value is something else (``tasks = TaskRegistry()``), which is what
+    the symbol layer needs to know before refiling a method onto one.
+    """
+    found: set[str] = set()
+    for text in documents["text"] if documents is not None and "text" in documents else ():
+        header = parse_header(text)
+        if header is None or (dialect := dialect_for(header.path)) is None:
+            continue
+        key = namespace_for(header.path, str(text), dialect)
+        found.update(
+            f"{key}.{name}".lstrip(".").lower() for name in symbols_in(str(text), dialect).bindings if "." not in name
+        )
+    return found
 
 
 # --------------------------------------------------------------------------

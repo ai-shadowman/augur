@@ -488,8 +488,8 @@ class TestDrop(unittest.TestCase):
 #: model's rows of the grounded arm, as the harness reported them. Grounding
 #: drops the contradictions it can (4 and 10 before the drop), so none is left.
 PINNED = {
-    "parser-full-120b": (849, 0, 3093, 2),
-    "parser-full-120b-typed": (882, 0, 2038, 4),
+    "parser-full-120b": (849, 0, 3094, 2),
+    "parser-full-120b-typed": (882, 0, 2039, 4),
 }
 
 

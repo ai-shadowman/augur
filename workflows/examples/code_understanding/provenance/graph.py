@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import containment, declarations, edge_verdict, evidence, languages, packages
+from . import containment, declarations, edge_verdict, evidence, languages, packages, symbols
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .edge_evidence import EdgeEvidence
 from .grounding_report import GroundingReport
@@ -354,6 +354,7 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
 
 def _corrected_owner(
     key: str, corpus_symbols, corpus_index, checkout, edges=None, relative: bool = False,
+    bindings: frozenset[str] | set[str] = frozenset(),
 ) -> str | None:
     """The one indexed module that declares what ``key`` names, or ``None``.
 
@@ -375,6 +376,10 @@ def _corrected_owner(
       path it spells. ``.BASE.OPTION`` is ``from .base import Option``
       copied out of the source, so wherever the dots lead, the module is a
       ``base``, and ``celery.app.defaults`` is not one;
+    * the landing is a module-level binding in a module that does not end
+      with the path between the stated module and the symbol. That path is
+      a class, and a binding is an alias: ``celery.app.base.Celery.tasks`` is
+      not ``celery.registry.tasks = TaskRegistry()``;
     * more than one indexed module declares the name, so the right answer is
       not determined and the caller records it instead.
 
@@ -401,6 +406,10 @@ def _corrected_owner(
     landing = f"{owner}.{symbol}" if owner else symbol
     spelled = key[: -len(symbol)].strip(". ")
     if relative and spelled and not f".{owner}".endswith(f".{spelled}"):
+        return None
+    stated = next((o for o, _ in reversed(list(declarations._splits(key))) if o in corpus_symbols or o in checkout), "")
+    path = key[len(stated):].strip(".").rpartition(".")[0] if stated else ""
+    if path and landing in bindings and not f".{owner}".endswith(f".{path}"):
         return None
     bound = edges.files(edges.ground(key)) if edges is not None else set()
     # A module's own key is a file, not a name bound by import.
@@ -439,6 +448,7 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
     corpus_index = declarations.owners_of(corpus_symbols)
     checkout = (facts.declared_symbols if facts else None) or {}
     edges = EdgeEvidence.from_dict(facts.edge_evidence if facts else None)
+    bindings = symbols.module_bindings(documents)
 
     frame = entities.reset_index(drop=True)
     types = types_of(frame)
@@ -449,7 +459,7 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
     for i in frame.index[symbol_like]:
         corrected = _corrected_owner(
             dotted_key(titles[i]), corpus_symbols, corpus_index, checkout, edges,
-            relative=titles[i].lstrip().startswith("."),
+            relative=titles[i].lstrip().startswith("."), bindings=bindings,
         )
         if corrected == "":
             report.symbols_ambiguous.append(titles[i])

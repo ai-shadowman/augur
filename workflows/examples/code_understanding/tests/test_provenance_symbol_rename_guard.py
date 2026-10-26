@@ -63,5 +63,42 @@ class TestKnownTitlesStay(unittest.TestCase):
                 self.assertEqual(got, want)
 
 
+
+class TestNoRefileOntoAnAlias(unittest.TestCase):
+    """A class member refiled by its last segment onto another module's binding.
+
+    ``celery.registry.tasks = TaskRegistry()`` is not ``BaseApp.tasks``. The
+    path in the class's place may instead name the landing's module, as in
+    ``celery.beat`` + ``app.app_or_default``, and then the refile stands.
+    """
+
+    CORPUS = {
+        "celery.app.base": ["baseapp", "baseapp.tasks"],
+        "celery.registry": ["taskregistry", "tasks"],
+        "celery.app.task": ["basetask", "extract_exec_options"],
+        "celery.app": ["app_or_default"],
+        "celery.beat": ["scheduler"],
+        "celery.platforms": ["detach", "setuid"],
+    }
+    BINDINGS = {"celery.registry.tasks", "celery.app.task.extract_exec_options", "celery.app.app_or_default"}
+
+    def test_cases(self):
+        index = declarations.owners_of(self.CORPUS)
+        cases = [
+            ("celery.app.base.celery.tasks", self.BINDINGS, None),
+            ("celery.app.base.celery.tasks", set(), "CELERY.REGISTRY.TASKS"),
+            ("celery.app.task.task.extract_exec_options", self.BINDINGS, "CELERY.APP.TASK.EXTRACT_EXEC_OPTIONS"),
+            ("celery.beat.app.app_or_default", self.BINDINGS, "CELERY.APP.APP_OR_DEFAULT"),
+            # A function is not an alias; nesting it under a sibling is undone.
+            ("celery.platforms.detach.setuid", self.BINDINGS, "CELERY.PLATFORMS.SETUID"),
+            # No path between module and symbol: an ordinary misattribution.
+            ("celery.beat.tasks", self.BINDINGS, "CELERY.REGISTRY.TASKS"),
+        ]
+        for key, bindings, want in cases:
+            with self.subTest(key=key, bindings=bool(bindings)):
+                got = _corrected_owner(key, self.CORPUS, index, self.CORPUS, bindings=bindings)
+                self.assertEqual(got, want)
+
+
 if __name__ == "__main__":
     unittest.main()
