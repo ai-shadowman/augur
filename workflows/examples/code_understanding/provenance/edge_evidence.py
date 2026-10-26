@@ -28,7 +28,7 @@ from . import symbols
 from .corpus import canonical_key, dotted_key
 from .declarations import namespace_for
 from .dialects import dialect_for
-from .edges import EXTERNAL, INTERNAL, UNRESOLVED, scan_checkout
+from .edges import EXTERNAL, INHERITS, INTERNAL, UNRESOLVED, scan_checkout
 from .edges.model import Edge, Inventory, checkout_files
 
 #: One serialised edge: ``(kind, source, target, target class, path)``.
@@ -66,9 +66,14 @@ class EdgeEvidence:
         self.pairs: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
         self.external: dict[str, set[tuple[str, str]]] = collections.defaultdict(set)
         self.unresolved: collections.Counter = collections.Counter()
+        #: Direct internal INHERITS targets of each type key.
+        self.parents: dict[str, set[str]] = collections.defaultdict(set)
+        self._supertypes: dict[str, set[str]] = {}
         for kind, source, target, target_class, path in self.edges:
             if target_class == INTERNAL:
                 self.pairs[(source, target)].add(kind)
+                if kind == INHERITS:
+                    self.parents[source].add(target)
                 for tf in self.file_of.get(target, ()):
                     self.internal[(path, tf)].add(kind)
             elif target_class == EXTERNAL:
@@ -108,6 +113,19 @@ class EdgeEvidence:
             for key, paths in (part or {}).get("node_files", {}).items():
                 files[key].update(paths)
         return cls(edges, files).to_dict()
+
+    def supertypes(self, key: str) -> set[str]:
+        """Every internal type ``key`` inherits from, directly or through others."""
+        if key not in self._supertypes:
+            seen: set[str] = set()
+            todo = [key]
+            while todo:
+                for parent in self.parents.get(todo.pop(), ()):
+                    if parent not in seen:
+                        seen.add(parent)
+                        todo.append(parent)
+            self._supertypes[key] = seen
+        return self._supertypes[key]
 
     def ground(self, title: str) -> str | None:
         """The node key a title names in the checkout, or ``None``."""

@@ -19,7 +19,8 @@ from provenance.edge_evidence import EdgeEvidence
 SANDBOX = Path(os.environ.get("AUGUR_SANDBOX", Path.home() / "Developer" / "augur-test"))
 RUNS, CELERY = SANDBOX / "runs", SANDBOX / "candidates" / "celery"
 
-#: ``pkg/a.py`` imports ``pkg.b`` and ``os``; ``pkg.b.B`` inherits ``pkg.c.C``;
+#: ``pkg/a.py`` imports ``pkg.b`` and ``os``; ``pkg.e.Sub`` inherits
+#: ``pkg.b.B``, which inherits ``pkg.c.C``;
 #: ``pkg/c.py`` imports nothing internal; ``pkg/d.py`` has an import the
 #: oracle cannot resolve (three dots from a two-deep package).
 FILES = {
@@ -44,6 +45,15 @@ FILES = {
     "pkg/c.py": """
         class C:
             pass
+
+        class E(C):
+            pass
+    """,
+    "pkg/e.py": """
+        from pkg.b import B
+
+        class Sub(B):
+            pass
     """,
     "pkg/d.py": """
         from ...nowhere import thing
@@ -61,6 +71,7 @@ CASES = [
     ("PKG/A.PY", "OS", "pkg/a.py IMPORTS os", "confirmed", "external"),
     ("PKG.B.B", "PKG.C.C", "pkg.b.B INHERITS pkg.c.C", "confirmed", "exact"),
     ("PKG.B.B", "PKG.C.C", "related through inheritance INHERITS", "confirmed", "exact, unoriented"),
+    ("PKG.E.SUB", "PKG.C.C", "pkg.e.Sub INHERITS pkg.c.C", "confirmed", "transitive"),
     ("PKG/B.PY", "PKG/A.PY", "pkg/b.py IMPORTS pkg.a", "contradicted", "reversed"),
     ("PKG.A.A", "PKG/B.PY", "pkg.a.A INHERITS pkg.b", "contradicted", "wrong-kind"),
     ("PKG.A.A", "PKG.A.HELPER", "pkg.a.A IMPORTS pkg.a.Helper", "contradicted", "same-file"),

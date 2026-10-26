@@ -4,8 +4,9 @@ The relationship layer's counterpart of the symbol split. Each edge the model
 wrote lands in exactly one bucket:
 
 ``confirmed``    the oracle states the claimed kind, claimant to object, at
-                 the keys (``exact``), between their files (``lifted``), or
-                 to an external target the claimant's file imports
+                 the keys (``exact``), between their files (``lifted``),
+                 through the oracle's own INHERITS chain (``transitive``),
+                 or to an external target the claimant's file imports
                  (``external``).
 ``contradicted`` both endpoints ground and the oracle does not state it:
                  ``reversed``, ``wrong-kind``, ``same-file`` or ``no-edge``.
@@ -33,8 +34,9 @@ from typing import Any
 from . import edge_types
 from .corpus import dotted_key
 from .edge_evidence import EdgeEvidence
+from .edges import IMPORTS, INHERITS
 
-CHECKABLE = ("IMPORTS", "INHERITS")
+CHECKABLE = (IMPORTS, INHERITS)
 CONFIRMED, CONTRADICTED, OUT_OF_REACH, UNCHECKED = (
     "confirmed", "contradicted", "out-of-reach", "unchecked",
 )
@@ -50,6 +52,10 @@ def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set) -> st
         return "exact"
     if kind in {k for x in fa for y in fb for k in ev.internal.get((x, y), ())}:
         return "lifted"
+    # Kept apart from ``exact``: a reader who wants direct supertypes only
+    # can drop these, and one who wants the type hierarchy keeps them.
+    if kind == INHERITS and b in ev.supertypes(a):
+        return "transitive"
     return None
 
 
