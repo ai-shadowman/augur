@@ -146,6 +146,29 @@ class TestRubySuperclasses(unittest.TestCase):
         ("include is not inheritance", "class C\n  include Comparable\nend", set()),
     ]
 
+    #: ``Errors`` is declared at the top level and as ``Gem2::Errors``.
+    ANCESTRY = [
+        ("a superclass's namespaces come before the top level",
+         "class C < Gem2::Site\n  class E < Errors::Top; end\nend", None, UNRESOLVED),
+        ("so do an included module's",
+         "class C\n  include Gem2\n  class E < Errors::Top; end\nend", None, UNRESOLVED),
+        ("extend changes the singleton class, which lookup does not consult",
+         "class C\n  extend Gem2\n  class E < Errors::Top; end\nend", "errors.top", INTERNAL),
+        ("a core superclass adds nothing the checkout declares",
+         "class C < StandardError\n  class E < Errors::Top; end\nend", "errors.top", INTERNAL),
+        ("only the innermost scope's ancestors are searched",
+         "class C < Gem2::Site\n  module M\n    class E < Errors::Top; end\n  end\nend", "errors.top", INTERNAL),
+        ("a head nothing else declares still names the top level",
+         "class C < Gem2::Site\n  class E < Liquid::Tag; end\nend", "liquid.tag", EXTERNAL),
+    ]
+
+    def test_ancestry(self):
+        for name, source, target, target_class in self.ANCESTRY:
+            with self.subTest(name):
+                written = source.rpartition("< ")[2].partition(";")[0]
+                inner = {e for e in edges_of(source, INHERITS) if e[1] == written}
+                self.assertEqual(inner, {(INHERITS, written, target, target_class)})
+
     def test_cases(self):
         for name, source, expected in self.CASES:
             with self.subTest(name):

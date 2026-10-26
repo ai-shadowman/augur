@@ -27,9 +27,13 @@ name looked up from a nested scope that falls through to the top level is
 unresolved unless it is core, and so is a top-level one wherever the checkout
 ``include``s a module at the top level, which puts that module's constants
 there too. A namespace-qualified head (``Liquid::Tag`` inside ``module
-Jekyll``) is still taken to name the top-level namespace; a plugin defining
-``Jekyll::Liquid`` would make that wrong, and the code does not try to rule
-it out. A class declared only outside every load-path ``lib/`` does not
+Jekyll``) is still taken to name the top-level namespace, except where the
+innermost scope has ancestors of its own (a superclass that is not core, or an
+``include``/``prepend``) and the checkout declares some other ``X::Liquid``
+those ancestors may hold: ``class Child < Parent; class Inner < Base::Thing``
+finds ``Parent::Base``. That case is unresolved, not walked. A plugin defining
+``Jekyll::Liquid`` from outside the checkout would still make the top-level
+reading wrong, and the code does not try to rule it out. A class declared only outside every load-path ``lib/`` does not
 count for code inside one, since lib code does not load benchmarks or
 fixtures. A name found as a constant assignment (``Error = Class.new``) is
 unresolved, because its value is not syntax. A name the checkout never
@@ -59,6 +63,7 @@ from ..facts import SKIP_DIRS
 from ..treesitter import (
     CLASS,
     base_captures_in_tree,
+    class_nodes_in_tree,
     import_captures_in_tree,
     node_text,
     parse,
@@ -99,6 +104,10 @@ _CONSTANT_PATH = re.compile(r"(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*")
 #: module docstring names under *Not resolved*.
 MIXIN_CALLS = ("include", "extend", "prepend")
 
+#: Nodes whose body is another scope, so a call inside one is not the
+#: enclosing class's.
+_SCOPES = ("class", "module", "method", "singleton_method", "singleton_class")
+
 
 def mixin_names(source: str) -> set[str]:
     """The last segment of each constant an ``include``, ``extend`` or ``prepend`` names.
@@ -118,6 +127,27 @@ def mixin_names(source: str) -> set[str]:
                              if _CONSTANT_PATH.fullmatch(node_text(a)))
         stack.extend(node.named_children)
     return names
+
+
+def _has_ancestors(node) -> bool:
+    """Whether constant lookup inside this class/module reaches anything before ``Object``.
+
+    A superclass that is not core, or an ``include``/``prepend`` in the body
+    (``extend`` changes the singleton class, which lookup does not consult).
+    """
+    if any(written.removeprefix("::") not in RUBY_CORE for written, _ in RUBY.base_names(node)):
+        return True
+    body = node.child_by_field_name("body")
+    stack = list(body.named_children) if body is not None else []
+    while stack:
+        child = stack.pop()
+        if child.type == "call" and child.child_by_field_name("receiver") is None:
+            method = child.child_by_field_name("method")
+            if method is not None and node_text(method) in ("include", "prepend"):
+                return True
+        if child.type not in _SCOPES:
+            stack.extend(child.named_children)
+    return False
 
 
 def _norm(path: str) -> str | None:
@@ -158,6 +188,8 @@ class RubyResolver:
         #: the ones that plausibly load it. ``test/helper.rb``'s ``include
         #: Jekyll`` reaches the tests and not ``benchmark/``.
         self.top_level_include: set[str] = set()
+        #: Classes and modules some declaration gives ancestors beyond ``Object``.
+        self.ancestry: set[str] = set()
         self.redefines_loader: set[str] = set()
         for path in sorted(self.paths):
             if not path.lower().endswith(RUBY.suffixes):
@@ -176,6 +208,14 @@ class RubyResolver:
                 elif name.rpartition(".")[2] in ("load", "require"):
                     self.redefines_loader.add(path)
             self._scan_dynamic(parse(source, RUBY).root_node, self._include_scope(path))
+            self.ancestry.update(
+                name.replace(".", "::") for name, node in class_nodes_in_tree(source, RUBY) if _has_ancestors(node)
+            )
+        #: Last segment to every nested constant ending in it.
+        self.nested: dict[str, set[str]] = {}
+        for constant in (*self.classes, *self.assigned, *self.namespaces):
+            if "::" in constant:
+                self.nested.setdefault(constant.rpartition("::")[2], set()).add(constant)
 
     def _in_lib(self, path: str) -> bool:
         return any(path.startswith(f"{lib}/") for lib in self.libs)
@@ -256,6 +296,12 @@ class RubyResolver:
             base = f"{cref}::{head}"
             if base in self.classes or base in self.assigned or base in self.namespaces:
                 return self._member(base, rest, importer)
+        # The innermost scope's ancestors come before the top level.
+        if rest and crefs and crefs[0] in self.ancestry and (namesakes := self.nested.get(head)):
+            return unresolved(
+                f"{crefs[0]} has ancestors searched before the top level, and the checkout declares "
+                f"{', '.join(sorted(namesakes)[:3])}"
+            )
         # The top level. Core first: a reopened core class is still core.
         if head in RUBY_CORE and not rest:
             return Resolution(EXTERNAL, dotted_key(head))

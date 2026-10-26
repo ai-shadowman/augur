@@ -236,6 +236,14 @@ REVIEW_FILES = {
     "lib/d.rb": "class D\nend\n",
     "lib/mixin.rb": "module Mixin\nend\n",
     "lib/foo.rb": "class Foo\n  include Mixin\nend\n",
+    # Ruby: a qualified head searches the innermost scope's ancestors before
+    # the top level, so ``Part::Thing`` inside ``Junior < Elder`` is
+    # ``Elder::Part::Thing``, which the oracle does not walk.
+    # Three files, so no file-level lift settles either claim.
+    "lib/elder.rb": "class Elder\nend\n",
+    "lib/elder/part.rb": "module Elder::Part\n  class Thing\n  end\nend\n",
+    "lib/part.rb": "module Part\n  class Thing\n  end\nend\n",
+    "lib/junior.rb": "class Junior < Elder\n  class Inner < Part::Thing\n  end\nend\n",
 }
 
 REVIEW_CASES = [
@@ -265,6 +273,8 @@ REVIEW_CASES = [
     ("COM.Z.HOLDER.INNER", "BASE", "com.z.Holder.Inner INHERITS Base", "confirmed", "exact"),
     ("A::B::C", "D", "A::B::C INHERITS D", "confirmed", "exact"),
     ("FOO", "MIXIN", "Foo INHERITS Mixin", "unchecked", "no-edge"),
+    ("JUNIOR::INNER", "ELDER::PART::THING", "Junior::Inner INHERITS Elder::Part::Thing", "unchecked", "no-edge"),
+    ("JUNIOR::INNER", "PART::THING", "Junior::Inner INHERITS Part::Thing", "unchecked", "no-edge"),
 ]
 
 
