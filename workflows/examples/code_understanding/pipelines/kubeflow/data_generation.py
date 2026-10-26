@@ -208,6 +208,18 @@ def generate_code_and_meta_op(
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
         ignore_policy = RepositoryIgnorePolicy.from_repository(tmp_source)
 
+        try:
+            import shutil
+            from provenance.pipeline import SIDE_CAR as PROVENANCE_SIDECAR, capture as capture_provenance
+            prov_src = os.path.join(tmp_source, PROVENANCE_SIDECAR)
+            prov_dst = os.path.join(tmp_target, PROVENANCE_SIDECAR)
+            if os.path.exists(prov_src):
+                shutil.copy2(prov_src, prov_dst)
+            else:
+                capture_provenance(tmp_source, tmp_target, run_syft=False)
+        except Exception as e:
+            logging.debug(f"Provenance sidecar propagation in generate_code_and_meta_op: {e}")
+
         dur_tracker = None
         try:
             from utils.duration_tracker import DurationTracker, extract_benchmark_duration

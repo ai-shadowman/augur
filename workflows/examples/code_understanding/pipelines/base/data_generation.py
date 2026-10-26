@@ -89,8 +89,11 @@ def prepare_environment(source_path: str,
         # consumes declared constraints, which come from the manifests.
         cm_facts = dur_tracker.measure(stage="Data Generation", step="Extract Provenance Facts") if dur_tracker else nullcontext()
         with cm_facts:
+            import shutil
             from provenance.pipeline import capture as capture_provenance
-            capture_provenance(source_path, target_path, run_syft=False)
+            facts_path = capture_provenance(source_path, target_path, run_syft=False)
+            if os.path.abspath(source_path) != os.path.abspath(target_path) and os.path.exists(str(facts_path)):
+                shutil.copy2(str(facts_path), os.path.join(source_path, os.path.basename(str(facts_path))))
 
     except Exception as e:
 
@@ -140,6 +143,7 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
                     "tokens.json",
                     "project_metrics.json",
                     "benchmark_results.json",
+                    "provenance.json",
                 }:
                     continue
                 if os.path.splitext(filename)[1] not in include_extensions:

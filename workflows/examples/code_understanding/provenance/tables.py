@@ -54,7 +54,8 @@ def _union_ids(values) -> list:
         except TypeError:
             items = [value]
         for item in items:
-            seen.setdefault(item, None)
+            if not _missing(item):
+                seen.setdefault(item, None)
     return list(seen)
 
 
@@ -165,3 +166,26 @@ def text_unit_documents(text_units) -> dict[str, str]:
         if len(ids) == 1:
             mapping[unit_id] = str(ids[0])
     return mapping
+
+
+def document_text_units(text_units) -> dict[str, list[str]]:
+    """Map each document id to the text unit ids that belong to it."""
+    if text_units is None or not len(text_units):
+        return {}
+    if "id" not in text_units or "document_ids" not in text_units:
+        return {}
+    mapping: dict[str, list[str]] = {}
+    for unit_id, document_ids in zip(
+        text_units["id"].astype(str), text_units["document_ids"], strict=False
+    ):
+        if _missing(document_ids):
+            continue
+        try:
+            ids = list(document_ids)
+        except TypeError:
+            ids = [document_ids]
+        for doc_id in ids:
+            if not _missing(doc_id):
+                mapping.setdefault(str(doc_id), []).append(unit_id)
+    return mapping
+

@@ -620,6 +620,26 @@ class TestGround(unittest.TestCase):
         self.assertIn("BELONGS_TO added:", rendered)
         self.assertIn("merged:", rendered)
 
+    def test_synthesized_rows_carry_non_empty_text_unit_ids_when_units_exist(self):
+        entities_in = entity_frame(self.ROWS)
+        entities_in["text_unit_ids"] = [["tu-1"], ["tu-2"], ["tu-1"], ["tu-3"]]
+        edges_in = edge_frame([("CELERY/WORKER/STATE.PY", "KOMBU", "imports", 1.0)])
+        edges_in["text_unit_ids"] = [["tu-2"]]
+
+        entities, relationships, _ = graph.ground(
+            corpus(["celery/worker/state.py", "celery/app/base.py"]),
+            entities_in,
+            edges_in,
+        )
+        for ids in entities["text_unit_ids"]:
+            self.assertIsInstance(ids, list)
+            self.assertGreater(len(ids), 0)
+            self.assertTrue(all(isinstance(u, str) for u in ids))
+        for ids in relationships["text_unit_ids"]:
+            self.assertIsInstance(ids, list)
+            self.assertGreater(len(ids), 0)
+            self.assertTrue(all(isinstance(u, str) for u in ids))
+
 
 if __name__ == "__main__":
     unittest.main()
