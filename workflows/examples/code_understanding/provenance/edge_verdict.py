@@ -134,7 +134,8 @@ def _bare(title: str) -> bool:
     return "." not in dotted_key(title)
 
 
-def _ground(ev: EdgeEvidence, source: str, target: str, subject: str) -> tuple[str | None, str | None]:
+def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
+            subject: str) -> tuple[str | None, str | None]:
     """Both endpoints' node keys, a bare one looked up where the other uses it.
 
     Not where the bare one is the claim's subject: the subject's name is its
@@ -142,6 +143,10 @@ def _ground(ev: EdgeEvidence, source: str, target: str, subject: str) -> tuple[s
     other's file imports the name from outside the checkout: ``try: import
     pwd`` / ``except ImportError: pwd = None`` declares a local ``pwd``, and
     "platforms IMPORTS pwd" still means the library.
+
+    Failing scope, a bare name falls back to an exact top-level key only where
+    the dialect has such a scope, and for INHERITS never onto a module, since
+    a base is a type: ``Config`` is not the root ``config.py``.
     """
     ks, kt = ev.ground(source), ev.ground(target)
 
@@ -149,7 +154,13 @@ def _ground(ev: EdgeEvidence, source: str, target: str, subject: str) -> tuple[s
         files = ev.files(key)
         if ev.external_kinds(files, dotted_key(bare)):
             return fallback
-        return ev.in_scope(dotted_key(bare), key, files) or fallback
+        if found := ev.in_scope(dotted_key(bare), key, files, imported=kind == IMPORTS):
+            return found
+        if fallback is None or not ev.global_bare(files):
+            return None
+        if kind == INHERITS and _module(ev, fallback) is not None:
+            return None
+        return fallback
 
     if _bare(source) and kt and subject != edge_types.SOURCE:
         ks = scoped(source, kt, ks)
@@ -162,7 +173,7 @@ def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str)
     """``(verdict, reason)`` for one edge of type ``kind``."""
     if kind not in CHECKABLE:
         return OUT_OF_REACH, "type"
-    ks, kt = _ground(ev, source, target, subject)
+    ks, kt = _ground(ev, kind, source, target, subject)
     fs, ft = ev.files(ks), ev.files(kt)
     if subject == edge_types.TARGET:
         orders = [(kt, ks, ft, fs, source)]

@@ -160,6 +160,55 @@ def _checkout(root: Path) -> None:
         (root / path).write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
 
 
+#: Shapes an adversarial review constructed, each once confidently wrong.
+REVIEW_FILES = {
+    # Java: an on-demand import, and a single-type import shadowing a
+    # same-package type of the same name (JLS 6.4.1).
+    "src/com/x/util/Foo.java": "package com.x.util;\npublic class Foo {}\n",
+    "src/com/x/Util.java": "package com.x;\npublic class Util {}\n",
+    "src/com/y/B.java": "package com.y;\nimport com.x.util.*;\npublic class B { Foo f; }\n",
+    "src/com/x/Base.java": "package com.x;\npublic class Base {}\n",
+    "src/com/y/Base.java": "package com.y;\npublic class Base {}\n",
+    "src/com/x/A.java": "package com.x;\nimport com.y.Base;\npublic class A extends Base {}\n",
+    # TypeScript: a bare imported name, and a root file it folds onto.
+    "web/lib/index.ts": "export class Widget {}\n",
+    "web/a.ts": "import { Widget } from './lib';\nexport class A extends Widget {}\n",
+    "widget.ts": "export const z = 1;\n",
+    # Python: ``from . import sub`` makes the oracle state pkg -> pkg; and a
+    # module importing ``beat`` while declaring ``class Beat``.
+    "pkg/__init__.py": "from . import sub\n\nclass X:\n    pass\n\nclass Y:\n    pass\n",
+    "pkg/sub.py": "",
+    "pkg/beat.py": "class Service:\n    pass\n",
+    "pkg/worker.py": "class Beat:\n    def start(self):\n        from pkg.beat import Service\n",
+}
+
+REVIEW_CASES = [
+    ("COM.Y.B", "COM.X.UTIL.FOO", "com.y.B IMPORTS com.x.util.Foo", "confirmed", "lifted"),
+    ("COM.Y.B", "COM.X.UTIL", "com.y.B IMPORTS com.x.Util", "contradicted", "no-edge"),
+    ("COM.X.A", "BASE", "com.x.A INHERITS Base", "confirmed", "exact"),
+    ("WEB.A.A", "WIDGET", "web.a.A INHERITS Widget", "confirmed", "exact"),
+    ("WEB/A.TS", "WIDGET", "web/a.ts IMPORTS Widget", "confirmed", "lifted"),
+    ("PKG.X", "PKG.Y", "pkg.X IMPORTS pkg.Y", "contradicted", "same-file"),
+    ("PKG/WORKER.PY", "BEAT", "pkg/worker.py IMPORTS beat", "confirmed", "exact"),
+]
+
+
+class TestReviewCases(unittest.TestCase):
+    def test_each(self):
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for path, body in REVIEW_FILES.items():
+                (Path(tmp) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(tmp) / path).write_text(body, encoding="utf-8")
+            ev = EdgeEvidence.from_checkout(Path(tmp))
+        frame = pd.DataFrame([c[:3] for c in REVIEW_CASES], columns=["source", "target", "description"])
+        scored = edge_verdict.score(ev, frame)
+        for case, got, why in zip(REVIEW_CASES, scored["verdict"], scored["reason"], strict=True):
+            with self.subTest(description=case[2]):
+                self.assertEqual((got, why), case[3:])
+
+
 class TestAncestorRule(unittest.TestCase):
     def test_every_edge_dialect_records_a_rule(self):
         from provenance.edges import RESOLVERS
@@ -296,8 +345,8 @@ class TestVerdictByReason(unittest.TestCase):
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {
-    "parser-full-120b": (839, 3, 3104, 2),
-    "parser-full-120b-typed": (866, 10, 2057, 1),
+    "parser-full-120b": (849, 4, 3093, 2),
+    "parser-full-120b-typed": (882, 10, 2038, 4),
 }
 
 

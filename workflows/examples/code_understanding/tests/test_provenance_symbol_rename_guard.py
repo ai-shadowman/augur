@@ -19,6 +19,7 @@ CORPUS = {
     "celery.app.defaults": ["option"],
     "celery.bin.base": ["command"],
     "celery.utils.timeutils": ["timedelta_seconds"],
+    "pkg.helpers": ["utils"],
 }
 CHECKOUT = CORPUS
 
@@ -29,6 +30,8 @@ EDGES = EdgeEvidence([], {
     "celery.bin.base.option": ["celery/bin/base.py"],
     "celery.utils.timeutils.timedelta_seconds": ["celery/utils/timeutils.py"],
     "celery.schedules.timedelta_seconds": ["celery/schedules.py", "celery/utils/timeutils.py"],
+    "pkg.utils": ["pkg/utils.py"],
+    "pkg.helpers.utils": ["pkg/helpers.py"],
 })
 
 
@@ -46,6 +49,8 @@ class TestKnownTitlesStay(unittest.TestCase):
             ("defaults.option", "relative", "CELERY.APP.DEFAULTS.OPTION"),
             # The model's ". _WIN.KILL_PROCESSTREE" folds with its stray space.
             (" timeutils.timedelta_seconds", "relative", "CELERY.UTILS.TIMEUTILS.TIMEDELTA_SECONDS"),
+            # A module's own key is a file, not a bound name; the guard stands aside.
+            ("pkg.utils", EDGES, "PKG.HELPERS.UTILS"),
             # A re-export collapses onto its declaring module: one object.
             ("celery.schedules.timedelta_seconds", EDGES,
              "CELERY.UTILS.TIMEUTILS.TIMEDELTA_SECONDS"),

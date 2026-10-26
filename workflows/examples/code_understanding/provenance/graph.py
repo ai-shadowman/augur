@@ -403,6 +403,9 @@ def _corrected_owner(
     if relative and spelled and not f".{owner}".endswith(f".{spelled}"):
         return None
     bound = edges.files(edges.ground(key)) if edges is not None else set()
+    # A module's own key is a file, not a name bound by import.
+    if any(canonical_key(f) in (key, f"{key}.__init__") for f in bound):
+        bound = set()
     if bound and not bound & edges.files(edges.ground(landing)):
         return None
     # An owner of ``""`` is Ruby, where ``declarations.namespace_for`` prepends

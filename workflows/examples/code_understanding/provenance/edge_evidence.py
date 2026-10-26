@@ -57,6 +57,10 @@ IMPORT_BINDS = {"python": True, "java": False, "typescript": False, "ruby": Fals
 #: An unrecorded dialect raises.
 SCOPES = {"python": "module", "typescript": "module", "java": "package", "ruby": "lexical"}
 
+#: Whether a bare name may fall back to an exact top-level key; see
+#: :meth:`EdgeEvidence.global_bare`.
+GLOBAL_BARE = {"python": True, "typescript": False, "java": True, "ruby": True}
+
 
 def _rule(table: dict, dialect, what: str):
     if dialect.name not in table:
@@ -190,12 +194,31 @@ class EdgeEvidence:
                 self.targets[path][target].add(kind)
                 if kind == INHERITS:
                     self.parents[source].add(target)
-                for tf in self.file_of.get(target, ()):
-                    self.internal[(path, tf)].add(kind)
+                for tf in self._target_files(target):
+                    # A file's edge to itself (``from . import sub`` in an
+                    # ``__init__`` reads as pkg -> pkg) would otherwise lift
+                    # every claim between two of its own names.
+                    if tf != path:
+                        self.internal[(path, tf)].add(kind)
             elif target_class == EXTERNAL:
                 self.external[path].add((target, kind))
             elif target_class == UNRESOLVED:
                 self.unresolved[path] += 1
+
+    def _target_files(self, target: str) -> set[str]:
+        """The files an internal target names, a Java on-demand import included.
+
+        ``import com.x.util.*`` is recorded as ``com.x.util.*``, which no file
+        declares: it names every type in the package, or for ``Outer.*`` the
+        members of ``Outer``.
+        """
+        if target in self.file_of or not target.endswith(".*"):
+            return self.file_of.get(target, set())
+        # The package first: folding makes ``com.x.util`` the class
+        # ``com.x.Util`` too, and a package is what the import usually names.
+        base = target[:-2]
+        return {f for f, ns in self.namespaces.items() if ns == base} or set(
+            self.file_of.get(base, ()))
 
     @classmethod
     def from_checkout(cls, root: str | Path) -> EdgeEvidence:
@@ -261,7 +284,8 @@ class EdgeEvidence:
                 return key
         return None
 
-    def in_scope(self, name: str, claimant: str, files: Iterable[str]) -> str | None:
+    def in_scope(self, name: str, claimant: str, files: Iterable[str],
+                 imported: bool = False) -> str | None:
         """The node key a bare ``name`` means where ``claimant`` uses it, or ``None``.
 
         Tried innermost first per :data:`SCOPES`. ``None`` leaves the caller to
@@ -272,7 +296,19 @@ class EdgeEvidence:
         top-level ``Drop`` a benchmark script declares. Nor an opaque name: a
         bare ``PWD`` where ``pwd = try_import("pwd")`` ran means the library,
         and the oracle cannot see that.
+
+        ``imported`` is set for an IMPORTS claim, whose object cannot be
+        something the claimant's own file declares: celery's
+        ``worker/__init__.py`` declares ``class Beat`` and imports the module
+        ``beat``, and folding makes the two one key.
         """
+        files = set(files)
+
+        def usable(key: str) -> bool:
+            if key not in self.file_of or key in self.opaque:
+                return False
+            return not (imported and self.file_of[key] <= files)
+
         for path in sorted(files):
             dialect = dialect_for(path)
             if dialect is None:
@@ -286,20 +322,48 @@ class EdgeEvidence:
                 # Only a symbol has enclosing types; a file's key is a path.
                 if claimant != canonical_key(path) and (
                         not namespace or claimant.startswith(namespace + ".")):
+                    # Java's walk stops above the package, which comes after
+                    # the imports; Ruby's runs to the outermost module.
                     parts = claimant.split(".")
-                    floor = len(namespace.split(".")) if namespace else 1
-                    candidates += [".".join([*parts[:i], name]) for i in range(len(parts), floor - 1, -1)]
+                    stop = len(namespace.split(".")) if namespace and rule == "package" else 0
+                    candidates += [".".join([*parts[:i], name]) for i in range(len(parts), stop, -1)]
                 if rule == "package":
-                    if namespace:
-                        candidates.append(f"{namespace}.{name}")
+                    # A single-type import shadows a same-package type (JLS
+                    # 6.4.1); an on-demand import ends ``.*`` and matches neither.
                     candidates += sorted(
                         t for k, _, t, _, p in self.edges
                         if p == path and k == IMPORTS and t and t.endswith("." + name)
                     )
+                    if namespace:
+                        candidates.append(f"{namespace}.{name}")
             for key in candidates:
-                if key in self.file_of and key not in self.opaque:
+                if usable(key):
                     return key
+            own = f"{namespace}.{name}" if namespace else name
+            if own in self.opaque:
+                return None  # the name holds a value nothing here can see
+            # Last, what the oracle itself resolved the name to in this file:
+            # ``class A(app.models.Config)`` or a TypeScript import, which no
+            # scope rule above can follow. Only if it names one target.
+            resolved = {
+                t for _, _, t, c, p in self.edges
+                if p == path and c == INTERNAL and t and t.endswith("." + name)
+            }
+            resolved = {t for t in resolved if usable(t)}
+            if len(resolved) == 1:
+                return next(iter(resolved))
         return None
+
+    def global_bare(self, files: Iterable[str]) -> bool:
+        """Whether a bare name used in ``files`` may mean a top-level key.
+
+        Python's top-level module, Ruby's top-level constant and Java's default
+        package are each language's outermost scope. TypeScript has none: a
+        bare name never means a file at the root, so ``Base`` must not fold
+        onto ``base.ts``.
+        """
+        dialects = {d for f in files if (d := dialect_for(f)) is not None}
+        return all(_rule(GLOBAL_BARE, d, "global-scope") for d in dialects)
 
     def files(self, key: str | None) -> set[str]:
         return self.file_of.get(key, set()) if key else set()
