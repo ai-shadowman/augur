@@ -15,9 +15,10 @@ AUGUR automates the analysis of legacy repositories to produce actionable modern
 
 ### Comprehensive Observability & Telemetry
 AUGUR features end-to-end telemetry embedded directly into its execution reports and MLflow runs:
-- **Codebase Scope & Size Metrics**: Files, SLOC, comments, blanks, and config metrics tracked via [`CodeMetricsTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/code_metrics_tracker.py). See 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**.
-- **LLM Token Usage & Cost Governance**: Real-time prompt/completion token tracking and dollar cost estimation via [`TokenCostTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/token_tracker.py). See 👉 **[README_METRICS.md](README_METRICS.md)**.
-- **Pipeline Step Latency Profiling**: High-precision wall-clock latency profiling via [`DurationTracker`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/duration_tracker.py). See 👉 **[README_METRICS.md](README_METRICS.md)**.
+- **Codebase Scope & Size Metrics**: Files, SLOC, comments, blanks, and config metrics tracked via `CodeMetricsTracker` (`workflows/examples/code_understanding/utils/code_metrics_tracker.py`). See 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**.
+- **LLM Token Usage & Cost Governance**: Real-time prompt/completion token tracking and dollar cost estimation via `TokenCostTracker` (`workflows/examples/code_understanding/utils/token_tracker.py`). See 👉 **[README_METRICS.md](README_METRICS.md)**.
+- **Pipeline Step Latency Profiling**: High-precision wall-clock latency profiling via `DurationTracker` (`workflows/examples/code_understanding/utils/duration_tracker.py`). See 👉 **[README_METRICS.md](README_METRICS.md)**.
+- **GuideLLM Concurrency Benchmarking & Auto-Tuning**: Dynamic benchmarking of vLLM / OpenAI-compatible inference endpoints (`make benchmark-llm` standalone OpenShift job and pre-pipeline `benchmark_llm_op`) to automatically tune `SDG_LLM_MAX_CONCURRENCY` and `GRAPHRAG_CONCURRENT_REQUESTS`. See 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**.
 - **Distributed Tracing**: OpenTelemetry SDK integration exporting traces to Red Hat OpenShift distributed tracing (Tempo).
 
 ## Required Software / Tested with
@@ -67,6 +68,10 @@ Deploy Helm templates and compile pipelines to YAML:
 ```bash
 make install
 ```
+Benchmark your LLM endpoint concurrency in OpenShift before or independently of a pipeline run:
+```bash
+make benchmark-llm
+```
 Or compile pipelines standalone:
 ```bash
 PIPELINE_COMPILE_ONLY=1 \
@@ -82,6 +87,7 @@ python -m unittest discover -s workflows/examples/code_understanding/tests
 ```
 
 ## Documentation & Guides
+- 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` standalone OpenShift job and `benchmark_llm_op` pre-pipeline auto-tuning).
 - 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
 - 👉 **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
 - 👉 **[resources/images/README.md](resources/images/README.md)**: Container image build process and disconnected/air-gapped registry mirroring.
