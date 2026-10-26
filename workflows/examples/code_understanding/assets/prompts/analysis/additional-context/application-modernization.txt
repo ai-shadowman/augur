@@ -1,0 +1,28 @@
+APPLICATION MODERNIZATION ASSESSMENT GUIDANCE
+
+This is assessment guidance, not a vendor compatibility matrix or evidence of current support status.
+Derive a migration direction from the application's detected stack. No fixed destination language, framework, runtime, application server, or operating system is prescribed.
+
+DEPENDENCY BASELINE
+- Record each observed library or framework, its repository, declaration or usage evidence, version constraint or resolved version, and affected application components.
+- Keep missing versions unknown. Preserve conflicting declarations by repository, module, and source file; flag discrepancies for resolution.
+- Assess transitive dependencies, runtime requirements, and development tooling only when evidenced. Missing metadata is an assessment gap, not proof of absence.
+
+MODERNIZATION DECISIONS
+- Consider retain, upgrade, replace, and remove actions for the detected components. Explain the application benefit and why the action is proportionate to migration risk.
+- Prefer supported, maintainable targets compatible with the rest of the application's stack. Establish exact versions and support status from supplied vendor documentation, release notes, compatibility matrices, or advisories; otherwise leave target_version null and require verification.
+- Tie each proposed action to affected code, APIs, configuration, build tooling, or integration contracts. Discuss potential breaking changes as risks requiring validation when documentation is absent.
+- Do not introduce unrelated libraries or a wholesale rewrite merely because a different stack is popular. Replacement libraries may be candidates, but must be labeled proposed and require fit and compatibility validation.
+- Removal requires evidence beyond lack of an observed import, including checks for dynamic loading, reflection, configuration, and indirect usage where relevant.
+
+SEQUENCING AND VALIDATION
+- Use dependency relationships to identify prerequisites. Migrating dependency leaves first is a starting heuristic, not a rule that overrides runtime or framework compatibility.
+- Coordinate tightly coupled upgrades and dependency cycles as explicit groups when supported by evidence. Do not invent cross-repository dependencies.
+- Establish characterization tests before changing behavior. Validate API contracts, data formats, persistence, authentication, and other observed integration boundaries after each increment.
+- Include build and packaging validation, staged rollout, and rollback criteria suited to the detected application. Include database or schema migration and data restoration only when the application evidence warrants them.
+- Keep retained components visible; an application migration plan does not require every dependency to change.
+
+EVIDENCE AND UNCERTAINTY
+- Cite only file paths, graph/source identifiers, and supplied reference identifiers actually present in the input.
+- Distinguish observed facts from proposed actions and verification tasks. A generated recommendation is not an authoritative reference for an exact target version, CVE, support status, or compatibility claim.
+- When evidence is incomplete, produce a provisional plan with explicit discovery and verification prerequisites rather than fabricate a complete stack.
