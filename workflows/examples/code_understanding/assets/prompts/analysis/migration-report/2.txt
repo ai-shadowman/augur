@@ -1,11 +1,20 @@
 ---
 title: "### Recommended Migration Order"
 ---
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+
 {% if multi_repo %}
 What migration order would be recommended for the repos in this codebase to reduce risk?
 Include all the git urls you can find, including smaller repos. Treat repos with the same git url as a
 single repo. Assume each git url represents an independent repo unless a cross-dependency with other repos exists.
 {% else %}
 What migration order would be recommended when refactoring to reduce breaking changes?
-Provide a comprehensive order that includes as many classes, packages, and components as possible.
+Identify the application components affected by migration and recommend an order based on their evidenced dependencies.
 {% endif %}
+
+Explain runtime, framework, and library compatibility prerequisites. Use leaf-first order where appropriate, but group tightly coupled changes and dependency cycles when they require coordinated validation.
+Keep unchanged components visible as retained; do not invent migrations for every class or package. Treat this order as provisional when target compatibility or dependency information requires verification.

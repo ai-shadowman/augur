@@ -1,7 +1,13 @@
 ---
-title: "### Known Vulnerabilities"
-search_mode: "local"
-skip_prompt: "multi_repo"
+title: "### Security and Support Assessment"
 ---
-Are there any security vulnerabilities in the code or associated libraries?
-If runtime stack version information is available (languages, frameworks, databases, middleware), include those components in the assessment and check each version for known CVEs or end-of-life status.
+{{system_prompt_application_migration}}
+
+--- BEGIN APPLICATION BASELINE ---
+{{answers[1]}}
+--- END APPLICATION BASELINE ---
+
+Assess security concerns and support risks for the libraries, frameworks, runtimes, and integration components detected in each repository.
+Report code-level security concerns with supporting source evidence. Report an exact CVE, affected version range, end-of-life date, or unsupported status only when supplied reference evidence substantiates it.
+For every finding, identify the repository, affected dependency or component, observed version (or unknown), evidence, potential application impact, and required validation or remediation.
+If advisories or support references are unavailable, list targeted verification tasks against the detected dependencies. State that vulnerability and support status are unverified; lack of supplied evidence does not establish that a component is secure or supported.
