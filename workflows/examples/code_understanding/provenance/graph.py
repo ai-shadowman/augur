@@ -31,6 +31,7 @@ from typing import Any
 
 from . import containment, declarations, evidence, languages, packages
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
+from .edge_evidence import EdgeEvidence
 from .grounding_report import GroundingReport
 from .tables import (
     collapse,
@@ -351,7 +352,9 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
     return frame, relationships
 
 
-def _corrected_owner(key: str, corpus_symbols, corpus_index, checkout) -> str | None:
+def _corrected_owner(
+    key: str, corpus_symbols, corpus_index, checkout, edges=None, relative: bool = False,
+) -> str | None:
     """The one indexed module that declares what ``key`` names, or ``None``.
 
     Four reasons to decline, and each is a case where a rename would make the
@@ -362,6 +365,16 @@ def _corrected_owner(key: str, corpus_symbols, corpus_index, checkout) -> str | 
     * the checkout says the stated owner declares it, so the module is simply
       one this run did not index. Renaming it onto a namesake elsewhere in the
       corpus would turn recalled-but-true into filed-under-the-wrong-module;
+    * the edge evidence grounds the name as written, as a name bound by
+      import, and the namesake is not where that import leads.
+      ``celery.bin.base.Option`` is ``optparse.make_option`` and was refiled
+      onto the unrelated ``celery.app.defaults.Option``. A re-export still
+      collapses onto the module that declares it, since that is one object;
+    * the title was relative (``relative``; ``dotted_key`` has already
+      dropped the dots) and the namesake's module does not end with the
+      path it spells. ``.BASE.OPTION`` is ``from .base import Option``
+      copied out of the source, so wherever the dots lead, the module is a
+      ``base``, and ``celery.app.defaults`` is not one;
     * more than one indexed module declares the name, so the right answer is
       not determined and the caller records it instead.
 
@@ -385,13 +398,20 @@ def _corrected_owner(key: str, corpus_symbols, corpus_index, checkout) -> str | 
     if len(owners) != 1:
         return ""
     owner = next(iter(owners))
+    landing = f"{owner}.{symbol}" if owner else symbol
+    spelled = key[: -len(symbol)].strip(". ")
+    if relative and spelled and not f".{owner}".endswith(f".{spelled}"):
+        return None
+    bound = edges.files(edges.ground(key)) if edges is not None else set()
+    if bound and not bound & edges.files(edges.ground(landing)):
+        return None
     # An owner of ``""`` is Ruby, where ``declarations.namespace_for`` prepends
     # nothing because the walker already returned the whole ``module`` chain.
     # Joining with a dot regardless would emit ``.JEKYLL.TAGS.LINK.RENDER``.
     # The symbol is then the entity's whole correct title, so the caller's
     # ``corrected != titles[i]`` is what makes this a no-op on a model that
     # already spelled it right.
-    return f"{owner}.{symbol}".upper() if owner else symbol.upper()
+    return landing.upper()
 
 
 def ground_symbols(entities, relationships, report: GroundingReport, documents, facts=None):
@@ -415,6 +435,7 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
 
     corpus_index = declarations.owners_of(corpus_symbols)
     checkout = (facts.declared_symbols if facts else None) or {}
+    edges = EdgeEvidence.from_dict(facts.edge_evidence if facts else None)
 
     frame = entities.reset_index(drop=True)
     types = types_of(frame)
@@ -424,7 +445,8 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
     targets: dict[str, list[int]] = {}
     for i in frame.index[symbol_like]:
         corrected = _corrected_owner(
-            dotted_key(titles[i]), corpus_symbols, corpus_index, checkout,
+            dotted_key(titles[i]), corpus_symbols, corpus_index, checkout, edges,
+            relative=titles[i].lstrip().startswith("."),
         )
         if corrected == "":
             report.symbols_ambiguous.append(titles[i])

@@ -243,8 +243,8 @@ class TestVerdictByReason(unittest.TestCase):
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {
-    "parser-full-120b": (799, 6, 3141, 2),
-    "parser-full-120b-typed": (804, 11, 2118, 1),
+    "parser-full-120b": (801, 3, 3142, 2),
+    "parser-full-120b-typed": (806, 9, 2118, 1),
 }
 
 
