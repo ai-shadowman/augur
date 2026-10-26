@@ -30,7 +30,6 @@ deepeval==3.6.8
 evaluate==0.4.6
 rouge_score==0.1.2
 bert_score==0.3.13
-codebleu==0.7.0
 mlflow[kubernetes]==3.14.0
 kfp==2.17.0
 PyYAML==6.0.2
