@@ -176,6 +176,24 @@ class TestImportBindings(unittest.TestCase):
         self.assertEqual(set(IMPORT_BINDS), set(RESOLVERS))
 
 
+class TestFactsCarryEvidence(unittest.TestCase):
+    """The verdict runs where the checkout is gone, so facts must carry it intact."""
+
+    def test_collect_write_read_merge(self):
+        from provenance import facts
+        from provenance.pipeline import merge_facts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            _checkout(root)
+            collected = facts.collect(root, run_syft=False)
+            self.assertEqual(collected.edge_evidence, EdgeEvidence.from_checkout(root).to_dict())
+            again = facts.read(facts.write(collected, Path(tmp) / "facts.json"))
+            self.assertEqual(again.edge_evidence, collected.edge_evidence)
+            merged = merge_facts([again, facts.read(Path(tmp) / "facts.json")], root=tmp)
+            self.assertEqual(merged.edge_evidence, collected.edge_evidence)
+
+
 class TestVerdictByReason(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

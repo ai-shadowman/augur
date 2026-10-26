@@ -41,6 +41,7 @@ from typing import Any
 
 from . import facts as facts_module
 from . import stitch
+from .edge_evidence import EdgeEvidence
 from .models import RepoFacts
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,7 @@ def merge_facts(records: list[RepoFacts], root: str) -> RepoFacts:
     merged.imported_names = sorted(set(merged.imported_names))
     merged.source_files = sorted(set(merged.source_files))
     merged.declared_symbols = {key: sorted(names) for key, names in symbols.items()}
+    merged.edge_evidence = EdgeEvidence.merge(r.edge_evidence for r in records)
     return merged
 
 

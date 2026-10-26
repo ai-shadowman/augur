@@ -202,6 +202,12 @@ class RepoFacts:
     #: real but filed under the wrong module is the commonest defect at this
     #: layer, and a flat list cannot see it.
     declared_symbols: dict[str, list[str]] = field(default_factory=dict)
+    #: The edge oracle's answer for the whole checkout, serialised by
+    #: :class:`provenance.edge_evidence.EdgeEvidence`: every IMPORTS and
+    #: INHERITS pair, and every node key to the files that declare or bind it.
+    #: Captured here because the edge verdict runs at index time and the
+    #: checkout does not travel that far.
+    edge_evidence: dict[str, Any] = field(default_factory=dict)
     #: Parser limits hit while extracting, such as a setup.py whose
     #: install_requires is computed at runtime. Recorded rather than silently
     #: dropped, because "we could not determine this" and "there is nothing
@@ -230,6 +236,7 @@ class RepoFacts:
             "imported_names": list(self.imported_names),
             "source_files": list(self.source_files),
             "declared_symbols": {k: sorted(v) for k, v in self.declared_symbols.items()},
+            "edge_evidence": self.edge_evidence,
             "warnings": list(self.warnings),
         }
 

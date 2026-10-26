@@ -263,6 +263,10 @@ def collect(
     symbols, symbol_warnings = declarations.scan_files(root, walked)
     facts.declared_symbols = {key: sorted(names) for key, names in symbols.items()}
     facts.warnings.extend(symbol_warnings)
+    # Imported here: the edge oracle reads SKIP_DIRS from this module.
+    from .edge_evidence import EdgeEvidence
+
+    facts.edge_evidence = EdgeEvidence.from_checkout(root).to_dict()
 
     imported, import_warnings = imports.scan_tree(root, SKIP_DIRS)
     facts.imported_names = sorted(imported)
@@ -306,6 +310,7 @@ def read(path: Path) -> RepoFacts:
         imported_names=data.get("imported_names", []),
         source_files=data.get("source_files", []),
         declared_symbols=data.get("declared_symbols", {}),
+        edge_evidence=data.get("edge_evidence", {}),
         warnings=data.get("warnings", []),
     )
     facts.packages = [
