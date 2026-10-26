@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Ensure code_understanding package is on sys.path
@@ -334,6 +335,20 @@ class TestFallbackExtraction(unittest.TestCase):
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
 
+        from utils.code_metrics_tracker import CodeMetricsTracker
+        from utils.repository_ignore import RepositoryIgnorePolicy
+        source = Path(self.temp_dir) / "source-repo"
+        source.mkdir()
+        (source / ".augurignore").write_text("ignored-config.yaml\n")
+        (source / "ignored-config.yaml").write_text("secret")
+        (source / "missing-config.yaml").symlink_to("missing")
+        policy = RepositoryIgnorePolicy.from_repository(source)
+        policy.filter_files(source, ["missing-config.yaml", "ignored-config.yaml"])
+        code_tracker = CodeMetricsTracker.reset_instance(git_slug="test-repo_main")
+        code_tracker.record_ignored_locations(policy)
+        code_tracker.save_to_file(os.path.join(input_dir, "project_metrics.json"))
+        CodeMetricsTracker.reset_instance()
+
         # Place Data Generation durations.json and tokens.json in input_dir
         dg_dur = DurationTracker(run_id="dg-run-1")
         dg_dur.record_step(stage="Data Generation", step="Detect Languages", duration=1.2)
@@ -359,13 +374,16 @@ class TestFallbackExtraction(unittest.TestCase):
         analyzer = DependencyAnalyzer(graphrag_dir, git_slug="test-repo_main")
         analyzer.token_tracker = TokenCostTracker(run_id="analysis-run-3")
         async def mock_query(*args, **kwargs):
+            relevant = args[0].startswith(("Analyze analysis/migration-report/1", "Analyze analysis/migration-report/7"))
+            self.assertEqual("missing-config.yaml" in args[0], relevant)
+            self.assertEqual("ignored-config.yaml" in args[0], relevant)
             return "Mocked analysis answer"
         analyzer.query_with_llm = mock_query
         analyzer._extract_indexed_git_urls = MagicMock(return_value=["https://github.com/test/repo"])
 
         from loaders.default_asset_loader import DefaultAssetLoader
-        with patch.object(DefaultAssetLoader, "num_prompts", side_effect=lambda path: 1 if "enhanced" not in path else 0), \
-             patch.object(DefaultAssetLoader, "download_prompt", return_value=("What is this service?", {"title": "Service Summary"})):
+        with patch.object(DefaultAssetLoader, "num_prompts", side_effect=lambda path: 8 if "enhanced" not in path else 0), \
+             patch.object(DefaultAssetLoader, "download_prompt", side_effect=lambda path, **kwargs: (f"Analyze {path}", {"title": "Service Summary"})):
 
             report = asyncio.run(analyzer.generate_migration_report())
 
@@ -379,6 +397,9 @@ class TestFallbackExtraction(unittest.TestCase):
             self.assertIn("Analysis", report)
             # Verify totals and tables
             self.assertIn("### Project Codebase & Scope Summary", report)
+            self.assertEqual(report.count("### Ignored / unexplored locations"), 1)
+            self.assertIn("missing-config.yaml", report)
+            self.assertIn("ignored-config.yaml", report)
             self.assertIn("### LLM Token Usage & Cost Summary", report)
             self.assertIn("### Pipeline Execution Duration Summary", report)
 

@@ -10,6 +10,19 @@ dependencies = [
     "pathspec>=1.1.1,<2",
 ]
 
+[project.optional-dependencies]
+# Deterministic provenance extraction. Kept optional so the pipeline image does
+# not have to carry them, and so a checkout without syft on PATH still imports.
+provenance = [
+    "pip-requirements-parser>=32,<33",
+    "packaging",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff>=0.17,<0.18",
+]
+
 [tool.setuptools.packages.find]
 namespaces = true
 exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "*.egg-info*"]
@@ -34,3 +47,22 @@ exclude = ["scripts*", "notebooks*", "compiled_pipelines*", "*.egg-info*"]
     "*.html",
     "*.parquet",
 ]
+
+[tool.ruff]
+# Pinned here so `ruff check` gives the same answer for everyone. Without it
+# ruff picks up whatever configuration happens to be in scope, which made a
+# clean checkout report 91 findings on one machine and none on another.
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM", "BLE", "RUF"]
+ignore = [
+    "E501",    # long lines are reported by the formatter, not worth failing on
+    "SIM105",  # contextlib.suppress reads worse than try/except for one call
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test classes hold table-driven cases as plain class attributes on purpose;
+# RUF012 would have every one of them annotated ClassVar for no benefit.
+"tests/*" = ["RUF012"]

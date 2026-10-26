@@ -88,7 +88,17 @@ embed_text:
 extract_graph:
   model_id: default_chat_model
   prompt: "prompts/extract_graph.txt"
-  entity_types: [repository, module, class, function, package, dependency]
+  # "repository" and "runtime" are deliberately absent. Both come from the
+  # document header, so provenance.graph builds them after extraction rather
+  # than asking for them back. Offering the types here would contradict the
+  # prompt and reintroduce the UNKNOWN_REPO entities it used to produce.
+  #
+  # "library" and "stdlib_module" replace a single flat "dependency". Measured
+  # on celery 2.5.5: one dependency type gave 160 invented package-layer
+  # entities, because the model types every imported symbol as a dependency.
+  # The split gave 3. The two layers are also versioned differently, which is
+  # what the package layer of a migration report turns on.
+  entity_types: [module, class, function, package, library, stdlib_module]
   max_gleanings: 2
 
 summarize_descriptions:
