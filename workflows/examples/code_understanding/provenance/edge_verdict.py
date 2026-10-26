@@ -123,6 +123,27 @@ def _encloses(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set) -> str | Non
     return None
 
 
+def _inherits_into(ev: EdgeEvidence, a: str, fa: set, fb: set) -> bool:
+    """Whether an oracle INHERITS edge from ``fa`` to ``fb`` starts at the claimant.
+
+    Matched by name and file rather than by key, because a re-export
+    (``rx.Worker`` for ``rx.impl.Worker``) and a member named as the claimant
+    (``BackgroundInitializer.BackgroundInitializer``, a constructor) are keys
+    the oracle records no parents under. A member's enclosing types count;
+    a module prefix ends the walk, since in ``celery.bin.celeryctl.Command``
+    the ``celeryctl`` is the file and the class of that name is another type.
+    """
+    names, parts = set(), a.split(".")
+    for i in range(len(parts), 0, -1):
+        if _module(ev, ".".join(parts[:i])) is not None:
+            break
+        names.add(parts[i - 1])
+    return any(
+        child.rpartition(".")[2] in names and ev.files(child) & fa and ev.files(parent) & fb
+        for child, parents in ev.parents.items() for parent in parents
+    )
+
+
 def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
             enclosing: bool = True) -> str | None:
     """Where the oracle states ``kind`` from ``a`` to ``b``, or ``None``.
@@ -133,7 +154,12 @@ def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
     """
     if kind in ev.pairs.get((a, b), ()):
         return "exact"
-    if kind in {k for x in fa for y in fb for k in ev.internal.get((x, y), ())}:
+    # Between two types the files' INHERITS edge has to be the claimant's own:
+    # ``class celeryctl(CeleryCommand)`` joins celeryctl.py to base.py, and
+    # says nothing about ``celeryctl.Command``, which inherits from object.
+    if kind in {k for x in fa for y in fb for k in ev.internal.get((x, y), ())} and (
+        kind == IMPORTS or _module(ev, a) is not None or _module(ev, b) is not None or _inherits_into(ev, a, fa, fb)
+    ):
         return "lifted"
     # Kept apart from ``exact``: a reader who wants direct supertypes only
     # can drop these, and one who wants the type hierarchy keeps them.

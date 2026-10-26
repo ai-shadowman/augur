@@ -244,6 +244,10 @@ REVIEW_FILES = {
     "lib/elder/part.rb": "module Elder::Part\n  class Thing\n  end\nend\n",
     "lib/part.rb": "module Part\n  class Thing\n  end\nend\n",
     "lib/junior.rb": "class Junior < Elder\n  class Inner < Part::Thing\n  end\nend\n",
+    # A third review. Python: one class's base joins two files, and lifts
+    # nothing onto a sibling class that inherits from object.
+    "pz/a.py": "from pz.b import Other\n\nclass Helper:\n    pass\n\nclass Sub(Other):\n    def run(self):\n        pass\n",
+    "pz/b.py": "class Other:\n    pass\n",
 }
 
 REVIEW_CASES = [
@@ -275,6 +279,9 @@ REVIEW_CASES = [
     ("FOO", "MIXIN", "Foo INHERITS Mixin", "unchecked", "no-edge"),
     ("JUNIOR::INNER", "ELDER::PART::THING", "Junior::Inner INHERITS Elder::Part::Thing", "unchecked", "no-edge"),
     ("JUNIOR::INNER", "PART::THING", "Junior::Inner INHERITS Part::Thing", "unchecked", "no-edge"),
+    ("PZ.A.HELPER", "PZ.B.OTHER", "pz.a.Helper INHERITS pz.b.Other", "contradicted", "wrong-kind"),
+    # A member named as the claimant still lifts through its class.
+    ("PZ.A.SUB.RUN", "PZ.B.OTHER", "pz.a.Sub.run INHERITS pz.b.Other", "confirmed", "lifted"),
 ]
 
 
@@ -489,7 +496,7 @@ class TestDrop(unittest.TestCase):
 #: drops the contradictions it can (4 and 10 before the drop), so none is left.
 PINNED = {
     "parser-full-120b": (849, 0, 3094, 2),
-    "parser-full-120b-typed": (882, 0, 2039, 4),
+    "parser-full-120b-typed": (881, 1, 2039, 4),
 }
 
 
