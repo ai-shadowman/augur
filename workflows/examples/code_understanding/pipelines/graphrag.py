@@ -15,6 +15,33 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+#: Where ``utils.prompt_utils.prepare_indexing_config`` stages AUGUR's prompts,
+#: relative to the working directory, as ``templates/`` is for the settings.
+STAGED_PROMPTS = Path("prompts")
+
+
+def restore_prompts(root_path: Path) -> None:
+    """Put AUGUR's staged prompts back over the ones GraphRAG's init wrote.
+
+    ``initialize_project_at(force=True)`` writes GraphRAG's stock prompts into
+    ``root/prompts/``, over the ones ``prepare_indexing_config`` copied there
+    first. Until 2026-10-25 nothing re-copied them, so every deployed index
+    was extracted with GraphRAG's stock ``extract_graph.txt`` and
+    ``community_report.txt`` while ``settings.yaml``, re-copied just above,
+    was AUGUR's. Found on the cluster: 100% of relationships untyped, against
+    2% for the same corpus through AUGUR's prompt.
+    """
+    if not STAGED_PROMPTS.is_dir():
+        log.warning(
+            "No staged prompts at %s; indexing with GraphRAG's stock prompts. "
+            "Run utils.prompt_utils.prepare_indexing_config first.",
+            STAGED_PROMPTS.resolve(),
+        )
+        return
+    shutil.copytree(STAGED_PROMPTS, root_path / "prompts", dirs_exist_ok=True)
+    log.info("Restored AUGUR prompts over GraphRAG's defaults: %s",
+             ", ".join(sorted(p.name for p in STAGED_PROMPTS.iterdir())))
+
 
 def run_graphrag(root_dir: str) -> None:
     """Initialize a GraphRAG project and build the index.
@@ -76,6 +103,7 @@ def run_graphrag(root_dir: str) -> None:
         initialize_project_at(root_path, force=True)
         log.info("Copying settings.yaml...")
         shutil.copy("templates/settings.yaml", root_path / "settings.yaml")
+        restore_prompts(root_path)
 
     log.info("Populating GraphRAG index...")
     config = load_config(root_path)
