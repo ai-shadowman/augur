@@ -57,6 +57,18 @@ WRITTEN = "written"
 TABLE_COLUMNS = ("id", "source", "target", edge_types.TYPE_COLUMN,
                  edge_types.SUBJECT_COLUMN, VERDICT_COLUMN, REASON_COLUMN)
 
+#: The contradictions grounding removes from the graph, decided 2026-10-26.
+#: Each says the pair is not related the way the row claims at all.
+#: ``wrong-kind`` stays, since the oracle does relate the pair; so do
+#: ``unchecked`` and ``out-of-reach``, which were never contradictions.
+DROPPED_REASONS = ("reversed", "same-file", "no-edge")
+
+#: The side table's flag for a row grounding removed. Such a row has no
+#: finalised ``id``, so it carries its description instead, which is
+#: otherwise reached through the id.
+DROPPED_COLUMN = "dropped"
+DROPPED_ROW_COLUMNS = (*TABLE_COLUMNS[1:], "description")
+
 
 #: Whether importing ``a.b.c`` imports the package ``a`` too, per dialect.
 #: Python executes every ancestor package's ``__init__`` on the way down, so
@@ -245,32 +257,69 @@ def _evidence(facts: Any) -> EdgeEvidence | None:
     return EdgeEvidence.from_dict(data) if data else None
 
 
-def record(relationships: Any, facts: Any, report: Any) -> None:
+def record(relationships: Any, facts: Any, report: Any) -> Any:
     """Put the verdict split on a :class:`GroundingReport`, or note why there is none.
 
     Facts written before the evidence was captured carry none. That is
     reported as the verdict not having run, never as every edge out of reach,
-    which would read as a measurement.
+    which would read as a measurement. Returns the scored rows, or ``None``.
     """
     ev = _evidence(facts)
     if ev is None or relationships is None or not len(relationships):
         report.edge_verdicts = {}
-        return
+        return None
     scored = assess(ev, relationships)
     model = scored[scored[VERDICT_COLUMN] != WRITTEN]
     report.edge_verdicts = split(model)
     report.edge_contradictions = dict(sorted(Counter(
         model.loc[model[VERDICT_COLUMN] == CONTRADICTED, REASON_COLUMN]).items()))
     report.edges_written = len(scored) - len(model)
+    return scored
 
 
-def table(relationships: Any, facts: Any) -> Any:
-    """The per-row side table for ``output/``, or ``None`` without evidence."""
+def judge(relationships: Any, facts: Any, report: Any) -> Any:
+    """:func:`record`, then remove the contradictions :data:`DROPPED_REASONS` names.
+
+    The report keeps the split as the model wrote it, the drops by reason,
+    and the dropped rows themselves for ``output/edge_verdicts``. The index
+    is reset because ``finalize_relationships`` assigns ``combined_degree``
+    positionally and misplaces it on a gapped index.
+    """
+    scored = record(relationships, facts, report)
+    if scored is None:
+        return relationships
+    drop = (scored[VERDICT_COLUMN] == CONTRADICTED) & scored[REASON_COLUMN].isin(DROPPED_REASONS)
+    if not drop.any():
+        return relationships
+    dropped = scored.loc[drop]
+    report.edges_dropped = dict(sorted(Counter(dropped[REASON_COLUMN]).items()))
+    report.dropped_edges = dropped[[c for c in DROPPED_ROW_COLUMNS if c in dropped.columns]].to_dict("records")
+    return relationships.loc[~drop.to_numpy()].reset_index(drop=True)
+
+
+def dropped_frame(like: Any, rows: Any) -> Any:
+    """``rows`` (:attr:`GroundingReport.dropped_edges`) as a table flagged dropped."""
+    return type(like)([{**r, DROPPED_COLUMN: True} for r in rows],
+                      columns=[*DROPPED_ROW_COLUMNS, DROPPED_COLUMN])
+
+
+def table(relationships: Any, facts: Any, dropped: Any = ()) -> Any:
+    """The per-row side table for ``output/``, or ``None`` without evidence.
+
+    ``dropped`` holds the rows grounding removed, which ``relationships``
+    no longer has; they are appended with the flag set, so the table
+    accounts for every row the model wrote.
+    """
     ev = _evidence(facts)
     if ev is None or relationships is None:
         return None
     scored = assess(ev, relationships)
-    return scored[[c for c in TABLE_COLUMNS if c in scored.columns]].reset_index(drop=True)
+    out = scored[[c for c in TABLE_COLUMNS if c in scored.columns]].reset_index(drop=True)
+    out[DROPPED_COLUMN] = False
+    rows = list(dropped)
+    if not rows:
+        return out
+    return type(out)(out.to_dict("records") + [{**r, DROPPED_COLUMN: True} for r in rows])
 
 
 def split(scored: Any) -> dict[str, int]:

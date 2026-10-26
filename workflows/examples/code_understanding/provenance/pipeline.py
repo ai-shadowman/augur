@@ -271,6 +271,15 @@ async def run_workflow(config, context):
         result["grounding"] = grounding.to_dict()
         await write_table_to_storage(entities, "entities", context.output_storage)
         await write_table_to_storage(relationships, "relationships", context.output_storage)
+        if grounding.edge_verdicts:
+            # The rows the drop removed never reach finalize_graph; the verdict
+            # workflow appends the rows it finalised to these.
+            from . import edge_verdict
+
+            await write_table_to_storage(
+                edge_verdict.dropped_frame(relationships, grounding.dropped_edges),
+                VERDICT_TABLE, context.output_storage,
+            )
     else:
         logger.warning("provenance: no document headers parsed; graph not grounded")
 
@@ -297,12 +306,24 @@ async def run_workflow(config, context):
 async def run_verdict_workflow(config, context):
     """GraphRAG workflow entry point that writes ``edge_verdicts`` to ``output/``."""
     from graphrag.index.typing.workflow import WorkflowFunctionOutput
-    from graphrag.utils.storage import load_table_from_storage, write_table_to_storage
+    from graphrag.utils.storage import (
+        load_table_from_storage,
+        storage_has_table,
+        write_table_to_storage,
+    )
 
     from . import edge_verdict
 
     relationships = await load_table_from_storage("relationships", context.output_storage)
-    table = edge_verdict.table(relationships, load_facts(config.root_dir))
+    # Grounding left the rows it dropped here. Only those are kept, so a rerun
+    # of this workflow does not append the finalised rows twice.
+    dropped = []
+    if await storage_has_table(VERDICT_TABLE, context.output_storage):
+        earlier = await load_table_from_storage(VERDICT_TABLE, context.output_storage)
+        if edge_verdict.DROPPED_COLUMN in earlier.columns:
+            earlier = earlier[earlier[edge_verdict.DROPPED_COLUMN].astype(bool)]
+            dropped = earlier[[c for c in edge_verdict.DROPPED_ROW_COLUMNS if c in earlier.columns]].to_dict("records")
+    table = edge_verdict.table(relationships, load_facts(config.root_dir), dropped)
     if table is None:
         logger.info("provenance: no edge evidence in the facts; %s not written", VERDICT_TABLE)
         return WorkflowFunctionOutput(result=None)

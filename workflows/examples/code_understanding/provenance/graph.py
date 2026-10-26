@@ -572,7 +572,7 @@ def ground(
     entities, relationships = ground_repository(corpus, entities, relationships, report)
     entities, relationships = evidence.backfill(entities, relationships, documents, report)
     relationships = merge_duplicate_edges(relationships, report)
-    edge_verdict.record(relationships, facts, report)
+    relationships = edge_verdict.judge(relationships, facts, report)
 
     report.entities_after = len(entities)
     report.relationships_after = 0 if relationships is None else len(relationships)

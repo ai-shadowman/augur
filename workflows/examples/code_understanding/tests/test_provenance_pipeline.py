@@ -318,6 +318,9 @@ class WorkflowTestCase(TempDirTestCase):
             storage.tables[name] = table
             storage.writes.append(name)
 
+        async def storage_has_table(name, storage):
+            return name in storage.tables
+
         workflow = types.ModuleType("graphrag.index.typing.workflow")
 
         class WorkflowFunctionOutput:
@@ -329,6 +332,7 @@ class WorkflowTestCase(TempDirTestCase):
         storage_module = types.ModuleType("graphrag.utils.storage")
         storage_module.load_table_from_storage = load_table_from_storage
         storage_module.write_table_to_storage = write_table_to_storage
+        storage_module.storage_has_table = storage_has_table
 
         patcher = mock.patch.dict(sys.modules, {
             "graphrag.index.typing.workflow": workflow,
@@ -372,6 +376,26 @@ class TestVerdictWorkflow(WorkflowTestCase):
             list(zip(table["id"], table["verdict"], table["reason"], strict=True)),
             [("r0", "confirmed", "exact"), ("r1", "contradicted", "reversed"), ("r2", "written", "")],
         )
+
+    def test_rows_grounding_dropped_are_kept_once(self):
+        from provenance import edge_verdict
+        from provenance.edge_evidence import EdgeEvidence
+
+        evidence = EdgeEvidence(
+            [("IMPORTS", "pkg.a", "pkg.b", "internal", "pkg/a.py")],
+            {"pkg.a": ["pkg/a.py"], "pkg.b": ["pkg/b.py"], "pkg.c": ["pkg/c.py"]},
+        ).to_dict()
+        facts_module.write(replace(self.FACTS, edge_evidence=evidence),
+                           Path(self.root) / pipeline.FACTS_FILENAME)
+        relationships = self.storage.tables["relationships"]
+        gone = {"source": "PKG/A.PY", "target": "PKG/C.PY", "type": "IMPORTS", "subject": "source",
+                "verdict": "contradicted", "reason": "no-edge", "description": "pkg/a.py IMPORTS pkg.c"}
+        self.storage.tables[pipeline.VERDICT_TABLE] = edge_verdict.dropped_frame(relationships, [gone])
+        for _ in range(2):  # a rerun must not append the finalised rows again
+            self.run_verdict()
+            table = self.storage.tables[pipeline.VERDICT_TABLE]
+            self.assertEqual(len(table), len(relationships) + 1)
+            self.assertEqual(list(table.loc[table["dropped"], "description"]), [gone["description"]])
 
     def test_without_evidence_nothing_is_written(self):
         facts_module.write(self.FACTS, Path(self.root) / pipeline.FACTS_FILENAME)
@@ -465,6 +489,20 @@ class TestRunWorkflowGrounding(WorkflowTestCase):
                                   "CELERY", "CELERY.WORKER"})
         self.assertEqual(output.result["grounding"]["repository"], "CELERY-V2-5-5")
         self.assertIn("relationships", self.storage.writes)
+
+    def test_a_contradicted_edge_leaves_the_graph_for_the_verdict_table(self):
+        from provenance.edge_evidence import EdgeEvidence
+
+        claim = ("CELERY.WORKER.STATE", "CELERY.UTILS", "celery.worker.state IMPORTS celery.utils", 1.0)
+        self.storage.tables["relationships"] = edges((*self.EDGES, claim))
+        evidence = EdgeEvidence([], {"celery.worker.state": ["celery/worker/state.py"],
+                                     "celery.utils": ["celery/utils/__init__.py"]}).to_dict()
+        facts_module.write(replace(self.FACTS, edge_evidence=evidence), self.root / pipeline.FACTS_FILENAME)
+        output = self.run_stage()
+        self.assertEqual(output.result["grounding"]["edges_dropped"], {"no-edge": 1})
+        self.assertNotIn(claim[2], set(self.storage.tables["relationships"]["description"]))
+        table = self.storage.tables[pipeline.VERDICT_TABLE]
+        self.assertEqual(list(zip(table["description"], table["dropped"], strict=True)), [(claim[2], True)])
 
     def test_the_header_identity_reaches_the_repository_description(self):
         facts_module.write(self.FACTS, self.root / pipeline.FACTS_FILENAME)

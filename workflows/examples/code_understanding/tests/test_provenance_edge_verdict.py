@@ -372,6 +372,63 @@ class TestVerdictByReason(unittest.TestCase):
         self.assertEqual(edge_verdict.precision(edge_verdict.split(scored)), None)
 
 
+class TestDrop(unittest.TestCase):
+    """Grounding removes only the three reasons, and records what it removed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from types import SimpleNamespace
+
+        import pandas as pd
+
+        from provenance.grounding_report import GroundingReport
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _checkout(Path(tmp))
+            cls.facts = SimpleNamespace(edge_evidence=EdgeEvidence.from_checkout(Path(tmp)).to_dict())
+        cls.frame = pd.DataFrame([c[:3] for c in CASES], columns=["source", "target", "description"])
+        cls.report = GroundingReport()
+        cls.kept = edge_verdict.judge(cls.frame, cls.facts, cls.report)
+
+    def test_only_the_three_reasons_go(self):
+        want = [c[2] for c in CASES if c[3] == "contradicted" and c[4] in edge_verdict.DROPPED_REASONS]
+        self.assertEqual([r["description"] for r in self.report.dropped_edges], want)
+        self.assertEqual(self.report.edges_dropped, {"no-edge": 2, "reversed": 1, "same-file": 1})
+        self.assertEqual(len(self.kept), len(CASES) - len(want))
+        self.assertEqual(list(self.kept.index), list(range(len(self.kept))))
+
+    def test_what_survives(self):
+        kept = set(self.kept["description"])
+        for description in (
+            # Partial evidence: nothing declares it, so nothing contradicts it.
+            "pkg/a.py IMPORTS pkg.missing",
+            "pkg/a.py IMPORTS requests",
+            # A bare name that would ground uniquely to the wrong file: the
+            # top-level ``Drop`` in ``bench/top.rb``.
+            "Jk::Drops::StaticDrop INHERITS Drop",
+            # The oracle relates the pair; only the type is wrong.
+            "pkg.a.A INHERITS pkg.b",
+            # Beside an unresolved oracle edge, so the oracle did not say no.
+            "pkg/d.py IMPORTS pkg.c",
+        ):
+            with self.subTest(description=description):
+                self.assertIn(description, kept)
+
+    def test_the_table_keeps_every_row(self):
+        table = edge_verdict.table(self.kept, self.facts, self.report.dropped_edges)
+        self.assertEqual(len(table), len(CASES))
+        flagged = table[table[edge_verdict.DROPPED_COLUMN]]
+        self.assertEqual(set(flagged["reason"]), set(edge_verdict.DROPPED_REASONS))
+        self.assertEqual(list(flagged["description"]), [r["description"] for r in self.report.dropped_edges])
+
+    def test_without_evidence_nothing_is_dropped(self):
+        from provenance.grounding_report import GroundingReport
+
+        report = GroundingReport()
+        self.assertIs(edge_verdict.judge(self.frame, None, report), self.frame)
+        self.assertEqual((report.edges_dropped, report.dropped_edges), ({}, []))
+
+
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {

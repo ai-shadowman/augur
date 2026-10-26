@@ -80,6 +80,11 @@ class GroundingReport:
     edge_contradictions: dict[str, int] = field(default_factory=dict)
     #: Rows AUGUR wrote from a join, which the verdict does not judge.
     edges_written: int = 0
+    #: Contradicted model edges removed from the graph, by reason
+    #: (``edge_verdict.DROPPED_REASONS``), and the rows themselves, which
+    #: ``output/edge_verdicts`` keeps flagged since the graph no longer does.
+    edges_dropped: dict[str, int] = field(default_factory=dict)
+    dropped_edges: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -107,6 +112,8 @@ def _edge_verdict_lines(lines: list[str], report: GroundingReport) -> None:
     )
     if report.edge_contradictions:
         lines.append("  contradicted: " + ", ".join(f"{n} {k}" for k, n in report.edge_contradictions.items()))
+    if report.edges_dropped:
+        lines.append("  dropped:      " + ", ".join(f"{n} {k}" for k, n in report.edges_dropped.items()))
 
 
 def render(report: GroundingReport, limit: int = 15) -> str:
