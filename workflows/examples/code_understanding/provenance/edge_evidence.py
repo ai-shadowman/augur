@@ -22,11 +22,11 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import imports, symbols
 from .corpus import canonical_key, dotted_key
-from .declarations import namespace_for
+from .declarations import module_key, namespace_for
 from .dialects import dialect_for
 from .edges import EXTERNAL, IMPORTS, INHERITS, INTERNAL, UNRESOLVED, scan_checkout
 from .edges.model import Edge, Inventory, checkout_files
@@ -101,9 +101,63 @@ def _import_bindings(source: str, dialect, prefix: str, written_to: dict[str, st
                 yield dotted_key(f"{prefix}.{alias or imported}"), target
 
 
-def node_files(
-    root: Path, inventory: Inventory, edges: Iterable[Edge],
-) -> tuple[dict[str, set[str]], dict[str, str], set[str]]:
+class NodeIndex(NamedTuple):
+    """What :func:`node_files` reads, one field per :class:`EdgeEvidence` argument."""
+
+    files: dict[str, set[str]]
+    namespaces: dict[str, str]
+    opaque: set[str]
+    #: Keys a dotted title cannot settle: see :func:`_ambiguous`.
+    ambiguous: set[str]
+    #: Keys a file binds by import, to those files, where some other file
+    #: declares the key. The declarer's scope is the one its own names use.
+    binders: dict[str, set[str]]
+    #: Per file, the lexical crefs of each class written in compact form
+    #: (``class A::B::C``), innermost first. See :meth:`EdgeEvidence.in_scope`.
+    nesting: dict[str, dict[str, list[str]]]
+
+
+def _compact_nesting(classes: Iterable[str]) -> dict[str, list[str]]:
+    """Each compact-form class's crefs, as ``RubyResolver._constant`` derives them.
+
+    The walker keeps ``::`` inside a segment for ``class A::B::C``, so the
+    segments between dots are the lexical scopes and ``A::B`` is one of them:
+    ``Module.nesting`` there is the class alone, not ``A::B`` and ``A``.
+    Folding to a key loses that, which is why it is recorded here.
+    """
+    nesting = {}
+    for owner in classes:
+        if "::" in owner:
+            levels = owner.split(".")[:-1]
+            nesting[dotted_key(owner)] = [
+                dotted_key("::".join(levels[:i])) for i in range(len(levels), 0, -1)]
+    return nesting
+
+
+def _ambiguous(modules: dict[str, set[str]], bound_elsewhere: dict[str, set[str]],
+               chase: list[tuple[str, str]]) -> set[str]:
+    """Keys that fold a module together with a name bound to something else.
+
+    ``from .settings import Config`` in ``pkg/__init__.py`` binds
+    ``pkg.Config``, and ``pkg/config.py`` is the module ``pkg.config``: one
+    key, two things. GraphRAG uppercases titles, so a dotted title cannot
+    say which it meant. ``from . import config`` is not a collision, since
+    the bound name is the module. A name bound through an ambiguous key
+    inherits the ambiguity, because the chase cannot tell which meaning it
+    followed.
+    """
+    found = {k for k, binders in bound_elsewhere.items() if modules.get(k, set()) - binders}
+    changed = True
+    while changed:
+        changed = False
+        for bound, target in chase:
+            if target in found and bound not in found:
+                found.add(bound)
+                changed = True
+    return found
+
+
+def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> NodeIndex:
     """Every groundable node key in the checkout, to the files that declare it.
 
     Also returns each file's namespace (``declarations.namespace_for``),
@@ -117,7 +171,9 @@ def node_files(
     through the import, to the file that declares it. ``celery.app.app_or_default``
     is both ``celery/app/__init__.py``, which re-exports it, and the module
     that defines it, since a claim about either spelling is a claim about one
-    function.
+    function. Except where that key is also a module (:func:`_ambiguous`):
+    there the key holds the module's files alone, which is all a title
+    spelled as a path can mean.
     """
     edges = list(edges)
     written_to: dict[str, dict[str, str]] = collections.defaultdict(dict)
@@ -127,21 +183,28 @@ def node_files(
 
     found: dict[str, set[str]] = collections.defaultdict(set)
     namespaces: dict[str, str] = {}
-    declared: set[str] = set()
+    declared: dict[str, set[str]] = collections.defaultdict(set)
     opaque: set[str] = set()
     chase: list[tuple[str, str]] = []
+    modules: dict[str, set[str]] = collections.defaultdict(set)
+    binders: dict[str, set[str]] = collections.defaultdict(set)
+    bound_elsewhere: dict[str, set[str]] = collections.defaultdict(set)
+    nesting: dict[str, dict[str, list[str]]] = {}
     for path in sorted(inventory.paths):
         dialect = dialect_for(path)
         if dialect is None:
             continue
         source = (root / path).read_text(encoding="utf-8", errors="replace")
         found[canonical_key(path)].add(path)
+        modules[dotted_key(module_key(path))].add(path)
         prefix = namespaces[path] = namespace_for(path, source, dialect)
         read = symbols.symbols_in(source, dialect)
+        if _rule(SCOPES, dialect, "scope") == "lexical" and (compact := _compact_nesting(read.classes)):
+            nesting[path] = compact
         for name in (*read.classes, *read.functions, *read.methods):
             key = dotted_key(f"{prefix}.{name}" if prefix else name)
             found[key].add(path)
-            declared.add(key)
+            declared[key].add(path)
         for name in read.bindings:
             key = dotted_key(f"{prefix}.{name}" if prefix else name)
             found[key].add(path)
@@ -149,6 +212,9 @@ def node_files(
         if _binds(dialect):
             for bound, target in _import_bindings(source, dialect, prefix, written_to[path]):
                 found[bound].add(path)
+                binders[bound].add(path)
+                if target != bound:
+                    bound_elsewhere[bound].add(path)
                 if target:
                     chase.append((bound, target))
                 else:
@@ -166,16 +232,31 @@ def node_files(
             if extra:
                 found[bound] |= extra
                 changed = True
-    return found, namespaces, opaque - declared - {b for b, _ in chase}
+    ambiguous = _ambiguous(modules, bound_elsewhere, chase)
+    for key in ambiguous & modules.keys():
+        found[key] = set(modules[key])
+    # A file that declares the key as well as binding it is no mere binder:
+    # celery's ``apps/beat.py`` declares ``class Beat`` and binds ``beat``.
+    binders = {k: fs - declared.get(k, set()) for k, fs in binders.items() if k not in ambiguous}
+    return NodeIndex(
+        found, namespaces, opaque - declared.keys() - {b for b, _ in chase}, ambiguous,
+        {k: fs for k, fs in binders.items() if fs and found[k] - fs}, nesting,
+    )
 
 
 class EdgeEvidence:
     """The oracle's edges, indexed the ways the verdict asks of them."""
 
     def __init__(self, edges: Iterable[EdgeRow], files: dict[str, Iterable[str]],
-                 namespaces: dict[str, str] | None = None, opaque: Iterable[str] = ()):
+                 namespaces: dict[str, str] | None = None, opaque: Iterable[str] = (),
+                 ambiguous: Iterable[str] = (), binders: dict[str, Iterable[str]] | None = None,
+                 nesting: dict[str, dict[str, list[str]]] | None = None):
         self.namespaces: dict[str, str] = dict(namespaces or {})
         self.opaque: frozenset[str] = frozenset(opaque)
+        self.ambiguous: frozenset[str] = frozenset(ambiguous)
+        self.binders: dict[str, set[str]] = {k: set(v) for k, v in (binders or {}).items()}
+        self.nesting: dict[str, dict[str, list[str]]] = {
+            p: {k: list(c) for k, c in n.items()} for p, n in (nesting or {}).items()}
         self.edges: list[EdgeRow] = sorted(edges, key=lambda e: tuple(x or "" for x in e))
         self.file_of: dict[str, set[str]] = {k: set(v) for k, v in files.items()}
         self.internal: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
@@ -226,7 +307,7 @@ class EdgeEvidence:
         inventory = Inventory(checkout_files(root), root)
         scan = scan_checkout(root, inventory)
         rows = [(e.kind, e.source, e.target, e.target_class, e.path) for e in scan.edges]
-        return cls(rows, *node_files(root, inventory, scan.edges))
+        return cls(rows, **node_files(root, inventory, scan.edges)._asdict())
 
     def __bool__(self) -> bool:
         return bool(self.edges)
@@ -237,13 +318,18 @@ class EdgeEvidence:
             "node_files": {k: sorted(v) for k, v in sorted(self.file_of.items())},
             "namespaces": dict(sorted(self.namespaces.items())),
             "opaque": sorted(self.opaque),
+            "ambiguous": sorted(self.ambiguous),
+            "binders": {k: sorted(v) for k, v in sorted(self.binders.items())},
+            "nesting": {p: dict(sorted(n.items())) for p, n in sorted(self.nesting.items())},
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> EdgeEvidence:
+        """Facts written before a field existed read it as empty, as the verdict did then."""
         data = data or {}
         return cls((tuple(e) for e in data.get("edges", ())), data.get("node_files", {}),
-                   data.get("namespaces", {}), data.get("opaque", ()))
+                   data.get("namespaces", {}), data.get("opaque", ()), data.get("ambiguous", ()),
+                   data.get("binders", {}), data.get("nesting", {}))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -252,13 +338,21 @@ class EdgeEvidence:
         files: dict[str, set[str]] = collections.defaultdict(set)
         namespaces: dict[str, str] = {}
         opaque: set[str] = set()
+        ambiguous: set[str] = set()
+        binders: dict[str, set[str]] = collections.defaultdict(set)
+        nesting: dict[str, dict[str, list[str]]] = {}
         for part in parts:
-            edges.update(tuple(e) for e in (part or {}).get("edges", ()))
-            for key, paths in (part or {}).get("node_files", {}).items():
+            part = part or {}
+            edges.update(tuple(e) for e in part.get("edges", ()))
+            for key, paths in part.get("node_files", {}).items():
                 files[key].update(paths)
-            namespaces.update((part or {}).get("namespaces", {}))
-            opaque.update((part or {}).get("opaque", ()))
-        return cls(edges, files, namespaces, opaque).to_dict()
+            namespaces.update(part.get("namespaces", {}))
+            opaque.update(part.get("opaque", ()))
+            ambiguous.update(part.get("ambiguous", ()))
+            for key, paths in part.get("binders", {}).items():
+                binders[key].update(paths)
+            nesting.update(part.get("nesting", {}))
+        return cls(edges, files, namespaces, opaque, ambiguous, binders, nesting).to_dict()
 
     def imported_from(self, path: str):
         """``(target key, kinds)`` for every internal edge ``path`` states."""
@@ -278,11 +372,33 @@ class EdgeEvidence:
         return self._supertypes[key]
 
     def ground(self, title: str) -> str | None:
-        """The node key a title names in the checkout, or ``None``."""
-        for key in (dotted_key(title), canonical_key(title)):
+        """The node key a title names in the checkout, or ``None``.
+
+        An ambiguous key grounds only from a title spelled as a path, which
+        names the module; a dotted title may mean the bound name as well.
+        """
+        dotted = dotted_key(title)
+        names_file = "/" in title or canonical_key(title) != dotted
+        for key in (dotted, canonical_key(title)):
             if key in self.file_of:
-                return key
+                return None if key in self.ambiguous and not names_file else key
         return None
+
+    def _crefs(self, claimant: str, path: str) -> list[str]:
+        """The keys a bare constant in ``claimant`` is looked up under, innermost first.
+
+        Ruby's lexical scopes. A superclass is evaluated before its class
+        opens, so a class's own crefs leave it out, as the oracle's do; a
+        method's start at its class. A class written ``class A::B::C`` has
+        only the scopes its file records for it, since folding made
+        ``a.b.c`` look nested in ``a.b`` and ``a``.
+        """
+        parts = claimant.split(".")
+        recorded = self.nesting.get(path, {})
+        for i in range(len(parts), 0, -1):
+            if (head := ".".join(parts[:i])) in recorded:
+                return [".".join(parts[:j]) for j in range(len(parts) - 1, i - 1, -1)] + recorded[head]
+        return [".".join(parts[:j]) for j in range(len(parts) - 1, 0, -1)]
 
     def in_scope(self, name: str, claimant: str, files: Iterable[str],
                  imported: bool = False) -> str | None:
@@ -305,11 +421,14 @@ class EdgeEvidence:
         files = set(files)
 
         def usable(key: str) -> bool:
-            if key not in self.file_of or key in self.opaque:
+            if key not in self.file_of or key in self.opaque or key in self.ambiguous:
                 return False
             return not (imported and self.file_of[key] <= files)
 
-        for path in sorted(files):
+        # A re-exported claimant's names are its declaring file's: the
+        # ``__init__`` that binds it by import has a scope of its own.
+        declaring = files - self.binders.get(claimant, set())
+        for path in sorted(declaring or files):
             dialect = dialect_for(path)
             if dialect is None:
                 continue
@@ -324,9 +443,13 @@ class EdgeEvidence:
                         not namespace or claimant.startswith(namespace + ".")):
                     # Java's walk stops above the package, which comes after
                     # the imports; Ruby's runs to the outermost module.
-                    parts = claimant.split(".")
-                    stop = len(namespace.split(".")) if namespace and rule == "package" else 0
-                    candidates += [".".join([*parts[:i], name]) for i in range(len(parts), stop, -1)]
+                    if rule == "lexical":
+                        crefs = self._crefs(claimant, path)
+                    else:
+                        parts = claimant.split(".")
+                        stop = len(namespace.split(".")) if namespace else 0
+                        crefs = [".".join(parts[:i]) for i in range(len(parts), stop, -1)]
+                    candidates += [f"{c}.{name}" for c in crefs]
                 if rule == "package":
                     # A single-type import shadows a same-package type (JLS
                     # 6.4.1); an on-demand import ends ``.*`` and matches neither.

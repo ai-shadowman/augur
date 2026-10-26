@@ -180,6 +180,28 @@ REVIEW_FILES = {
     "pkg/sub.py": "",
     "pkg/beat.py": "class Service:\n    pass\n",
     "pkg/worker.py": "class Beat:\n    def start(self):\n        from pkg.beat import Service\n",
+    # Ruby: in ``class Jk::Commands::Build`` the lexical scope is the class
+    # alone, so ``Command`` is ``::Command``; and a superclass is evaluated
+    # before its class opens, so ``Box < Item`` never means ``Jk::Box::Item``.
+    "lib/jk.rb": "module Jk\n  module Commands\n    class Command\n    end\n  end\n  class Item\n  end\n"
+                 "  class Box\n    class Item\n    end\n  end\nend\n",
+    "lib/command.rb": "class Command\nend\n",
+    "lib/jk/commands/build.rb": "class Jk::Commands::Build < Command\nend\n",
+    "lib/jk/box.rb": "module Jk\n  class Box < Item\n  end\nend\n",
+    # Python: a re-exported claimant's base list is read in the declaring
+    # file, not in the ``__init__`` that binds an unrelated ``Base``.
+    "rx/__init__.py": "from .impl import Worker\nfrom .other import Base\n",
+    "rx/bases.py": "class Base(object):\n    pass\n",
+    "rx/other.py": "class Base(object):\n    pass\n",
+    "rx/impl.py": "from .bases import Base\n\nclass Worker(Base):\n    pass\n",
+    # ...but a file that declares the name and binds its fold is the declarer.
+    "rx/apps/beat.py": "from .. import beat\nfrom ..bases import Base\n\nclass Beat(Base):\n    pass\n",
+    "rx/beat.py": "",
+    # Python: ``cf.Config`` (bound by import) and ``cf/config.py`` fold to one key.
+    "cf/__init__.py": "from .settings import Config\n",
+    "cf/settings.py": "class Config(object):\n    pass\n",
+    "cf/config.py": "from .helpers import DEFAULTS\n",
+    "cf/helpers.py": "DEFAULTS = {}\n",
 }
 
 REVIEW_CASES = [
@@ -190,6 +212,14 @@ REVIEW_CASES = [
     ("WEB/A.TS", "WIDGET", "web/a.ts IMPORTS Widget", "confirmed", "lifted"),
     ("PKG.X", "PKG.Y", "pkg.X IMPORTS pkg.Y", "contradicted", "same-file"),
     ("PKG/WORKER.PY", "BEAT", "pkg/worker.py IMPORTS beat", "confirmed", "exact"),
+    ("JK::COMMANDS::BUILD", "COMMAND", "Jk::Commands::Build INHERITS Command", "confirmed", "exact"),
+    ("JK::BOX", "ITEM", "Jk::Box INHERITS Item", "confirmed", "exact"),
+    ("RX.WORKER", "BASE", "rx.Worker INHERITS Base", "confirmed", "lifted"),
+    ("RX.APPS.BEAT.BEAT", "BASE", "rx.apps.beat.Beat INHERITS Base", "confirmed", "lifted"),
+    # A dotted title on the folded key may mean either; a path names the module.
+    ("CF.CONFIG", "CF/SETTINGS.PY", "cf.Config IMPORTS cf.settings", "out-of-reach", "ungrounded"),
+    ("CF/CONFIG.PY", "CF/SETTINGS.PY", "cf/config.py IMPORTS cf.settings", "contradicted", "no-edge"),
+    ("CF/CONFIG.PY", "CF/HELPERS.PY", "cf/config.py IMPORTS cf.helpers", "confirmed", "exact"),
 ]
 
 
