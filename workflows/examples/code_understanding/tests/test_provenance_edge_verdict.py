@@ -38,6 +38,8 @@ FILES = {
     "pkg/h.py": """
         from os.path import join
 
+        resource = None
+
         def f():
             from os import sep
             return sep
@@ -85,6 +87,28 @@ FILES = {
           end
         end
     """,
+    # Ruby: StaticDrop's bare ``Drop`` is Jk::Drops::Drop by lexical
+    # nesting, not the top-level Drop a benchmark script declares.
+    "lib/jk/drops/drop.rb": """
+        module Jk
+          module Drops
+            class Drop
+            end
+          end
+        end
+    """,
+    "lib/jk/drops/static_drop.rb": """
+        module Jk
+          module Drops
+            class StaticDrop < Drop
+            end
+          end
+        end
+    """,
+    "bench/top.rb": """
+        class Drop
+        end
+    """,
     "pkg/d.py": """
         from ...nowhere import thing
 
@@ -110,6 +134,11 @@ CASES = [
     # A module-level binding, and a re-export chased to its declaring file.
     ("PKG/G.PY", "PKG.VERSION", "pkg/g.py IMPORTS pkg.VERSION", "confirmed", "lifted"),
     ("PKG/G.PY", "PKG.BASE", "pkg/g.py IMPORTS pkg.Base", "confirmed", "lifted"),
+    # A bare name is looked up where the claimant uses it, then globally.
+    ("JK::DROPS::STATICDROP", "DROP", "Jk::Drops::StaticDrop INHERITS Drop", "confirmed", "exact"),
+    ("PKG/G.PY", "C", "pkg/g.py IMPORTS C", "confirmed", "lifted"),
+    # An assignment's value is unknown, so a bare name never resolves to one.
+    ("PKG/H.PY", "RESOURCE", "pkg/h.py IMPORTS resource", "out-of-reach", "ungrounded"),
     ("PKG/B.PY", "PKG/A.PY", "pkg/b.py IMPORTS pkg.a", "contradicted", "reversed"),
     ("PKG.A.A", "PKG/B.PY", "pkg.a.A INHERITS pkg.b", "contradicted", "wrong-kind"),
     ("PKG.A.A", "PKG.A.HELPER", "pkg.a.A IMPORTS pkg.a.Helper", "contradicted", "same-file"),
@@ -170,10 +199,11 @@ class TestImportBindings(unittest.TestCase):
                 self.assertEqual(self.ev.files(self.ev.ground(title)), files)
 
     def test_every_edge_dialect_records_a_rule(self):
-        from provenance.edge_evidence import IMPORT_BINDS
+        from provenance.edge_evidence import IMPORT_BINDS, SCOPES
         from provenance.edges import RESOLVERS
 
         self.assertEqual(set(IMPORT_BINDS), set(RESOLVERS))
+        self.assertEqual(set(SCOPES), set(RESOLVERS))
 
 
 class TestFactsCarryEvidence(unittest.TestCase):
@@ -243,8 +273,8 @@ class TestVerdictByReason(unittest.TestCase):
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them.
 PINNED = {
-    "parser-full-120b": (801, 3, 3142, 2),
-    "parser-full-120b-typed": (806, 9, 2118, 1),
+    "parser-full-120b": (839, 3, 3104, 2),
+    "parser-full-120b-typed": (866, 10, 2057, 1),
 }
 
 

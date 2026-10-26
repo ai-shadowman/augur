@@ -121,11 +121,39 @@ def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
     return _encloses(ev, kind, a, b, fa) if enclosing else None
 
 
+def _bare(title: str) -> bool:
+    return "." not in dotted_key(title)
+
+
+def _ground(ev: EdgeEvidence, source: str, target: str, subject: str) -> tuple[str | None, str | None]:
+    """Both endpoints' node keys, a bare one looked up where the other uses it.
+
+    Not where the bare one is the claim's subject: the subject's name is its
+    own, and the object's scope says nothing about it. And not where the
+    other's file imports the name from outside the checkout: ``try: import
+    pwd`` / ``except ImportError: pwd = None`` declares a local ``pwd``, and
+    "platforms IMPORTS pwd" still means the library.
+    """
+    ks, kt = ev.ground(source), ev.ground(target)
+
+    def scoped(bare: str, key: str, fallback: str | None) -> str | None:
+        files = ev.files(key)
+        if ev.external_kinds(files, dotted_key(bare)):
+            return fallback
+        return ev.in_scope(dotted_key(bare), key, files) or fallback
+
+    if _bare(source) and kt and subject != edge_types.SOURCE:
+        ks = scoped(source, kt, ks)
+    elif _bare(target) and ks and subject != edge_types.TARGET:
+        kt = scoped(target, ks, kt)
+    return ks, kt
+
+
 def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str) -> tuple[str, str]:
     """``(verdict, reason)`` for one edge of type ``kind``."""
     if kind not in CHECKABLE:
         return OUT_OF_REACH, "type"
-    ks, kt = ev.ground(source), ev.ground(target)
+    ks, kt = _ground(ev, source, target, subject)
     fs, ft = ev.files(ks), ev.files(kt)
     if subject == edge_types.TARGET:
         orders = [(kt, ks, ft, fs, source)]

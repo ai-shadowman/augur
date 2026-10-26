@@ -47,13 +47,28 @@ EdgeRow = tuple[str, str, "str | None", str, str]
 IMPORT_BINDS = {"python": True, "java": False, "typescript": False, "ruby": False}
 
 
-def _binds(dialect) -> bool:
-    if dialect.name not in IMPORT_BINDS:
+#: Where a bare name used in a file is looked up before the outermost scope,
+#: per dialect. ``module``: the file's own namespace, which since Python's
+#: import-bound names are keyed there covers ``from x import Name`` too.
+#: ``package``: the claimant's enclosing types down to the file's declared
+#: package, then the file's imports. ``lexical``: Ruby's ``Module.nesting``,
+#: the claimant's enclosing modules innermost first. A TypeScript import
+#: names a file, not the binding, so only the file's own names are reached.
+#: An unrecorded dialect raises.
+SCOPES = {"python": "module", "typescript": "module", "java": "package", "ruby": "lexical"}
+
+
+def _rule(table: dict, dialect, what: str):
+    if dialect.name not in table:
         raise ValueError(
-            f"no import-binding rule recorded for dialect {dialect.name!r}; "
-            "add it to edge_evidence.IMPORT_BINDS with the reason"
+            f"no {what} rule recorded for dialect {dialect.name!r}; "
+            f"add it to edge_evidence with the reason"
         )
-    return IMPORT_BINDS[dialect.name]
+    return table[dialect.name]
+
+
+def _binds(dialect) -> bool:
+    return _rule(IMPORT_BINDS, dialect, "import-binding")
 
 
 def _import_bindings(source: str, dialect, prefix: str, written_to: dict[str, str]):
@@ -82,8 +97,17 @@ def _import_bindings(source: str, dialect, prefix: str, written_to: dict[str, st
                 yield dotted_key(f"{prefix}.{alias or imported}"), target
 
 
-def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> dict[str, set[str]]:
+def node_files(
+    root: Path, inventory: Inventory, edges: Iterable[Edge],
+) -> tuple[dict[str, set[str]], dict[str, str], set[str]]:
     """Every groundable node key in the checkout, to the files that declare it.
+
+    Also returns each file's namespace (``declarations.namespace_for``),
+    which is where a bare name the file uses is looked up first, and the
+    **opaque** keys: names whose value the oracle cannot see, because an
+    assignment (``pwd = try_import("pwd")``) or an import from outside the
+    checkout (``import os``) binds them and nothing declares them. A bare
+    name must not resolve to one, since what it holds is unknown.
 
     A name bound by import is keyed to the file that binds it and, chased
     through the import, to the file that declares it. ``celery.app.app_or_default``
@@ -98,6 +122,9 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> dict[
             written_to[e.path][e.written] = e.target
 
     found: dict[str, set[str]] = collections.defaultdict(set)
+    namespaces: dict[str, str] = {}
+    declared: set[str] = set()
+    opaque: set[str] = set()
     chase: list[tuple[str, str]] = []
     for path in sorted(inventory.paths):
         dialect = dialect_for(path)
@@ -105,15 +132,23 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> dict[
             continue
         source = (root / path).read_text(encoding="utf-8", errors="replace")
         found[canonical_key(path)].add(path)
-        prefix = namespace_for(path, source, dialect)
+        prefix = namespaces[path] = namespace_for(path, source, dialect)
         read = symbols.symbols_in(source, dialect)
-        for name in (*read.classes, *read.functions, *read.methods, *read.bindings):
-            found[dotted_key(f"{prefix}.{name}" if prefix else name)].add(path)
+        for name in (*read.classes, *read.functions, *read.methods):
+            key = dotted_key(f"{prefix}.{name}" if prefix else name)
+            found[key].add(path)
+            declared.add(key)
+        for name in read.bindings:
+            key = dotted_key(f"{prefix}.{name}" if prefix else name)
+            found[key].add(path)
+            opaque.add(key)
         if _binds(dialect):
             for bound, target in _import_bindings(source, dialect, prefix, written_to[path]):
                 found[bound].add(path)
                 if target:
                     chase.append((bound, target))
+                else:
+                    opaque.add(bound)
     # Oracle edge sources (Java's type key, Python's module key) are node keys
     # too, and resolve to the file that states them.
     for e in edges:
@@ -127,13 +162,16 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> dict[
             if extra:
                 found[bound] |= extra
                 changed = True
-    return found
+    return found, namespaces, opaque - declared - {b for b, _ in chase}
 
 
 class EdgeEvidence:
     """The oracle's edges, indexed the ways the verdict asks of them."""
 
-    def __init__(self, edges: Iterable[EdgeRow], files: dict[str, Iterable[str]]):
+    def __init__(self, edges: Iterable[EdgeRow], files: dict[str, Iterable[str]],
+                 namespaces: dict[str, str] | None = None, opaque: Iterable[str] = ()):
+        self.namespaces: dict[str, str] = dict(namespaces or {})
+        self.opaque: frozenset[str] = frozenset(opaque)
         self.edges: list[EdgeRow] = sorted(edges, key=lambda e: tuple(x or "" for x in e))
         self.file_of: dict[str, set[str]] = {k: set(v) for k, v in files.items()}
         self.internal: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
@@ -165,7 +203,7 @@ class EdgeEvidence:
         inventory = Inventory(checkout_files(root), root)
         scan = scan_checkout(root, inventory)
         rows = [(e.kind, e.source, e.target, e.target_class, e.path) for e in scan.edges]
-        return cls(rows, node_files(root, inventory, scan.edges))
+        return cls(rows, *node_files(root, inventory, scan.edges))
 
     def __bool__(self) -> bool:
         return bool(self.edges)
@@ -174,23 +212,30 @@ class EdgeEvidence:
         return {
             "edges": [list(e) for e in self.edges],
             "node_files": {k: sorted(v) for k, v in sorted(self.file_of.items())},
+            "namespaces": dict(sorted(self.namespaces.items())),
+            "opaque": sorted(self.opaque),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> EdgeEvidence:
         data = data or {}
-        return cls((tuple(e) for e in data.get("edges", ())), data.get("node_files", {}))
+        return cls((tuple(e) for e in data.get("edges", ())), data.get("node_files", {}),
+                   data.get("namespaces", {}), data.get("opaque", ()))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any]]) -> dict[str, Any]:
         """Union serialised evidence from several repositories, as ``merge_facts`` does."""
         edges: set[tuple] = set()
         files: dict[str, set[str]] = collections.defaultdict(set)
+        namespaces: dict[str, str] = {}
+        opaque: set[str] = set()
         for part in parts:
             edges.update(tuple(e) for e in (part or {}).get("edges", ()))
             for key, paths in (part or {}).get("node_files", {}).items():
                 files[key].update(paths)
-        return cls(edges, files).to_dict()
+            namespaces.update((part or {}).get("namespaces", {}))
+            opaque.update((part or {}).get("opaque", ()))
+        return cls(edges, files, namespaces, opaque).to_dict()
 
     def imported_from(self, path: str):
         """``(target key, kinds)`` for every internal edge ``path`` states."""
@@ -214,6 +259,46 @@ class EdgeEvidence:
         for key in (dotted_key(title), canonical_key(title)):
             if key in self.file_of:
                 return key
+        return None
+
+    def in_scope(self, name: str, claimant: str, files: Iterable[str]) -> str | None:
+        """The node key a bare ``name`` means where ``claimant`` uses it, or ``None``.
+
+        Tried innermost first per :data:`SCOPES`. ``None`` leaves the caller to
+        the outermost scope, an exact global key, which is a top-level module
+        or constant in every dialect here. What it never does is take the one
+        declaration anywhere that happens to share the name: jekyll's
+        ``StaticFileDrop`` inherits ``Jekyll::Drops::Drop``, not the
+        top-level ``Drop`` a benchmark script declares. Nor an opaque name: a
+        bare ``PWD`` where ``pwd = try_import("pwd")`` ran means the library,
+        and the oracle cannot see that.
+        """
+        for path in sorted(files):
+            dialect = dialect_for(path)
+            if dialect is None:
+                continue
+            rule = _rule(SCOPES, dialect, "scope")
+            namespace = self.namespaces.get(path, "")
+            candidates = []
+            if rule == "module":
+                candidates.append(f"{namespace}.{name}" if namespace else name)
+            else:
+                # Only a symbol has enclosing types; a file's key is a path.
+                if claimant != canonical_key(path) and (
+                        not namespace or claimant.startswith(namespace + ".")):
+                    parts = claimant.split(".")
+                    floor = len(namespace.split(".")) if namespace else 1
+                    candidates += [".".join([*parts[:i], name]) for i in range(len(parts), floor - 1, -1)]
+                if rule == "package":
+                    if namespace:
+                        candidates.append(f"{namespace}.{name}")
+                    candidates += sorted(
+                        t for k, _, t, _, p in self.edges
+                        if p == path and k == IMPORTS and t and t.endswith("." + name)
+                    )
+            for key in candidates:
+                if key in self.file_of and key not in self.opaque:
+                    return key
         return None
 
     def files(self, key: str | None) -> set[str]:
