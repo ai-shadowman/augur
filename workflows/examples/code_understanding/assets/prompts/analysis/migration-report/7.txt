@@ -20,3 +20,5 @@ Assess regression risks for the proposed application migration in each repositor
 Tie every risk to a detected dependency, affected application component, or evidenced integration contract. Describe the potential failure, why the proposed change could trigger it, supporting evidence, and checks before and after migration.
 Distinguish documented incompatibilities from plausible risks requiring verification. Address missing versions and conflicting declarations as uncertainty, not proven breakage.
 Recommend characterization coverage, incremental validation, acceptance criteria, and rollback or data-restoration checks where appropriate to the detected application. Do not assume a language, testing framework, deployment platform, or database migration.
+
+Account for supplied ignored locations as analysis coverage gaps. Recommend checking whether builds depend on these locations and validating them separately. A symlink alone is not evidence of a build defect; do not infer dependencies or contents of excluded paths.

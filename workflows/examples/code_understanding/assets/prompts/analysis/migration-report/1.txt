@@ -21,3 +21,6 @@ For each repository, include a "Detected Application Stack" section and a "Depen
 
 Include detected languages, runtimes, frameworks, build tools, application servers, databases, and libraries. Do not treat an import as proof of a version or a declaration as proof of active usage.
 Keep repository-specific and module-specific versions separate. Flag conflicting versions and missing evidence in a short "Assessment Gaps" section; do not claim the inventory is exhaustive when retrieval is incomplete.
+
+Use the supplied ignored locations to qualify analysis coverage where relevant.
+Do not claim that excluded content was analyzed or infer its contents.

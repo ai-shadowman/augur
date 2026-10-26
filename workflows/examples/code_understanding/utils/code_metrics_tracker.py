@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import html
 import logging
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+from utils.repository_ignore import RepositoryIgnorePolicy, skip_unsafe_symlink
 
 # Extension and file classification maps
 EXT_TO_LANGUAGE: Dict[str, str] = {
@@ -245,6 +248,7 @@ class CodeMetricsTracker:
         self.total_repo_lines: int = 0
         self.languages: Dict[str, Dict[str, int]] = {}
         self.skipped_large_files: List[str] = []
+        self.ignored_locations: Dict[str, Dict[str, Any]] = {}
         self._scanned_files: Set[str] = set()
         self._merged_files: Set[str] = set()
         self._merged_runs: Set[str] = set()
@@ -255,6 +259,7 @@ class CodeMetricsTracker:
         self.total_repo_lines = 0
         self.languages.clear()
         self.skipped_large_files.clear()
+        self.ignored_locations.clear()
         self._scanned_files.clear()
         self._merged_files.clear()
         self._merged_runs.clear()
@@ -328,6 +333,9 @@ class CodeMetricsTracker:
         root: str,
         fname: str,
         filter_languages: Optional[Set[str]] = None,
+        *,
+        repository_root: Optional[Path] = None,
+        warned_symlinks: Optional[Set[str]] = None,
     ) -> Tuple[str, str, Optional[str]]:
         """Resolves original filename, extension, and language for generated .txt files."""
         stem = fname[:-4] if fname.endswith(".txt") else fname
@@ -345,6 +353,16 @@ class CodeMetricsTracker:
             os.path.join(parent_dir, "target", f"{stem}_metadata.txt"),
         ]
         for meta_path in meta_candidates:
+            if repository_root is not None:
+                if skip_unsafe_symlink(
+                    meta_path, repository_root,
+                    warned_symlinks if warned_symlinks is not None else set(),
+                ):
+                    continue
+                try:
+                    Path(meta_path).resolve().relative_to(repository_root.resolve())
+                except (OSError, RuntimeError, ValueError):
+                    continue
             if os.path.isfile(meta_path):
                 orig_fname, orig_ext, lang = cls._read_metadata_file(meta_path)
                 if orig_fname:
@@ -484,10 +502,19 @@ class CodeMetricsTracker:
             for fl in filter_languages:
                 self.languages.setdefault(fl, _empty_lang_stats())
 
-        for root, dirs, files in os.walk(source_path):
-            dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        repository_root = Path(os.path.abspath(source_path))
+        warned_symlinks: set[str] = set()
+        for root, dirs, files in os.walk(source_path, followlinks=False):
+            dirs[:] = [
+                d for d in dirs
+                if not skip_unsafe_symlink(Path(root) / d, repository_root, warned_symlinks)
+                and d not in EXCLUDED_DIRS and not d.startswith(".")
+            ]
 
             for fname in files:
+                fpath = os.path.join(root, fname)
+                if skip_unsafe_symlink(fpath, repository_root, warned_symlinks):
+                    continue
                 if fname.startswith(".") and fname not in (".env.example", ".gitignore"):
                     continue
                 if fname.endswith("_metadata.txt") or fname in (
@@ -496,11 +523,11 @@ class CodeMetricsTracker:
                 ):
                     continue
 
-                fpath = os.path.join(root, fname)
                 resolved_lang = None
                 if fname.endswith(".txt"):
                     base_fname, ext, resolved_lang = self._inspect_txt_file(
-                        fpath, root, fname, filter_languages
+                        fpath, root, fname, filter_languages,
+                        repository_root=repository_root, warned_symlinks=warned_symlinks,
                     )
                 else:
                     base_fname = fname
@@ -589,6 +616,14 @@ class CodeMetricsTracker:
 
         self._recalculate_totals()
 
+    def record_ignored_locations(self, policy: RepositoryIgnorePolicy) -> None:
+        """Snapshot ingestion exclusions separately from repository size measurement."""
+        key = self.git_slug or self.git_repo or "repository"
+        self.ignored_locations[key] = {
+            "git_repo": self.git_repo,
+            "locations": policy.ignored_locations,
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         """Serializes code metrics to a dictionary."""
         d = {
@@ -599,6 +634,7 @@ class CodeMetricsTracker:
             "total_blank_lines": sum(l.get("blank_lines", 0) for l in self.languages.values()),
             "languages": self.languages,
             "skipped_large_files": self.skipped_large_files,
+            "ignored_locations": self.ignored_locations,
         }
         for attr in ("git_slug", "git_repo", "run_id"):
             val = getattr(self, attr)
@@ -618,23 +654,27 @@ class CodeMetricsTracker:
         tracker.total_repo_lines = data.get("total_repo_lines", 0)
         tracker.languages = data.get("languages", {})
         tracker.skipped_large_files = data.get("skipped_large_files", [])
+        tracker.ignored_locations = data.get("ignored_locations", {
+            tracker.git_slug or tracker.git_repo or "repository": {
+                "git_repo": tracker.git_repo, "locations": None,
+            },
+        })
         return tracker
 
     def save_to_file(self, filepath: str):
         """Serializes and writes code metrics to a JSON file."""
         if not filepath:
             return
+        payload = self.to_dict()
         if self.total_repo_files == 0 and os.path.isfile(filepath):
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    if json.load(f).get("total_repo_files", 0) > 0:
-                        return
-            except Exception:
-                pass
+            existing = self.load_from_file(filepath)
+            if existing and existing.total_repo_files > 0:
+                existing._merge_ignored_locations(self.ignored_locations)
+                payload = existing.to_dict()
 
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+            json.dump(payload, f, indent=2)
 
     @classmethod
     def load_from_file(cls, filepath: str) -> Optional["CodeMetricsTracker"]:
@@ -675,7 +715,16 @@ class CodeMetricsTracker:
             if sf not in self.skipped_large_files:
                 self.skipped_large_files.append(sf)
 
+        self._merge_ignored_locations(other.ignored_locations)
         self._merged_files.add(norm_path)
+
+    def _merge_ignored_locations(self, inventories: Dict[str, Dict[str, Any]]) -> None:
+        for key, inventory in inventories.items():
+            current = self.ignored_locations.get(key)
+            if current is None or current["locations"] is None:
+                self.ignored_locations[key] = inventory
+            elif inventory["locations"] is not None:
+                current["locations"].update(inventory["locations"])
 
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs file counts and line metrics to MLflow."""
@@ -887,6 +936,38 @@ class CodeMetricsTracker:
         return "\n".join(lines)
 
     def format_markdown_section(self) -> str:
+        """Report measured scope alongside ingestion exclusions."""
+        return self._format_scope_summary() + self.format_ignored_locations_section()
+
+    def format_ignored_locations_section(self) -> str:
+        """Render recorded exclusions without asking an LLM to reproduce paths."""
+        def escape(value: str) -> str:
+            return (html.escape(value).replace("|", "&#124;").replace("`", "&#96;")
+                    .replace("\r", "&#13;").replace("\n", "&#10;"))
+
+        lines = ["\n### Ignored / unexplored locations\n"]
+        if not self.ignored_locations:
+            lines.append("Ignored locations were not recorded for this analysis.")
+        for key, inventory in sorted(self.ignored_locations.items()):
+            label = inventory.get("git_repo") or key
+            lines.append(f"\n**Repository: {escape(label)}** ({escape(key)})\n")
+            locations = inventory["locations"]
+            if locations is None:
+                lines.append("Ignored locations were not recorded for this repository.")
+            elif not locations:
+                lines.append("None encountered during ingestion. Excluded directories were not searched.")
+            else:
+                lines.extend(["| Unexplored location | Reason |", "| --- | --- |"])
+                for path, reason in sorted(locations.items()):
+                    lines.append(f"| {escape(path)} | {escape(reason)} |")
+        lines.append(
+            "\nThese locations were not explored. Contents of excluded directories are not listed. "
+            "Safe internal file symlinks remain eligible for analysis. Check whether builds depend on "
+            "skipped locations; a symlink alone does not establish a build defect."
+        )
+        return "\n".join(lines) + "\n"
+
+    def _format_scope_summary(self) -> str:
         """Returns a Markdown section containing the scope text and formatted ASCII table."""
         if not self.languages:
             if self.total_repo_files > 0:

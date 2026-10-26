@@ -1,9 +1,11 @@
 import json
+import builtins
 import os
 import sys
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Ensure code_understanding package is on sys.path
@@ -157,6 +159,56 @@ class TestCodeMetricsTracker(unittest.TestCase):
 
         self.assertGreaterEqual(self.tracker.total_repo_files, 3)
         self.assertGreaterEqual(self.tracker.total_repo_lines, 5)
+
+    def test_measure_repository_never_opens_unsafe_links(self):
+        root = Path(self.temp_dir) / "repo"
+        root.mkdir()
+        outside = Path(self.temp_dir) / "outside.py"
+        outside.write_text("secret = True\n", encoding="utf-8")
+        (root / "visible.py").write_text("safe = True\n", encoding="utf-8")
+        (root / "internal.py").symlink_to("visible.py")
+        for name in ("external.py", "external.txt"):
+            (root / name).symlink_to(outside)
+        (root / "external-dir").symlink_to(root.parent, target_is_directory=True)
+        (root / "internal-dir").symlink_to(".", target_is_directory=True)
+        (root / "broken.py").symlink_to("missing.py")
+        (root / "loop.py").symlink_to("loop.py")
+        real_open = builtins.open
+        opened = []
+
+        def recording_open(path, *args, **kwargs):
+            opened.append(os.fspath(path))
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=recording_open), self.assertLogs(level="WARNING") as logs:
+            self.tracker.measure_repository(str(root))
+
+        self.assertEqual(self.tracker.total_repo_files, 2)
+        self.assertEqual(self.tracker.total_repo_lines, 2)
+        for name in ("external.py", "external.txt", "broken.py", "loop.py"):
+            self.assertNotIn(str(root / name), opened)
+            self.assertTrue(any(name in message for message in logs.output))
+        self.assertEqual(len(logs.output), 5)
+
+    def test_txt_metadata_lookup_never_opens_external_symlink(self):
+        root = Path(self.temp_dir) / "repo"
+        root.mkdir()
+        (root / "app.txt").write_text("# This file is located at app.py\nx = 1\n", encoding="utf-8")
+        outside = Path(self.temp_dir) / "secret.txt"
+        outside.write_text("File: stolen.java\nLanguage: java\n", encoding="utf-8")
+        (root / "app_metadata.txt").symlink_to(outside)
+        real_open = builtins.open
+        opened = []
+
+        def recording_open(path, *args, **kwargs):
+            opened.append(os.fspath(path))
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=recording_open):
+            self.tracker.measure_repository(str(root))
+
+        self.assertNotIn(str(root / "app_metadata.txt"), opened)
+        self.assertEqual(self.tracker.languages["python"]["source_files"], 1)
 
     def test_measure_repository_excluded_dirs(self):
         """Verify excluded directories like .git and node_modules are not counted."""

@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-python-3.11-2024b-20250904-858c895
+ARG BASE_IMAGE=quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-python-3.12-pr-2113
 FROM ${BASE_IMAGE}
 
 USER 1001
@@ -8,7 +8,13 @@ ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
 RUN mkdir -p /opt/app-root/src/tiktoken_cache
 COPY --chown=1001:0 cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
+ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
+
 COPY requirements.txt ./requirements.txt
 
+# Remove workbench-only extras from the base image that pipeline steps never use.
+# Their pins (urllib3<2, pydantic<2, protobuf<5, click==8.1.8, opentelemetry-sdk~=1.36)
+# conflict with requirements.txt and only produce dependency-resolver warnings at build time.
 RUN pip install --upgrade pip \
+	&& pip uninstall -y odh-elyra codeflare-sdk appengine-python-standard kfp-kubernetes opentelemetry-exporter-prometheus \
 	&& pip install -r requirements.txt

@@ -3,6 +3,7 @@ import os
 import sys
 from contextlib import nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+from utils.request_timing import timing_span
 
 from utils.kubeflow_utils import setup_logging
 setup_logging()
@@ -76,11 +77,20 @@ def prepare_environment(source_path: str,
 
         cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
         with cm_clone:
-            clone_from_repo(git_repo, 
-                            source_path, 
+            clone_from_repo(git_repo,
+                            source_path,
                             branch=git_branch,
                             git_username=git_username,
                             git_token=git_token)
+
+        # Declared dependencies have to be read while the checkout exists;
+        # indexing runs in another pod, long after reset_environment removes
+        # it. Syft is skipped: it reports resolved versions, and the stitch
+        # consumes declared constraints, which come from the manifests.
+        cm_facts = dur_tracker.measure(stage="Data Generation", step="Extract Provenance Facts") if dur_tracker else nullcontext()
+        with cm_facts:
+            from provenance.pipeline import capture as capture_provenance
+            capture_provenance(source_path, target_path, run_syft=False)
 
     except Exception as e:
 
@@ -256,7 +266,8 @@ def get_parsed_code_metadata(df, language, config=False):
 
         converted_df = None
         try:
-            converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
+            with timing_span("sdg.generate_batch", "batch"):
+                converted_dataset = flow.generate(dataset, max_concurrency=llm_max_concurrency)
             converted_df = converted_dataset.to_pandas()
         finally:
             # Fallback token accounting if callbacks did not intercept async Flow executions or captured 0 tokens
@@ -287,6 +298,12 @@ def load_external_data(source_path: str, ignore_policy=None) -> dict:
     ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
 
     if not os.path.isdir(code_metadata_dir):
+        if os.path.islink(code_metadata_dir):
+            ignore_policy.filter_files(source_path, [code_utils.CODE_METADATA_DIR])
+        return result
+    if not ignore_policy.filter_directories(source_path, [code_utils.CODE_METADATA_DIR]):
+        return result
+    if os.path.islink(code_metadata_dir):
         return result
 
     for root, dirs, files in os.walk(code_metadata_dir):
@@ -508,6 +525,7 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
         except Exception:
             dur_tracker = None
 
+        ignore_policy = ignore_policy or RepositoryIgnorePolicy.from_repository(source_path)
         parse_cm = dur_tracker.measure(stage="Data Generation", step=f"Parse Raw Code ({step_label})") if dur_tracker else nullcontext()
         with parse_cm:
             code_df = generate_raw_dataset(source_path, target_path, git_repo, git_branch,
@@ -555,7 +573,8 @@ def generate_code_and_meta(git_repo: str, git_branch: str, language: str,
             pass
         try:
             from utils.code_metrics_tracker import CodeMetricsTracker
-            c_tr = CodeMetricsTracker.get_instance()
+            c_tr = CodeMetricsTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+            c_tr.record_ignored_locations(ignore_policy)
             c_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
         except Exception:
             pass
@@ -666,6 +685,7 @@ class DataGenerationPipeline:
         except Exception:
             code_tracker = None
 
+        ignore_policy = None
         try:
             if dur_tracker:
                 try:
@@ -675,9 +695,10 @@ class DataGenerationPipeline:
                 with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
                     prepare_environment(source_path=source_path, target_path=target_path,
                                         git_repo=git_repo, git_branch=git_branch)
+                    ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
 
                     with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
-                        languages = detect_languages(source_path)
+                        languages = detect_languages(source_path, ignore_policy)
 
                     if code_tracker:
                         try:
@@ -687,7 +708,7 @@ class DataGenerationPipeline:
                             logging.debug(f"Code metrics measurement failed: {e}")
 
                     with dur_tracker.measure(stage="Data Generation", step="Load External Data"):
-                        external_metadata = load_external_data(source_path)
+                        external_metadata = load_external_data(source_path, ignore_policy)
 
                     for language in languages:
                         for config in [False, True]:
@@ -695,17 +716,20 @@ class DataGenerationPipeline:
                                 git_repo=git_repo, git_branch=git_branch,
                                 language=language, source_path=source_path, target_path=target_path,
                                 config=config, multi_repo=multi_repo, external_metadata=external_metadata,
+                                ignore_policy=ignore_policy,
                             )
+                    ignore_policy.log_summary()
             else:
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
-                languages = detect_languages(source_path)
+                ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
+                languages = detect_languages(source_path, ignore_policy)
                 if code_tracker:
                     try:
                         code_tracker.measure_repository(source_path, languages=languages)
                     except Exception as e:
                         logging.debug(f"Code metrics measurement failed: {e}")
-                external_metadata = load_external_data(source_path)
+                external_metadata = load_external_data(source_path, ignore_policy)
                 for language in languages:
                     for config in [False, True]:
                         generate_code_and_meta(
@@ -786,6 +810,8 @@ class DataGenerationPipeline:
             try:
                 from utils.code_metrics_tracker import CodeMetricsTracker
                 code_tr = CodeMetricsTracker.get_instance()
+                if ignore_policy is not None:
+                    code_tr.record_ignored_locations(ignore_policy)
                 if target_path:
                     code_tr.save_to_file(os.path.join(target_path, "project_metrics.json"))
                 code_tr.log_to_mlflow()

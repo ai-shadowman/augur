@@ -150,6 +150,16 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                             os.remove(fpath)
                         except Exception:
                             pass
+                # The provenance sidecars rode along with the code metadata.
+                # Lift them out of the corpus and merge them at the project
+                # root, where the in-pipeline stitch stage reads them.
+                try:
+                    from provenance.pipeline import consolidate as consolidate_provenance
+                    consolidate_provenance(f"{graphrag_source_path}/input",
+                                           graphrag_source_path,
+                                           multi_repo=multi_repo)
+                except Exception as e:
+                    logging.warning(f"Provenance facts not consolidated: {e}")
                 txt_files = [f for _, _, files in os.walk(f"{graphrag_source_path}/input") for f in files if f.endswith(".txt")]
                 if not txt_files:
                     raise RuntimeError(

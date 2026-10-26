@@ -15,6 +15,40 @@ AUGURIGNORE_FILENAME = ".augurignore"
 _LOG = logging.getLogger(__name__)
 
 
+def skip_unsafe_symlink(
+    path: str | os.PathLike[str],
+    repository_root: Path,
+    warned_paths: set[str],
+    ignored_locations: dict[str, str] | None = None,
+) -> bool:
+    """Skip unsafe content links, warning once per lexical path for this scan."""
+    candidate = Path(path)
+    if not candidate.is_symlink():
+        return False
+
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError:
+        reason = "symlink target does not exist"
+    except (OSError, RuntimeError):
+        reason = "symlink target cannot be resolved"
+    else:
+        try:
+            resolved.relative_to(repository_root.resolve())
+        except ValueError:
+            reason = "symlink target is outside repository root"
+        else:
+            return False
+
+    relative_path = Path(os.path.relpath(candidate, repository_root)).as_posix()
+    if ignored_locations is not None:
+        ignored_locations[relative_path] = reason
+    if relative_path not in warned_paths:
+        warned_paths.add(relative_path)
+        _LOG.warning("Skipping %s: %s", relative_path, reason)
+    return True
+
+
 class RepositoryIgnoreError(ValueError):
     """A repository's root .augurignore could not be safely applied."""
 
@@ -37,6 +71,8 @@ class RepositoryIgnorePolicy:
         self._ignored_files: set[str] = set()
         self._custom_ignored_directories: set[str] = set()
         self._custom_ignored_files: set[str] = set()
+        self._warned_symlinks: set[str] = set()
+        self._ignored_locations: dict[str, str] = {}
 
     @classmethod
     def from_repository(
@@ -68,6 +104,11 @@ class RepositoryIgnorePolicy:
                 ", ".join(active_patterns),
             )
         return cls(root, spec, pattern_count)
+
+    @property
+    def ignored_locations(self) -> dict[str, str]:
+        """Skipped symlinks and .augurignore exclusions encountered during ingestion."""
+        return dict(self._ignored_locations)
 
     @property
     def active_pattern_count(self) -> int:
@@ -154,16 +195,32 @@ class RepositoryIgnorePolicy:
         built_in_names: Collection[str],
     ) -> list[str]:
         kept = []
-        parent = Path(str(parent_dir).replace("\\", "/"))
+        parent = Path(parent_dir)
         for name in names:
             candidate = parent / name
-            custom_excluded = self.is_ignored(candidate, is_directory=is_directory)
-            excluded = name in built_in_names or custom_excluded
+            relative_path = self._relative_path(candidate, is_directory=is_directory)
+            unsafe_symlink = skip_unsafe_symlink(
+                candidate,
+                self._repository_root,
+                self._warned_symlinks,
+                self._ignored_locations,
+            )
+            custom_excluded = not unsafe_symlink and self.is_ignored(
+                candidate, is_directory=is_directory
+            )
+            excluded = unsafe_symlink or name in built_in_names or custom_excluded
+            if not unsafe_symlink and (custom_excluded or candidate.is_symlink()):
+                ignored_path = Path(os.path.relpath(candidate, self._repository_root)).as_posix()
+                if custom_excluded:
+                    self._ignored_locations[ignored_path] = "excluded by .augurignore"
+                elif is_directory:
+                    self._ignored_locations[ignored_path] = "directory symlink was not traversed"
+                elif name in built_in_names:
+                    self._ignored_locations[ignored_path] = "excluded by built-in rules"
             if not excluded:
                 kept.append(name)
                 continue
 
-            relative_path = self._relative_path(candidate, is_directory=is_directory)
             relative_path = relative_path.rstrip("/")
             if is_directory:
                 self._ignored_directories.add(relative_path)
