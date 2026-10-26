@@ -162,8 +162,8 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
     """
     ks, kt = ev.ground(source), ev.ground(target)
 
-    def scoped(bare: str, key: str, fallback: str | None) -> str | None:
-        files = ev.files(key)
+    def scoped(bare: str, key: str, title: str, fallback: str | None) -> str | None:
+        files = ev.title_files(title, key)
         if ev.external_kinds(files, dotted_key(bare)):
             return fallback
         if found := ev.in_scope(dotted_key(bare), key, files, imported=kind == IMPORTS):
@@ -175,9 +175,9 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
         return fallback
 
     if _bare(source) and kt and subject != edge_types.SOURCE:
-        ks = scoped(source, kt, ks)
+        ks = scoped(source, kt, target, ks)
     elif _bare(target) and ks and subject != edge_types.TARGET:
-        kt = scoped(target, ks, kt)
+        kt = scoped(target, ks, source, kt)
     return ks, kt
 
 
@@ -186,7 +186,7 @@ def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str)
     if kind not in CHECKABLE:
         return OUT_OF_REACH, "type"
     ks, kt = _ground(ev, kind, source, target, subject)
-    fs, ft = ev.files(ks), ev.files(kt)
+    fs, ft = ev.title_files(source, ks), ev.title_files(target, kt)
     if subject == edge_types.TARGET:
         orders = [(kt, ks, ft, fs, source)]
     elif subject == edge_types.SOURCE:
@@ -205,7 +205,9 @@ def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str)
     for claimant, obj, fc, fo, _ in orders:
         if where := _states(ev, kind, claimant, obj, fc, fo):
             return CONFIRMED, where + unoriented
-    near = any(ev.unresolved[f] for f in fs | ft)
+    # Ruby's ``include`` changes ancestors where the oracle does not look.
+    near = any(ev.unresolved[f] for f in fs | ft) or (kind == INHERITS and any(
+        ev.mixes_in(fc, title) for _, _, fc, _, title in orders))
     claimant, obj, fc, fo, _ = orders[0]
     if len(orders) == 1 and _states(ev, kind, obj, claimant, fo, fc, enclosing=False):
         reason = "reversed"

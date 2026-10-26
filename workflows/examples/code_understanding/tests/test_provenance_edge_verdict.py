@@ -202,6 +202,40 @@ REVIEW_FILES = {
     "cf/settings.py": "class Config(object):\n    pass\n",
     "cf/config.py": "from .helpers import DEFAULTS\n",
     "cf/helpers.py": "DEFAULTS = {}\n",
+    # A second review. Python: a package ``__init__`` with no edge of its own
+    # is still what ``import pa`` names.
+    "pa/__init__.py": "class Base:\n    pass\n",
+    "pa/x.py": "from pa import Base\n",
+    "pa/y.py": "import pa\n",
+    # Python: a base reached through ``cg.Config``, which folds onto the module
+    # ``cg/config.py``, could be either file.
+    "cg/__init__.py": "from .settings import Config\n",
+    "cg/settings.py": "class Config(object):\n    pass\n",
+    "cg/config.py": "DEFAULTS = {}\n",
+    "cg/app.py": "from cg import Config\n\nclass AppConfig(Config):\n    pass\n",
+    # Python: a nested class's base is looked up in the enclosing class body.
+    "pn/a.py": "class Base:\n    pass\n\nclass Outer:\n    class Base:\n        pass\n\n"
+               "    class Inner(Base):\n        pass\n",
+    # Python: ``from . import sub`` must not lend ``ps/sub.py`` the __init__'s edges.
+    "ps/__init__.py": "from . import sub\nfrom . import other\n",
+    "ps/sub.py": "X = 1\n",
+    "ps/other.py": "Y = 2\n",
+    # Java: an ``extends`` clause is outside the class body (JLS 6.3), and an
+    # outer type's inherited member type outranks a same-package one.
+    "src/com/z/Base.java": "package com.z;\npublic class Base {}\n",
+    "src/com/z/Outer.java": "package com.z;\npublic class Outer extends Base {\n  static class Base {}\n}\n",
+    "src/com/z/Parent.java": "package com.z;\npublic class Parent {\n  public static class Base {}\n}\n",
+    "src/com/z/Holder.java": "package com.z;\npublic class Holder extends Parent {\n"
+                             "  static class Inner extends Base {}\n}\n",
+    # Ruby: ``module A::B`` records no scopes for a class nested the long way;
+    # and ``include`` is a gap the oracle names, not evidence of absence.
+    "lib/a.rb": "module A\n  module B\n    class C < D\n    end\n    class E < Other::D\n    end\n"
+                "  end\nend\nmodule A::B\nend\n",
+    "lib/a/d.rb": "module A\n  class D\n  end\nend\n",
+    "lib/other.rb": "module Other\n  class D\n  end\nend\n",
+    "lib/d.rb": "class D\nend\n",
+    "lib/mixin.rb": "module Mixin\nend\n",
+    "lib/foo.rb": "class Foo\n  include Mixin\nend\n",
 }
 
 REVIEW_CASES = [
@@ -215,11 +249,22 @@ REVIEW_CASES = [
     ("JK::COMMANDS::BUILD", "COMMAND", "Jk::Commands::Build INHERITS Command", "confirmed", "exact"),
     ("JK::BOX", "ITEM", "Jk::Box INHERITS Item", "confirmed", "exact"),
     ("RX.WORKER", "BASE", "rx.Worker INHERITS Base", "confirmed", "lifted"),
-    ("RX.APPS.BEAT.BEAT", "BASE", "rx.apps.beat.Beat INHERITS Base", "confirmed", "lifted"),
+    ("RX.APPS.BEAT.BEAT", "BASE", "rx.apps.beat.Beat INHERITS Base", "confirmed", "exact"),
+    ("RX.APPS.BEAT.BEAT", "BASE", "rx.apps.beat.Beat IMPORTS Base", "confirmed", "lifted"),
     # A dotted title on the folded key may mean either; a path names the module.
     ("CF.CONFIG", "CF/SETTINGS.PY", "cf.Config IMPORTS cf.settings", "out-of-reach", "ungrounded"),
     ("CF/CONFIG.PY", "CF/SETTINGS.PY", "cf/config.py IMPORTS cf.settings", "contradicted", "no-edge"),
     ("CF/CONFIG.PY", "CF/HELPERS.PY", "cf/config.py IMPORTS cf.helpers", "confirmed", "exact"),
+    ("PA/X.PY", "PA.BASE", "pa/x.py IMPORTS pa.Base", "confirmed", "lifted"),
+    ("PA/Y.PY", "PA/__INIT__.PY", "pa/y.py IMPORTS pa", "confirmed", "lifted"),
+    ("CG.APP.APPCONFIG", "CG.SETTINGS.CONFIG", "cg.app.AppConfig INHERITS cg.settings.Config", "unchecked", "no-edge"),
+    ("CG.APP.APPCONFIG", "CG/CONFIG.PY", "cg.app.AppConfig INHERITS cg/config.py", "unchecked", "no-edge"),
+    ("PN.A.OUTER.INNER", "BASE", "pn.a.Outer.Inner INHERITS Base", "confirmed", "exact"),
+    ("PS/SUB.PY", "PS/OTHER.PY", "ps/sub.py IMPORTS ps/other.py", "contradicted", "no-edge"),
+    ("COM.Z.OUTER", "BASE", "com.z.Outer INHERITS Base", "confirmed", "exact"),
+    ("COM.Z.HOLDER.INNER", "BASE", "com.z.Holder.Inner INHERITS Base", "confirmed", "exact"),
+    ("A::B::C", "D", "A::B::C INHERITS D", "confirmed", "exact"),
+    ("FOO", "MIXIN", "Foo INHERITS Mixin", "unchecked", "no-edge"),
 ]
 
 

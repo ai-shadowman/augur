@@ -95,6 +95,31 @@ _LOADABLE = (".rb", ".so", ".bundle", ".c", ".cc", ".cpp")
 _CONSTANT_PATH = re.compile(r"(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*")
 
 
+#: Receiverless calls that put a module into a class's ancestors: the gap the
+#: module docstring names under *Not resolved*.
+MIXIN_CALLS = ("include", "extend", "prepend")
+
+
+def mixin_names(source: str) -> set[str]:
+    """The last segment of each constant an ``include``, ``extend`` or ``prepend`` names.
+
+    Not edges: they are method calls, and which class's ancestors they change
+    is not read here. The edge verdict uses them so that "``Foo`` INHERITS
+    ``Mixin``" is not contradicted by an absence this resolver never looked for.
+    """
+    names: set[str] = set()
+    stack = [parse(source, RUBY).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "call" and node.child_by_field_name("receiver") is None:
+            method, arguments = node.child_by_field_name("method"), node.child_by_field_name("arguments")
+            if method is not None and arguments is not None and node_text(method) in MIXIN_CALLS:
+                names.update(node_text(a).rpartition("::")[2] for a in arguments.named_children
+                             if _CONSTANT_PATH.fullmatch(node_text(a)))
+        stack.extend(node.named_children)
+    return names
+
+
 def _norm(path: str) -> str | None:
     normal = posixpath.normpath(path)
     if normal == ".." or normal.startswith(("../", "/")):

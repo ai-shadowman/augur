@@ -30,6 +30,7 @@ from .declarations import module_key, namespace_for
 from .dialects import dialect_for
 from .edges import EXTERNAL, IMPORTS, INHERITS, INTERNAL, UNRESOLVED, scan_checkout
 from .edges.model import Edge, Inventory, checkout_files
+from .edges.ruby import mixin_names
 
 #: One serialised edge: ``(kind, source, target, target class, path)``.
 #: ``target`` is ``None`` exactly when the class is unresolved.
@@ -60,6 +61,16 @@ SCOPES = {"python": "module", "typescript": "module", "java": "package", "ruby":
 #: Whether a bare name may fall back to an exact top-level key; see
 #: :meth:`EdgeEvidence.global_bare`.
 GLOBAL_BARE = {"python": True, "typescript": False, "java": True, "ruby": True}
+
+#: Readers of the calls that change a class's ancestors without inheritance
+#: syntax, per dialect. Only Ruby has them; every other recorded dialect
+#: states all of its supertypes in syntax the oracle reads.
+MIXIN_READERS = {"ruby": mixin_names}
+
+
+def _names_file(title: str) -> bool:
+    """Whether a title is spelled as a path (``PKG/SUB.PY``) rather than dotted."""
+    return "/" in title or canonical_key(title) != dotted_key(title)
 
 
 def _rule(table: dict, dialect, what: str):
@@ -115,6 +126,13 @@ class NodeIndex(NamedTuple):
     #: Per file, the lexical crefs of each class written in compact form
     #: (``class A::B::C``), innermost first. See :meth:`EdgeEvidence.in_scope`.
     nesting: dict[str, dict[str, list[str]]]
+    #: A module's own files, for each key whose files hold more than the
+    #: module: ``from . import sub`` in ``pkg/__init__.py`` binds ``pkg.sub``
+    #: too. A title spelled as a path means the module alone.
+    modules: dict[str, set[str]]
+    #: Per file, the folded last segments of the modules it mixes in (Ruby's
+    #: ``include``), which the oracle does not read as edges.
+    mixins: dict[str, list[str]]
 
 
 def _compact_nesting(classes: Iterable[str]) -> dict[str, list[str]]:
@@ -171,9 +189,8 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> NodeI
     through the import, to the file that declares it. ``celery.app.app_or_default``
     is both ``celery/app/__init__.py``, which re-exports it, and the module
     that defines it, since a claim about either spelling is a claim about one
-    function. Except where that key is also a module (:func:`_ambiguous`):
-    there the key holds the module's files alone, which is all a title
-    spelled as a path can mean.
+    function. A package is keyed by its ``__init__`` as well, since that is
+    what ``import pkg`` names.
     """
     edges = list(edges)
     written_to: dict[str, dict[str, str]] = collections.defaultdict(dict)
@@ -190,17 +207,23 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> NodeI
     binders: dict[str, set[str]] = collections.defaultdict(set)
     bound_elsewhere: dict[str, set[str]] = collections.defaultdict(set)
     nesting: dict[str, dict[str, list[str]]] = {}
+    mixins: dict[str, list[str]] = {}
     for path in sorted(inventory.paths):
         dialect = dialect_for(path)
         if dialect is None:
             continue
         source = (root / path).read_text(encoding="utf-8", errors="replace")
         found[canonical_key(path)].add(path)
-        modules[dotted_key(module_key(path))].add(path)
+        module = dotted_key(module_key(path))
+        modules[module].add(path)
+        if canonical_key(path).endswith(".__init__"):
+            found[module].add(path)
         prefix = namespaces[path] = namespace_for(path, source, dialect)
         read = symbols.symbols_in(source, dialect)
         if _rule(SCOPES, dialect, "scope") == "lexical" and (compact := _compact_nesting(read.classes)):
             nesting[path] = compact
+        if (reader := MIXIN_READERS.get(dialect.name)) and (mixed := reader(source)):
+            mixins[path] = sorted(dotted_key(m) for m in mixed)
         for name in (*read.classes, *read.functions, *read.methods):
             key = dotted_key(f"{prefix}.{name}" if prefix else name)
             found[key].add(path)
@@ -233,14 +256,13 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> NodeI
                 found[bound] |= extra
                 changed = True
     ambiguous = _ambiguous(modules, bound_elsewhere, chase)
-    for key in ambiguous & modules.keys():
-        found[key] = set(modules[key])
     # A file that declares the key as well as binding it is no mere binder:
     # celery's ``apps/beat.py`` declares ``class Beat`` and binds ``beat``.
     binders = {k: fs - declared.get(k, set()) for k, fs in binders.items() if k not in ambiguous}
     return NodeIndex(
         found, namespaces, opaque - declared.keys() - {b for b, _ in chase}, ambiguous,
         {k: fs for k, fs in binders.items() if fs and found[k] - fs}, nesting,
+        {k: fs for k, fs in modules.items() if found.get(k, fs) != fs}, mixins,
     )
 
 
@@ -250,13 +272,17 @@ class EdgeEvidence:
     def __init__(self, edges: Iterable[EdgeRow], files: dict[str, Iterable[str]],
                  namespaces: dict[str, str] | None = None, opaque: Iterable[str] = (),
                  ambiguous: Iterable[str] = (), binders: dict[str, Iterable[str]] | None = None,
-                 nesting: dict[str, dict[str, list[str]]] | None = None):
+                 nesting: dict[str, dict[str, list[str]]] | None = None,
+                 modules: dict[str, Iterable[str]] | None = None,
+                 mixins: dict[str, Iterable[str]] | None = None):
         self.namespaces: dict[str, str] = dict(namespaces or {})
         self.opaque: frozenset[str] = frozenset(opaque)
         self.ambiguous: frozenset[str] = frozenset(ambiguous)
         self.binders: dict[str, set[str]] = {k: set(v) for k, v in (binders or {}).items()}
         self.nesting: dict[str, dict[str, list[str]]] = {
             p: {k: list(c) for k, c in n.items()} for p, n in (nesting or {}).items()}
+        self.modules: dict[str, set[str]] = {k: set(v) for k, v in (modules or {}).items()}
+        self.mixins: dict[str, set[str]] = {p: set(v) for p, v in (mixins or {}).items()}
         self.edges: list[EdgeRow] = sorted(edges, key=lambda e: tuple(x or "" for x in e))
         self.file_of: dict[str, set[str]] = {k: set(v) for k, v in files.items()}
         self.internal: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
@@ -270,7 +296,13 @@ class EdgeEvidence:
             lambda: collections.defaultdict(set))
         self._supertypes: dict[str, set[str]] = {}
         for kind, source, target, target_class, path in self.edges:
-            if target_class == INTERNAL:
+            if target_class == INTERNAL and kind == INHERITS and target in self.ambiguous:
+                # The oracle reached a base through a binding whose key folds
+                # onto a module, so which file it means is unknown. An IMPORTS
+                # target is a module the oracle found as a file, and
+                # ``_target_files`` reads the module's files for it.
+                self.unresolved[path] += 1
+            elif target_class == INTERNAL:
                 self.pairs[(source, target)].add(kind)
                 self.targets[path][target].add(kind)
                 if kind == INHERITS:
@@ -293,6 +325,8 @@ class EdgeEvidence:
         declares: it names every type in the package, or for ``Outer.*`` the
         members of ``Outer``.
         """
+        if target in self.modules:
+            return self.modules[target]
         if target in self.file_of or not target.endswith(".*"):
             return self.file_of.get(target, set())
         # The package first: folding makes ``com.x.util`` the class
@@ -321,6 +355,8 @@ class EdgeEvidence:
             "ambiguous": sorted(self.ambiguous),
             "binders": {k: sorted(v) for k, v in sorted(self.binders.items())},
             "nesting": {p: dict(sorted(n.items())) for p, n in sorted(self.nesting.items())},
+            "modules": {k: sorted(v) for k, v in sorted(self.modules.items())},
+            "mixins": {p: sorted(v) for p, v in sorted(self.mixins.items())},
         }
 
     @classmethod
@@ -329,7 +365,8 @@ class EdgeEvidence:
         data = data or {}
         return cls((tuple(e) for e in data.get("edges", ())), data.get("node_files", {}),
                    data.get("namespaces", {}), data.get("opaque", ()), data.get("ambiguous", ()),
-                   data.get("binders", {}), data.get("nesting", {}))
+                   data.get("binders", {}), data.get("nesting", {}), data.get("modules", {}),
+                   data.get("mixins", {}))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -341,6 +378,8 @@ class EdgeEvidence:
         ambiguous: set[str] = set()
         binders: dict[str, set[str]] = collections.defaultdict(set)
         nesting: dict[str, dict[str, list[str]]] = {}
+        modules: dict[str, set[str]] = collections.defaultdict(set)
+        mixins: dict[str, set[str]] = collections.defaultdict(set)
         for part in parts:
             part = part or {}
             edges.update(tuple(e) for e in part.get("edges", ()))
@@ -352,7 +391,12 @@ class EdgeEvidence:
             for key, paths in part.get("binders", {}).items():
                 binders[key].update(paths)
             nesting.update(part.get("nesting", {}))
-        return cls(edges, files, namespaces, opaque, ambiguous, binders, nesting).to_dict()
+            for key, paths in part.get("modules", {}).items():
+                modules[key].update(paths)
+            for path, names in part.get("mixins", {}).items():
+                mixins[path].update(names)
+        return cls(edges, files, namespaces, opaque, ambiguous, binders, nesting, modules,
+                   mixins).to_dict()
 
     def imported_from(self, path: str):
         """``(target key, kinds)`` for every internal edge ``path`` states."""
@@ -377,12 +421,21 @@ class EdgeEvidence:
         An ambiguous key grounds only from a title spelled as a path, which
         names the module; a dotted title may mean the bound name as well.
         """
-        dotted = dotted_key(title)
-        names_file = "/" in title or canonical_key(title) != dotted
-        for key in (dotted, canonical_key(title)):
+        for key in (dotted_key(title), canonical_key(title)):
             if key in self.file_of:
-                return None if key in self.ambiguous and not names_file else key
+                return None if key in self.ambiguous and not _names_file(title) else key
         return None
+
+    def title_files(self, title: str, key: str | None) -> set[str]:
+        """The files ``title`` means at ``key``: the module's alone for a path."""
+        if key in self.modules and _names_file(title):
+            return self.modules[key]
+        return self.files(key)
+
+    def mixes_in(self, files: Iterable[str], title: str) -> bool:
+        """Whether any of ``files`` includes a module named like ``title``'s last segment."""
+        name = dotted_key(title).rpartition(".")[2]
+        return any(name in self.mixins.get(f, ()) for f in files)
 
     def _crefs(self, claimant: str, path: str) -> list[str]:
         """The keys a bare constant in ``claimant`` is looked up under, innermost first.
@@ -393,11 +446,12 @@ class EdgeEvidence:
         only the scopes its file records for it, since folding made
         ``a.b.c`` look nested in ``a.b`` and ``a``.
         """
-        parts = claimant.split(".")
         recorded = self.nesting.get(path, {})
-        for i in range(len(parts), 0, -1):
-            if (head := ".".join(parts[:i])) in recorded:
-                return [".".join(parts[:j]) for j in range(len(parts) - 1, i - 1, -1)] + recorded[head]
+        if claimant in recorded:
+            return recorded[claimant]
+        # Not a prefix match: ``module A::B`` records ``a.b``, and a class
+        # nested ``module A; module B; class C`` must not inherit its scopes.
+        parts = claimant.split(".")
         return [".".join(parts[:j]) for j in range(len(parts) - 1, 0, -1)]
 
     def in_scope(self, name: str, claimant: str, files: Iterable[str],
@@ -425,6 +479,16 @@ class EdgeEvidence:
                 return False
             return not (imported and self.file_of[key] <= files)
 
+        # An INHERITS claim's bare base is first what the oracle resolved the
+        # claimant's own base list to, if that names one such target: the
+        # oracle applies each language's lookup (an enclosing class body, a
+        # Java outer type's inherited members, Ruby's crefs), which the scope
+        # walk below only approximates.
+        if not imported:
+            own = {t for t in self.parents.get(claimant, ())
+                   if (t == name or t.endswith("." + name)) and usable(t)}
+            if len(own) == 1:
+                return next(iter(own))
         # A re-exported claimant's names are its declaring file's: the
         # ``__init__`` that binds it by import has a scope of its own.
         declaring = files - self.binders.get(claimant, set())
