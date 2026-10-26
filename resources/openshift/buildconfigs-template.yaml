@@ -34,12 +34,12 @@ parameters:
   - name: BASE_IMAGE_DATASCIENCE
     displayName: Base Datascience Workbench Image
     description: Base image for data-generation, data-indexing, and data-analysis.
-    value: "quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-python-3.11-2024b-20250904-858c895"
+    value: "quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-python-3.12-pr-2113"
     required: false
   - name: BASE_IMAGE_UBI_PYTHON
     displayName: Base Python UBI Image
     description: Base image for pipeline-tools.
-    value: "registry.access.redhat.com/ubi9/python-311"
+    value: "registry.access.redhat.com/ubi9/python-312"
     required: false
 
 objects:
