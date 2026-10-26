@@ -35,6 +35,7 @@ from .grounding_report import GroundingReport
 from .tables import (
     _union_ids,
     collapse,
+    collapse_edges,
     document_for,
     document_text_units,
     rewrite_edges,
@@ -501,6 +502,10 @@ def ground(
             entities, relationships, report, documents, facts,
         )
     entities, relationships = ground_repository(corpus, entities, relationships, report)
+
+    entities = entities.reset_index(drop=True)
+    if relationships is not None and len(relationships):
+        relationships = collapse_edges(relationships)
 
     all_units = (
         _union_ids(entities["text_unit_ids"]) if "text_unit_ids" in entities else []

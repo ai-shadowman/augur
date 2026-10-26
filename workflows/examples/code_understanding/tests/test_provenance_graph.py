@@ -101,6 +101,21 @@ class TestGroundModules(unittest.TestCase):
         self.assertEqual(len(relationships), 0)
         self.assertEqual(report.self_loops_removed, 1)
 
+    def test_a_merge_that_creates_duplicate_edges_collapses_them_and_resets_index(self):
+        _, relationships, _ = self.ground(
+            [("CELERY.WORKER.STATE", "MODULE", "State."),
+             ("CELERY/WORKER/STATE.PY", "MODULE", "Worker state."),
+             ("CELERY/APP/BASE.PY", "MODULE", "Base.")],
+            [("CELERY/APP/BASE.PY", "CELERY.WORKER.STATE", "imports", 3.0),
+             ("CELERY/APP/BASE.PY", "CELERY/WORKER/STATE.PY", "imports worker state module", 5.0)],
+        )
+        self.assertEqual(len(relationships), 1)
+        self.assertEqual(list(relationships.index), [0])
+        self.assertEqual(relationships.at[0, "source"], "CELERY/APP/BASE.PY")
+        self.assertEqual(relationships.at[0, "target"], "CELERY/WORKER/STATE.PY")
+        self.assertEqual(relationships.at[0, "description"], "imports worker state module")
+        self.assertEqual(relationships.at[0, "weight"], 8.0)
+
     def test_an_indexed_file_with_no_entity_is_created(self):
         # A recall failure is the one thing a join can repair outright: the
         # path is known and the type is not in doubt.

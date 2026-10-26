@@ -75,6 +75,37 @@ class DependencyAnalyzer:
         with timing_span("index.read.community_reports", "io"):
             community_reports_df = pd.read_parquet(f"{self.root_dir}/output/community_reports.parquet")
 
+        for int_col in ("degree", "frequency", "human_readable_id"):
+            if int_col in entity_df.columns:
+                entity_df[int_col] = entity_df[int_col].fillna(0).astype(int)
+
+        if "combined_degree" in relationship_df.columns:
+            if relationship_df["combined_degree"].isna().any() and {
+                "title",
+                "degree",
+            }.issubset(entity_df.columns):
+                deg_map = dict(
+                    zip(
+                        entity_df["title"].astype(str),
+                        entity_df["degree"],
+                        strict=False,
+                    )
+                )
+                recomputed = (
+                    relationship_df["source"].astype(str).map(deg_map).fillna(0)
+                    + relationship_df["target"].astype(str).map(deg_map).fillna(0)
+                )
+                relationship_df["combined_degree"] = (
+                    relationship_df["combined_degree"].fillna(recomputed).fillna(0)
+                )
+            relationship_df["combined_degree"] = (
+                relationship_df["combined_degree"].fillna(0).astype(int)
+            )
+        if "human_readable_id" in relationship_df.columns:
+            relationship_df["human_readable_id"] = (
+                relationship_df["human_readable_id"].fillna(0).astype(int)
+            )
+
         self.entity_df = entity_df
 
         self.relationship_df = relationship_df
