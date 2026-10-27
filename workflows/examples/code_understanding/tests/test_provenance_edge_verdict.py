@@ -306,7 +306,7 @@ REVIEW_CASES = [
     ("FOO", "MIXIN", "Foo INHERITS Mixin", "unchecked", "no-edge"),
     ("JUNIOR::INNER", "ELDER::PART::THING", "Junior::Inner INHERITS Elder::Part::Thing", "unchecked", "no-edge"),
     ("JUNIOR::INNER", "PART::THING", "Junior::Inner INHERITS Part::Thing", "unchecked", "no-edge"),
-    ("PZ.A.HELPER", "PZ.B.OTHER", "pz.a.Helper INHERITS pz.b.Other", "contradicted", "wrong-kind"),
+    ("PZ.A.HELPER", "PZ.B.OTHER", "pz.a.Helper INHERITS pz.b.Other", "contradicted", "other-type"),
     # A member named as the claimant still lifts through its class.
     ("PZ.A.SUB.RUN", "PZ.B.OTHER", "pz.a.Sub.run INHERITS pz.b.Other", "confirmed", "lifted"),
     ("RV::SUB", "RV::BASE", "Rv::Sub INHERITS Rv::Base", "confirmed", "exact"),

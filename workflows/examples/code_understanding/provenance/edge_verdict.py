@@ -11,7 +11,9 @@ wrote lands in exactly one bucket:
                  through a re-export (``re-export``), or to an external
                  target the claimant's file imports (``external``).
 ``contradicted`` both endpoints ground and the oracle does not state it:
-                 ``reversed``, ``wrong-kind``, ``same-file`` or ``no-edge``.
+                 ``reversed``, ``other-type`` (the files are joined by the
+                 claimed kind, from another type), ``wrong-kind``,
+                 ``same-file`` or ``no-edge``.
 ``out-of-reach`` an unchecked type, or an endpoint the checkout does not
                  declare and the claimant's file does not import. That is the
                  partial-evidence case, and it is never a contradiction.
@@ -60,8 +62,9 @@ TABLE_COLUMNS = ("id", "source", "target", edge_types.TYPE_COLUMN,
 
 #: The contradictions grounding removes from the graph, decided 2026-10-26.
 #: Each says the pair is not related the way the row claims at all.
-#: ``wrong-kind`` stays, since the oracle does relate the pair; so do
-#: ``unchecked`` and ``out-of-reach``, which were never contradictions.
+#: ``wrong-kind`` and ``other-type`` stay, since the oracle does relate the
+#: pair or its files; so do ``unchecked`` and ``out-of-reach``, which were
+#: never contradictions.
 DROPPED_REASONS = ("reversed", "same-file", "no-edge")
 
 #: The side table's flag for a row grounding removed. Such a row has no
@@ -274,11 +277,12 @@ def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str)
     near = any(ev.unresolved[f] for f in fs | ft) or (kind == INHERITS and any(
         ev.mixes_in(fc, title) for _, _, fc, _, title in orders))
     claimant, obj, fc, fo, _ = orders[0]
+    joined = {k for x in fs for y in ft for k in ev.internal.get((x, y), set()) | ev.internal.get((y, x), set())}
     if len(orders) == 1 and _states(ev, kind, obj, claimant, fo, fc, enclosing=False):
         reason = "reversed"
-    elif ev.pairs.get((ks, kt)) or ev.pairs.get((kt, ks)) or any(
-        ev.internal.get((x, y)) or ev.internal.get((y, x)) for x in fs for y in ft
-    ):
+    elif kind in joined:
+        reason = "other-type"
+    elif ev.pairs.get((ks, kt)) or ev.pairs.get((kt, ks)) or joined:
         reason = "wrong-kind"
     elif fs & ft:
         reason = "same-file"
