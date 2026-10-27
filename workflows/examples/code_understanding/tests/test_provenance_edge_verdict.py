@@ -265,6 +265,11 @@ REVIEW_FILES = {
     "rapp/__init__.py": "",
     "rapp/base.py": "class B:\n    pass\n",
     "rapp/settings.py": "from rapp import base\n\nclass Rcfg(base.B):\n    pass\n",
+    # Python: a name imported through a package's re-export is still the
+    # declaring module's name; the declaring file itself is a transitive load.
+    "pr/__init__.py": "from pr.impl import Gadget\n",
+    "pr/impl.py": "class Gadget:\n    pass\n",
+    "pr/a.py": "from pr import Gadget\n\ndef go():\n    return Gadget()\n",
 }
 
 REVIEW_CASES = [
@@ -307,6 +312,9 @@ REVIEW_CASES = [
     ("QCONF", "PZ.B.OTHER", "Qconf INHERITS pz.b.Other", "out-of-reach", "ungrounded"),
     ("TSWID", "RQ/BASE.TS", "Tswid IMPORTS rq/base.ts", "out-of-reach", "ungrounded"),
     ("RCFG", "RAPP.BASE", "Rcfg IMPORTS rapp.base", "out-of-reach", "ungrounded"),
+    ("PR.A", "PR.IMPL.GADGET", "pr.a IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
+    ("PR.A.GO", "PR.IMPL.GADGET", "pr.a.go IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
+    ("PR/A.PY", "PR/IMPL.PY", "pr/a.py IMPORTS pr/impl.py", "contradicted", "no-edge"),
 ]
 
 

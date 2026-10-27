@@ -7,8 +7,9 @@ wrote lands in exactly one bucket:
                  the keys (``exact``), between their files (``lifted``),
                  through the oracle's own INHERITS chain (``transitive``),
                  to a module enclosing the oracle's target (``ancestor``,
-                 ``container``), or to an external target the claimant's
-                 file imports (``external``).
+                 ``container``), to a name the claimant's file imports
+                 through a re-export (``re-export``), or to an external
+                 target the claimant's file imports (``external``).
 ``contradicted`` both endpoints ground and the oracle does not state it:
                  ``reversed``, ``wrong-kind``, ``same-file`` or ``no-edge``.
 ``out-of-reach`` an unchecked type, or an endpoint the checkout does not
@@ -144,6 +145,25 @@ def _inherits_into(ev: EdgeEvidence, a: str, fa: set, fb: set) -> bool:
     )
 
 
+def _rebinds(ev: EdgeEvidence, b: str, fa: set) -> bool:
+    """Whether a file of ``fa`` binds ``b``'s name by an import that leads to ``b``.
+
+    ``from pkg import Thing`` reaches ``pkg/impl.py``'s ``Thing`` through
+    ``pkg/__init__.py``, so the oracle joins the file to the ``__init__``
+    alone, and "pkg.a IMPORTS pkg.impl.Thing" would read as no edge. The
+    binding's chase already reaches the declaring file. Only names: a claim
+    about ``pkg/impl.py`` itself is a transitive load, not a stated import.
+    """
+    if _module(ev, b) is not None:
+        return False
+    name = b.rpartition(".")[2]
+    declarers = ev.files(b) - ev.binders.get(b, set())
+    return any(
+        f in ev.binders.get(bound := f"{ev.namespaces.get(f)}.{name}", ()) and declarers & (ev.files(bound) - {f})
+        for f in fa
+    )
+
+
 def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
             enclosing: bool = True) -> str | None:
     """Where the oracle states ``kind`` from ``a`` to ``b``, or ``None``.
@@ -161,6 +181,8 @@ def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
         kind == IMPORTS or _module(ev, a) is not None or _module(ev, b) is not None or _inherits_into(ev, a, fa, fb)
     ):
         return "lifted"
+    if kind == IMPORTS and _rebinds(ev, b, fa):
+        return "re-export"
     # Kept apart from ``exact``: a reader who wants direct supertypes only
     # can drop these, and one who wants the type hierarchy keeps them.
     if kind == INHERITS and b in ev.supertypes(a):
