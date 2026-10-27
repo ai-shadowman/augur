@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from . import edge_tag, edge_types
+from . import edge_types
 from .corpus import canonical_key, dotted_key
 from .dialects import dialect_for
 from .edge_evidence import EdgeEvidence
@@ -373,9 +373,6 @@ def record(relationships: Any, facts: Any, report: Any) -> Any:
 def judge(relationships: Any, facts: Any, report: Any) -> Any:
     """:func:`record`, then remove the contradictions :data:`DROPPED_REASONS` names.
 
-    With ``AUGUR_EDGE_TAG`` set, the unchecked rows are tagged first
-    (:mod:`provenance.edge_tag`); no tagged row is ever a dropped one.
-
     The report keeps the split as the model wrote it, the drops by reason,
     and the dropped rows themselves for ``output/edge_verdicts``. The index
     is reset because ``finalize_relationships`` assigns ``combined_degree``
@@ -384,8 +381,6 @@ def judge(relationships: Any, facts: Any, report: Any) -> Any:
     scored = record(relationships, facts, report)
     if scored is None:
         return relationships
-    if edge_tag.enabled():
-        relationships, report.edges_tagged = edge_tag.tag(relationships, scored[VERDICT_COLUMN])
     drop = (scored[VERDICT_COLUMN] == CONTRADICTED) & scored[REASON_COLUMN].isin(DROPPED_REASONS)
     if not drop.any():
         return relationships

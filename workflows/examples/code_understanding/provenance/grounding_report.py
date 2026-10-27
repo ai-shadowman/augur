@@ -85,9 +85,6 @@ class GroundingReport:
     #: ``output/edge_verdicts`` keeps flagged since the graph no longer does.
     edges_dropped: dict[str, int] = field(default_factory=dict)
     dropped_edges: list[dict[str, Any]] = field(default_factory=list)
-    #: Model rows whose description carries ``edge_tag.TAG``; zero unless
-    #: ``AUGUR_EDGE_TAG`` is set.
-    edges_tagged: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -117,8 +114,6 @@ def _edge_verdict_lines(lines: list[str], report: GroundingReport) -> None:
         lines.append("  contradicted: " + ", ".join(f"{n} {k}" for k, n in report.edge_contradictions.items()))
     if report.edges_dropped:
         lines.append("  dropped:      " + ", ".join(f"{n} {k}" for k, n in report.edges_dropped.items()))
-    if report.edges_tagged:
-        lines.append(f"  tagged:       {report.edges_tagged} unchecked row(s)")
 
 
 def render(report: GroundingReport, limit: int = 15) -> str:
