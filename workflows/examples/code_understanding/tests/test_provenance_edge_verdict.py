@@ -270,6 +270,11 @@ REVIEW_FILES = {
     "pr/__init__.py": "from pr.impl import Gadget\n",
     "pr/impl.py": "class Gadget:\n    pass\n",
     "pr/a.py": "from pr import Gadget\n\ndef go():\n    return Gadget()\n",
+    # Python: a class declared in an ``__init__`` and a sibling module of the
+    # same name fold to one key, as an import-bound collision does.
+    "pw/__init__.py": "class Settingz:\n    pass\n",
+    "pw/settingz.py": "DEFAULTS = {}\n",
+    "pw/x.py": "from pw import Settingz\n",
 }
 
 REVIEW_CASES = [
@@ -315,6 +320,8 @@ REVIEW_CASES = [
     ("PR.A", "PR.IMPL.GADGET", "pr.a IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
     ("PR.A.GO", "PR.IMPL.GADGET", "pr.a.go IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
     ("PR/A.PY", "PR/IMPL.PY", "pr/a.py IMPORTS pr/impl.py", "contradicted", "no-edge"),
+    ("PW.X", "PW.SETTINGZ", "pw.x IMPORTS pw.settingz", "out-of-reach", "ungrounded"),
+    ("PW/X.PY", "PW/SETTINGZ.PY", "pw/x.py IMPORTS pw/settingz.py", "contradicted", "no-edge"),
 ]
 
 

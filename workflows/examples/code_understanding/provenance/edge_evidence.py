@@ -153,18 +153,20 @@ def _compact_nesting(classes: Iterable[str]) -> dict[str, list[str]]:
 
 
 def _ambiguous(modules: dict[str, set[str]], bound_elsewhere: dict[str, set[str]],
-               chase: list[tuple[str, str]]) -> set[str]:
+               chase: list[tuple[str, str]], declared: dict[str, set[str]]) -> set[str]:
     """Keys that fold a module together with a name bound to something else.
 
     ``from .settings import Config`` in ``pkg/__init__.py`` binds
     ``pkg.Config``, and ``pkg/config.py`` is the module ``pkg.config``: one
     key, two things. GraphRAG uppercases titles, so a dotted title cannot
     say which it meant. ``from . import config`` is not a collision, since
-    the bound name is the module. A name bound through an ambiguous key
+    the bound name is the module. A ``class Config`` declared in the
+    ``__init__`` is one, the same way. A name bound through an ambiguous key
     inherits the ambiguity, because the chase cannot tell which meaning it
     followed.
     """
     found = {k for k, binders in bound_elsewhere.items() if modules.get(k, set()) - binders}
+    found |= {k for k, files in declared.items() if modules.get(k) and files - modules[k]}
     changed = True
     while changed:
         changed = False
@@ -255,7 +257,7 @@ def node_files(root: Path, inventory: Inventory, edges: Iterable[Edge]) -> NodeI
             if extra:
                 found[bound] |= extra
                 changed = True
-    ambiguous = _ambiguous(modules, bound_elsewhere, chase)
+    ambiguous = _ambiguous(modules, bound_elsewhere, chase, declared)
     # A file that declares the key as well as binding it is no mere binder:
     # celery's ``apps/beat.py`` declares ``class Beat`` and binds ``beat``.
     binders = {k: fs - declared.get(k, set()) for k, fs in binders.items() if k not in ambiguous}
