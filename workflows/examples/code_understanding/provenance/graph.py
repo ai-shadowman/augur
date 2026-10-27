@@ -32,7 +32,16 @@ from typing import Any
 from . import declarations
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .grounding_report import GroundingReport
-from .tables import collapse, document_for, rewrite_edges, text_unit_documents, types_of
+from .tables import (
+    _union_ids,
+    collapse,
+    collapse_edges,
+    document_for,
+    document_text_units,
+    rewrite_edges,
+    text_unit_documents,
+    types_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,13 +223,21 @@ def ground_modules(
     present = set(frame["title"].astype(str))
     missing = [f for f in corpus.files if f.title not in present]
     if missing:
+        doc_units = document_text_units(text_units)
+        fallback_units = (
+            _union_ids(frame["text_unit_ids"]) if "text_unit_ids" in frame else []
+        )
+        if not fallback_units and text_units is not None and "id" in text_units:
+            fallback_units = _union_ids([text_units["id"].astype(str)])
         new_rows = pd.DataFrame([
             {
                 "title": f.title,
                 "type": "MODULE",
                 "description": f"Defined in the repository at {f.git_repo}. "
                                f"Source file {f.path}.",
-                "text_unit_ids": [],
+                "text_unit_ids": list(
+                    doc_units.get(f.document_id or "") or fallback_units
+                ),
                 "frequency": 1,
             }
             for f in missing
@@ -257,6 +274,12 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
     if corpus.runtime:
         sentences.append(f"Runtime stack: {corpus.runtime}.")
 
+    repo_units = (
+        _union_ids(frame["text_unit_ids"]) if "text_unit_ids" in frame else []
+    )
+    if not repo_units and relationships is not None and "text_unit_ids" in relationships:
+        repo_units = _union_ids(relationships["text_unit_ids"])
+
     if rows:
         rows.sort(key=lambda i: str(frame.at[i, "title"]) != title)
         renames = {
@@ -266,6 +289,8 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
         }
         report.repository_absorbed = sorted(renames)
         keep = collapse(frame, rows, title, "REPOSITORY")
+        if "text_unit_ids" in frame and not _union_ids([frame.at[keep, "text_unit_ids"]]) and repo_units:
+            frame.at[keep, "text_unit_ids"] = list(repo_units)
         body = str(frame.at[keep, "description"] or "")
         for sentence in sentences:
             body = body.replace(sentence, "").strip()
@@ -277,7 +302,7 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
             "title": title,
             "type": "REPOSITORY",
             "description": " ".join(sentences),
-            "text_unit_ids": [],
+            "text_unit_ids": list(repo_units),
             "frequency": 1,
         }])], ignore_index=True)
         report.created.append(title)
@@ -409,13 +434,27 @@ def _belongs_to(entities, relationships, repository: str, report: GroundingRepor
     if not new:
         return relationships
 
+    entity_units: dict[str, list] = {}
+    if "text_unit_ids" in entities:
+        for t, units in zip(
+            entities["title"].astype(str), entities["text_unit_ids"], strict=False
+        ):
+            merged = _union_ids([units])
+            if merged:
+                entity_units[t] = merged
+    fallback_units = (
+        _union_ids(entities["text_unit_ids"]) if "text_unit_ids" in entities else []
+    )
+    if not fallback_units and relationships is not None and "text_unit_ids" in relationships:
+        fallback_units = _union_ids(relationships["text_unit_ids"])
+
     rows = pd.DataFrame([
         {
             "source": title,
             "target": repository,
             "description": f"{title} BELONGS_TO the {repository} repository",
             "weight": BELONGS_TO_WEIGHT,
-            "text_unit_ids": [],
+            "text_unit_ids": list(entity_units.get(title) or fallback_units),
         }
         for title in new
     ])
@@ -463,6 +502,27 @@ def ground(
             entities, relationships, report, documents, facts,
         )
     entities, relationships = ground_repository(corpus, entities, relationships, report)
+
+    entities = entities.reset_index(drop=True)
+    if relationships is not None and len(relationships):
+        relationships = collapse_edges(relationships)
+
+    all_units = (
+        _union_ids(entities["text_unit_ids"]) if "text_unit_ids" in entities else []
+    )
+    if not all_units and relationships is not None and "text_unit_ids" in relationships:
+        all_units = _union_ids(relationships["text_unit_ids"])
+    if not all_units and text_units is not None and "id" in text_units:
+        all_units = _union_ids([text_units["id"].astype(str)])
+    if all_units:
+        if "text_unit_ids" in entities:
+            entities["text_unit_ids"] = [
+                _union_ids([u]) or list(all_units) for u in entities["text_unit_ids"]
+            ]
+        if relationships is not None and len(relationships) and "text_unit_ids" in relationships:
+            relationships["text_unit_ids"] = [
+                _union_ids([u]) or list(all_units) for u in relationships["text_unit_ids"]
+            ]
 
     report.entities_after = len(entities)
     report.relationships_after = 0 if relationships is None else len(relationships)

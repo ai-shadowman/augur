@@ -101,6 +101,21 @@ class TestGroundModules(unittest.TestCase):
         self.assertEqual(len(relationships), 0)
         self.assertEqual(report.self_loops_removed, 1)
 
+    def test_a_merge_that_creates_duplicate_edges_collapses_them_and_resets_index(self):
+        _, relationships, _ = self.ground(
+            [("CELERY.WORKER.STATE", "MODULE", "State."),
+             ("CELERY/WORKER/STATE.PY", "MODULE", "Worker state."),
+             ("CELERY/APP/BASE.PY", "MODULE", "Base.")],
+            [("CELERY/APP/BASE.PY", "CELERY.WORKER.STATE", "imports", 3.0),
+             ("CELERY/APP/BASE.PY", "CELERY/WORKER/STATE.PY", "imports worker state module", 5.0)],
+        )
+        self.assertEqual(len(relationships), 1)
+        self.assertEqual(list(relationships.index), [0])
+        self.assertEqual(relationships.at[0, "source"], "CELERY/APP/BASE.PY")
+        self.assertEqual(relationships.at[0, "target"], "CELERY/WORKER/STATE.PY")
+        self.assertEqual(relationships.at[0, "description"], "imports worker state module")
+        self.assertEqual(relationships.at[0, "weight"], 8.0)
+
     def test_an_indexed_file_with_no_entity_is_created(self):
         # A recall failure is the one thing a join can repair outright: the
         # path is known and the type is not in doubt.
@@ -619,6 +634,26 @@ class TestGround(unittest.TestCase):
         self.assertIn("CELERY-V2-5-5", rendered)
         self.assertIn("BELONGS_TO added:", rendered)
         self.assertIn("merged:", rendered)
+
+    def test_synthesized_rows_carry_non_empty_text_unit_ids_when_units_exist(self):
+        entities_in = entity_frame(self.ROWS)
+        entities_in["text_unit_ids"] = [["tu-1"], ["tu-2"], ["tu-1"], ["tu-3"]]
+        edges_in = edge_frame([("CELERY/WORKER/STATE.PY", "KOMBU", "imports", 1.0)])
+        edges_in["text_unit_ids"] = [["tu-2"]]
+
+        entities, relationships, _ = graph.ground(
+            corpus(["celery/worker/state.py", "celery/app/base.py"]),
+            entities_in,
+            edges_in,
+        )
+        for ids in entities["text_unit_ids"]:
+            self.assertIsInstance(ids, list)
+            self.assertGreater(len(ids), 0)
+            self.assertTrue(all(isinstance(u, str) for u in ids))
+        for ids in relationships["text_unit_ids"]:
+            self.assertIsInstance(ids, list)
+            self.assertGreater(len(ids), 0)
+            self.assertTrue(all(isinstance(u, str) for u in ids))
 
 
 if __name__ == "__main__":

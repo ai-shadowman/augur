@@ -75,6 +75,37 @@ class DependencyAnalyzer:
         with timing_span("index.read.community_reports", "io"):
             community_reports_df = pd.read_parquet(f"{self.root_dir}/output/community_reports.parquet")
 
+        for int_col in ("degree", "frequency", "human_readable_id"):
+            if int_col in entity_df.columns:
+                entity_df[int_col] = entity_df[int_col].fillna(0).astype(int)
+
+        if "combined_degree" in relationship_df.columns:
+            if relationship_df["combined_degree"].isna().any() and {
+                "title",
+                "degree",
+            }.issubset(entity_df.columns):
+                deg_map = dict(
+                    zip(
+                        entity_df["title"].astype(str),
+                        entity_df["degree"],
+                        strict=False,
+                    )
+                )
+                recomputed = (
+                    relationship_df["source"].astype(str).map(deg_map).fillna(0)
+                    + relationship_df["target"].astype(str).map(deg_map).fillna(0)
+                )
+                relationship_df["combined_degree"] = (
+                    relationship_df["combined_degree"].fillna(recomputed).fillna(0)
+                )
+            relationship_df["combined_degree"] = (
+                relationship_df["combined_degree"].fillna(0).astype(int)
+            )
+        if "human_readable_id" in relationship_df.columns:
+            relationship_df["human_readable_id"] = (
+                relationship_df["human_readable_id"].fillna(0).astype(int)
+            )
+
         self.entity_df = entity_df
 
         self.relationship_df = relationship_df
@@ -562,9 +593,30 @@ class DependencyAnalyzer:
             if not env.get("EMBED_LLM_TOKEN"):
                 logging.warning("EMBED_LLM_TOKEN is empty or not set. Defaulting to 'EMPTY' to satisfy GraphRAG validation.")
                 env["EMBED_LLM_TOKEN"] = "EMPTY"
+            if not env.get("GRAPHRAG_CONCURRENT_REQUESTS"):
+                env["GRAPHRAG_CONCURRENT_REQUESTS"] = str(env.get("SDG_LLM_MAX_CONCURRENCY") or "25")
 
             with open(template_path) as f:
-                content = string.Template(f.read())
+                raw_template = f.read()
+
+            # Safeguard against stale settings.yaml.in in MLflow that may still have
+            # hardcoded concurrent_requests instead of ${GRAPHRAG_CONCURRENT_REQUESTS}
+            raw_template = re.sub(
+                r"(concurrent_requests:\s*)\d+",
+                r"\g<1>${GRAPHRAG_CONCURRENT_REQUESTS}",
+                raw_template,
+            )
+            chat_block_match = re.search(
+                r"(default_chat_model:\n(?:[ \t]+[^\n]+\n)+)", raw_template
+            )
+            if chat_block_match and "max_tokens:" not in chat_block_match.group(1):
+                raw_template = raw_template.replace(
+                    "default_chat_model:\n",
+                    "default_chat_model:\n    max_tokens: 8192\n",
+                    1,
+                )
+
+            content = string.Template(raw_template)
 
             with open(output_path, "w") as f:
                 f.write(content.substitute(env))
@@ -851,10 +903,20 @@ class DependencyAnalyzer:
             if dur_tracker is None:
                 from utils.duration_tracker import DurationTracker
                 dur_tracker = DurationTracker.get_instance()
-            from utils.duration_tracker import extract_graphrag_indexing_durations, extract_data_generation_durations
+            from utils.duration_tracker import (
+                extract_benchmark_duration,
+                extract_graphrag_indexing_durations,
+                extract_data_generation_durations,
+            )
+            extract_benchmark_duration(candidate_dirs, dur_tracker)
             if not any(r.get("stage", "").lower() == "indexing" for r in dur_tracker.records):
                 extract_graphrag_indexing_durations(self.graphrag_dir, dur_tracker)
-            if not any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records):
+            if not any(
+                r.get("stage", "").lower() == "data generation"
+                and "guidellm" not in str(r.get("step", "")).lower()
+                and "concurrency benchmark" not in str(r.get("step", "")).lower()
+                for r in dur_tracker.records
+            ):
                 extract_data_generation_durations(candidate_dirs, dur_tracker)
         except Exception as e:
             logging.debug(f"Metric extraction (durations): {e}")

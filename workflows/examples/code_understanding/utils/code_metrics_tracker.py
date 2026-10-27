@@ -519,7 +519,10 @@ class CodeMetricsTracker:
                     continue
                 if fname.endswith("_metadata.txt") or fname in (
                     "metadata.json", "code-metadata.json", "durations.json",
-                    "tokens.json", "project_metrics.json"
+                    "tokens.json", "project_metrics.json", "benchmark_results.json",
+                    "provenance.json",
+                    "durations.txt", "tokens.txt", "project_metrics.txt", "benchmark_results.txt",
+                    "provenance.txt",
                 ):
                     continue
 

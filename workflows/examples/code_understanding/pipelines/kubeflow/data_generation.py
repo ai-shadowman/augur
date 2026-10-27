@@ -20,6 +20,89 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+def benchmark_llm_op(
+    override_concurrency: int = 0,
+    git_repo: str = "",
+    git_branch: str = "main",
+    multi_repo: bool = False,
+) -> int:
+    """Benchmarks the configured LLM endpoint using GuideLLM to find the best concurrency setting."""
+    from contextlib import nullcontext
+    from pipelines.base.data_generation import generate_git_slug
+    from utils.kubeflow_utils import setup_logging
+    from utils.llm_benchmark import (
+        apply_best_concurrency,
+        extract_benchmark_metadata,
+        run_guidellm_benchmark,
+    )
+    setup_logging()
+    import logging
+
+    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+    dur_tracker = None
+    try:
+        from utils.duration_tracker import DurationTracker
+        DurationTracker.reset_instance()
+        dur_tracker = DurationTracker.get_instance(git_slug=git_slug, git_repo=git_repo)
+    except Exception as e:
+        logging.debug(f"DurationTracker initialization skipped in benchmark_llm_op: {e}")
+
+    if override_concurrency and int(override_concurrency) > 0:
+        best = apply_best_concurrency(int(override_concurrency))
+        logging.info(f"Using pre-computed concurrency override: {best}")
+        if dur_tracker:
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
+            except Exception:
+                pass
+            has_bench = any(
+                "guidellm" in str(r.get("step", "")).lower()
+                or "concurrency benchmark" in str(r.get("step", "")).lower()
+                for r in dur_tracker.records
+            )
+            if not has_bench:
+                dur_tracker.record_step(
+                    stage="Data Generation",
+                    step="GuideLLM Concurrency Benchmark",
+                    duration=0.0,
+                    status="success",
+                    metadata={"best_concurrency": int(best), "runner": "override", "skipped": True},
+                )
+        return int(best)
+
+    cm_bench = (
+        dur_tracker.measure(stage="Data Generation", step="GuideLLM Concurrency Benchmark")
+        if dur_tracker
+        else nullcontext()
+    )
+    with cm_bench:
+        result = run_guidellm_benchmark(apply_env=True)
+
+    best_concurrency = int(result.get("best_concurrency", 10))
+    if dur_tracker:
+        for rec in reversed(dur_tracker.records):
+            if rec.get("step") == "GuideLLM Concurrency Benchmark":
+                meta = rec.setdefault("metadata", {})
+                meta.update(extract_benchmark_metadata(result))
+                if rec.get("duration", 0.0) <= 0.001 and float(result.get("duration_seconds", 0.0) or 0.0) > 0.0:
+                    rec["duration"] = float(result["duration_seconds"])
+                break
+        try:
+            dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Pre-Pipeline", multi_repo=multi_repo)
+            dur_tracker.upload_to_mlflow(git_slug=git_slug, stage="Data Generation", multi_repo=multi_repo)
+        except Exception as e:
+            logging.debug(f"Failed to upload benchmark duration to MLflow in benchmark_llm_op: {e}")
+        try:
+            logging.info("\n" + dur_tracker.format_summary())
+        except Exception as e:
+            logging.debug(f"Failed to print duration summary in benchmark_llm_op: {e}")
+
+    logging.info(f"GuideLLM benchmark selected best_concurrency={best_concurrency}")
+    return best_concurrency
+
+
+@inject_secret_as_env(secret_name="code-understanding-env")
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
 def prepare_environment_op(git_repo: str, 
     git_branch: str, 
     git_username: str, 
@@ -39,6 +122,10 @@ def prepare_environment_op(git_repo: str,
         try:
             from utils.duration_tracker import DurationTracker
             dur_tracker = DurationTracker.get_instance()
+            try:
+                dur_tracker.download_from_mlflow(git_slug=git_slug, current_stage="Data Generation")
+            except Exception as e:
+                logging.debug(f"Prior benchmark duration download skipped in prepare_environment_op: {e}")
         except Exception as e:
             logging.debug(f"DurationTracker initialization skipped in prepare_environment_op: {e}")
 
@@ -54,6 +141,10 @@ def prepare_environment_op(git_repo: str,
         if dur_tracker:
             try:
                 dur_tracker.save_to_file(os.path.join(tmp_source, "durations.json"))
+                bench_res = dur_tracker.get_benchmark_result()
+                if bench_res:
+                    from utils.llm_benchmark import save_benchmark_result
+                    save_benchmark_result(bench_res, tmp_source)
             except Exception as e:
                 logging.debug(f"Failed to save durations.json in prepare_environment_op: {e}")
             try:
@@ -88,7 +179,8 @@ def generate_code_and_meta_op(
     git_branch: str,
     source_dir: Input[Dataset], 
     target_dir: Output[Dataset],
-    multi_repo: bool = False):
+    multi_repo: bool = False,
+    max_concurrency: int = 0):
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
@@ -102,13 +194,32 @@ def generate_code_and_meta_op(
     import logging, os
     from contextlib import nullcontext
 
+    if max_concurrency and int(max_concurrency) > 0:
+        try:
+            from utils.llm_benchmark import apply_best_concurrency
+            apply_best_concurrency(int(max_concurrency))
+        except Exception as e:
+            logging.debug(f"Failed to apply max_concurrency in generate_code_and_meta_op: {e}")
+
     with read_from_input_artifact(source_dir) as tmp_source, write_to_output_artifact(target_dir) as tmp_target:
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
         ignore_policy = RepositoryIgnorePolicy.from_repository(tmp_source)
 
+        try:
+            import shutil
+            from provenance.pipeline import SIDE_CAR as PROVENANCE_SIDECAR, capture as capture_provenance
+            prov_src = os.path.join(tmp_source, PROVENANCE_SIDECAR)
+            prov_dst = os.path.join(tmp_target, PROVENANCE_SIDECAR)
+            if os.path.exists(prov_src):
+                shutil.copy2(prov_src, prov_dst)
+            else:
+                capture_provenance(tmp_source, tmp_target, run_syft=False)
+        except Exception as e:
+            logging.debug(f"Provenance sidecar propagation in generate_code_and_meta_op: {e}")
+
         dur_tracker = None
         try:
-            from utils.duration_tracker import DurationTracker
+            from utils.duration_tracker import DurationTracker, extract_benchmark_duration
             dur_tracker = DurationTracker.get_instance()
             try:
                 dur_tracker.download_from_mlflow(git_slug=git_slug, multi_repo=multi_repo)
@@ -117,8 +228,27 @@ def generate_code_and_meta_op(
             dur_file = os.path.join(tmp_source, "durations.json")
             if os.path.exists(dur_file):
                 dur_tracker.load_and_merge(dur_file)
+            extract_benchmark_duration([tmp_source, tmp_target], dur_tracker)
         except Exception as e:
             logging.debug(f"DurationTracker handling in generate_code_and_meta_op: {e}")
+
+        try:
+            from utils.llm_benchmark import load_benchmark_result, save_benchmark_result
+            bench_res = (
+                (dur_tracker.get_benchmark_result() if dur_tracker else None)
+                or load_benchmark_result(tmp_source)
+            )
+            if not bench_res and max_concurrency and int(max_concurrency) > 0:
+                bench_res = {
+                    "best_concurrency": int(max_concurrency),
+                    "runner": "kubeflow_benchmark_llm_op",
+                }
+            if bench_res:
+                save_benchmark_result(bench_res, tmp_target)
+            if dur_tracker:
+                extract_benchmark_duration([tmp_target], dur_tracker)
+        except Exception as e:
+            logging.debug(f"Failed to persist benchmark_results.json in generate_code_and_meta_op: {e}")
 
         token_tracker = None
         try:
@@ -293,7 +423,15 @@ def _run_pipeline(
     git_username: str = os.getenv("GIT_USERNAME", ""),
     git_token: str = os.getenv("GIT_TOKEN", ""),
     multi_repo: bool = False,
+    max_concurrency: int = 0,
 ) -> Dataset:
+
+    bench = benchmark_llm_op(
+        override_concurrency=max_concurrency,
+        git_repo=git_repo,
+        git_branch=git_branch,
+        multi_repo=multi_repo,
+    )
 
     prep = prepare_environment_op(
         git_repo=git_repo,
@@ -301,12 +439,14 @@ def _run_pipeline(
         git_username=git_username,
         git_token=git_token
     )
+    prep.after(bench)
 
     gen = generate_code_and_meta_op(
         git_repo=git_repo,
         git_branch=git_branch,
         source_dir=prep.outputs["source_dir"],
         multi_repo=multi_repo,
+        max_concurrency=bench.output,
     )
 
     return gen.outputs["target_dir"]
@@ -315,7 +455,9 @@ def _run_pipeline(
 def _run_pipeline_multi_repo():
     """Generates code metadata for all repositories in the asset-loader repo list."""
 
+    bench = benchmark_llm_op(multi_repo=True)
     repo_list_task = get_repo_list_op()
+    repo_list_task.after(bench)
 
     with dsl.ParallelFor(items=repo_list_task.output,
                          parallelism=int(os.getenv("GRAPHRAG_PARALLEL_REPOS", "2"))) as repo:
@@ -326,6 +468,7 @@ def _run_pipeline_multi_repo():
             git_username=repo.git_username,
             git_token=repo.git_token,
             multi_repo=True,
+            max_concurrency=bench.output,
         )
 
 

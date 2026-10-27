@@ -79,6 +79,37 @@ class TestParseHeader(unittest.TestCase):
         text = f'"""{HEADER}, runtime Python 2.7"""\nimport os\n'
         self.assertEqual(parse_header(text).runtime, "Python 2.7")
 
+    def test_non_python_comment_delimiters_do_not_break_header_parsing(self):
+        for opener, closer in [
+            ("/* ", " */"),
+            ("<!-- ", " -->"),
+            ("<%-- ", " --%>"),
+            ("=begin\n", "\n=end"),
+            ("{# ", " #}"),
+        ]:
+            with self.subTest(closer=closer.strip()):
+                text = f"{opener}{HEADER}{closer}\npublic class Main {{}}\n"
+                parsed = parse_header(text)
+                self.assertIsNotNone(parsed)
+                self.assertEqual(parsed.path, "celery/worker/state.py")
+                self.assertEqual(parsed.git_slug, "celery-v2-5-5")
+                self.assertFalse(parsed.multi_repo)
+
+    def test_flattened_yaml_metadata_sidecar_is_parsed(self):
+        yaml_text = (
+            "file_path: src/main/java/App.java\n"
+            "git_repo: https://github.com/kfrankli/northpolesouthern-train.git\n"
+            "git_slug: kfrankli-northpolesouthern-train-main\n"
+            "language: java\n"
+            "multi_repo: false\n"
+        )
+        parsed = parse_header(yaml_text)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.path, "src/main/java/App.java")
+        self.assertEqual(parsed.git_repo, "https://github.com/kfrankli/northpolesouthern-train.git")
+        self.assertEqual(parsed.git_slug, "kfrankli-northpolesouthern-train-main")
+        self.assertFalse(parsed.multi_repo)
+
     def test_multi_repo_is_read_as_a_boolean(self):
         self.assertTrue(parse_header(HEADER.replace("multi_repo false", "multi_repo true")).multi_repo)
 
@@ -168,6 +199,20 @@ class TestFromDocuments(unittest.TestCase):
         ]))
         self.assertEqual([f.path for f in corpus.files],
                          ["celery/worker/state.py", "celery/app/base.py"])
+        self.assertEqual(corpus.unparsed, [])
+
+    def test_metadata_sidecar_does_not_duplicate_primary_document(self):
+        yaml_sidecar = (
+            "file_path: celery/worker/state.py\n"
+            "git_repo: https://github.com/celery/celery.git\n"
+            "git_slug: celery-v2-5-5\n"
+            "multi_repo: false\n"
+        )
+        corpus = from_documents(document_frame([
+            ("state.txt", f"/* {HEADER} */\npublic class State {{}}\n"),
+            ("state_metadata.txt", yaml_sidecar),
+        ]))
+        self.assertEqual([f.path for f in corpus.files], ["celery/worker/state.py"])
         self.assertEqual(corpus.unparsed, [])
 
     def test_an_unparseable_document_is_named_rather_than_dropped(self):

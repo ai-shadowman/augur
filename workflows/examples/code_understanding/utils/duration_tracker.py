@@ -312,7 +312,7 @@ class DurationTracker:
     def get_stage_durations(self, include_active: bool = False) -> Dict[str, float]:
         """Returns a mapping of stage names to total elapsed seconds in canonical stage order,
         avoiding double-counting parent/aggregate steps when sub-steps exist."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_recs = self.get_all_records(include_active=include_active)
         stages: Dict[str, List[Dict[str, Any]]] = {}
         for rec in all_recs:
@@ -351,18 +351,66 @@ class DurationTracker:
         rem_minutes = minutes % 60
         return f"{hours}h {rem_minutes:02d}m {rem_seconds:.0f}s"
 
+    @staticmethod
+    def _is_benchmark_record(rec: Dict[str, Any]) -> bool:
+        step_low = str(rec.get("step", "")).lower()
+        return "guidellm" in step_low or "concurrency benchmark" in step_low
+
+    @staticmethod
+    def _record_sort_key(rec: Dict[str, Any], stage_order: Dict[str, int]):
+        stage_rank = stage_order.get(str(rec.get("stage", "")).lower(), 99)
+        is_prestep = DurationTracker._is_benchmark_record(rec)
+        return (stage_rank, 0 if is_prestep else 1)
+
+    def get_benchmark_result(self, include_active: bool = True) -> Optional[Dict[str, Any]]:
+        """Extracts the GuideLLM concurrency benchmark result dictionary from recorded step metadata if present."""
+        all_records = self.get_all_records(include_active=include_active)
+        for rec in reversed(all_records):
+            if self._is_benchmark_record(rec):
+                meta = rec.get("metadata") or {}
+                if not isinstance(meta, dict):
+                    continue
+                if meta.get("best_concurrency") is None and not meta.get("levels"):
+                    continue
+                dur_sec = meta.get("duration_seconds")
+                if dur_sec is None or float(dur_sec or 0.0) <= 0.0:
+                    dur_sec = float(rec.get("duration", 0.0) or 0.0)
+                return {
+                    "best_concurrency": meta.get("best_concurrency"),
+                    "api_base": meta.get("api_base") or os.environ.get("GRAPHRAG_LLM_API_BASE") or os.environ.get("OPENAI_API_BASE") or "",
+                    "model": meta.get("model") or os.environ.get("GRAPHRAG_LLM_ID") or os.environ.get("SDG_LLM_ID") or "",
+                    "runner": meta.get("runner") or "guidellm",
+                    "skipped": bool(meta.get("skipped", False)),
+                    "reason": meta.get("reason"),
+                    "levels": meta.get("levels") if isinstance(meta.get("levels"), list) else [],
+                    "duration_seconds": float(dur_sec or 0.0),
+                }
+        return None
+
+    def format_benchmark_markdown_section(self, include_active: bool = True) -> str:
+        """Renders the GuideLLM Concurrency Benchmark Summary markdown section if benchmark data is available."""
+        bench_result = self.get_benchmark_result(include_active=include_active)
+        if not bench_result:
+            return ""
+        try:
+            from utils.llm_benchmark import format_benchmark_markdown_section
+            return format_benchmark_markdown_section(bench_result)
+        except Exception as e:
+            logging.debug(f"Failed to format GuideLLM benchmark markdown section: {e}")
+            return ""
+
     def format_summary(self, include_active: bool = True) -> str:
         """Renders an ASCII summary table of all recorded step durations with stage breakdown."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         all_records = self.get_all_records(include_active=include_active)
         if not all_records:
             return "No pipeline duration records captured."
 
-        # Sort records into canonical stage order (Data Generation -> Indexing -> Analysis)
-        # while preserving step execution order within each stage.
+        # Sort records into canonical stage order (Pre-Pipeline -> Data Generation -> Indexing -> Analysis)
+        # while placing the GuideLLM pre-pipeline step first and preserving step execution order.
         all_records = sorted(
             all_records,
-            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+            key=lambda r: self._record_sort_key(r, stage_order),
         )
 
         stage_w = 18
@@ -422,14 +470,14 @@ class DurationTracker:
 
     def format_markdown_table(self, include_active: bool = False) -> str:
         """Renders a native GFM Markdown table with visual latency bars, bottleneck analysis, and MLflow deep links."""
-        stage_order = {"data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
+        stage_order = {"pre-pipeline": 0, "data generation": 1, "indexing": 2, "evaluation": 3, "analysis": 4}
         records = self.get_all_records(include_active=include_active)
         if not records:
             return ""
 
         records = sorted(
             records,
-            key=lambda r: stage_order.get(str(r.get("stage", "")).lower(), 99),
+            key=lambda r: self._record_sort_key(r, stage_order),
         )
 
         self.capture_mlflow_context()
@@ -506,7 +554,11 @@ class DurationTracker:
                 lines.append(f"- **{stage}:** `{self.format_duration(s_dur)}` ({pct:.1f}%)")
             lines.append("\n</details>\n")
 
-        return "\n".join(lines)
+        table_md = "\n".join(lines)
+        bench_md = self.format_benchmark_markdown_section(include_active=include_active)
+        if bench_md:
+            return f"{table_md.rstrip()}{bench_md}"
+        return table_md
 
     def format_markdown_section(self, include_active: bool = True, as_table: bool = False) -> str:
         """Returns a Markdown-formatted section ready to append to migration_report.md."""
@@ -516,7 +568,11 @@ class DurationTracker:
         if not all_records:
             return ""
 
-        return f"\n\n### Pipeline Execution Duration Summary\n\n```\n{self.format_summary(include_active=include_active)}\n```\n"
+        base_section = f"\n\n### Pipeline Execution Duration Summary\n\n```\n{self.format_summary(include_active=include_active)}\n```\n"
+        bench_section = self.format_benchmark_markdown_section(include_active=include_active)
+        if bench_section:
+            return f"{base_section.rstrip()}{bench_section}"
+        return base_section
 
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs recorded step durations as metrics to active MLflow run."""
@@ -727,13 +783,15 @@ class DurationTracker:
         if (git_slug or multi_repo) and not merged_any:
             upstream_targets = []
             if current_stage and current_stage.lower() == "analysis":
-                upstream_targets = ["Data Generation", "Indexing", "Evaluation"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation", "Indexing", "Evaluation"]
             elif current_stage and current_stage.lower() == "evaluation":
-                upstream_targets = ["Data Generation", "Indexing"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation", "Indexing"]
             elif current_stage and current_stage.lower() == "indexing":
-                upstream_targets = ["Data Generation"]
+                upstream_targets = ["Pre-Pipeline", "Data Generation"]
+            elif current_stage and current_stage.lower() == "data generation":
+                upstream_targets = ["Pre-Pipeline"]
             else:
-                upstream_targets = [None]
+                upstream_targets = ["Pre-Pipeline", None]
 
             for target_stage in upstream_targets:
                 try:
@@ -824,7 +882,10 @@ class DurationTracker:
         recs = data.get("records", [])
         if current_stage:
             stage_low = current_stage.lower()
-            self.records = [r for r in recs if r.get("stage", "").lower() != stage_low]
+            self.records = [
+                r for r in recs
+                if r.get("stage", "").lower() != stage_low or self._is_benchmark_record(r)
+            ]
         else:
             self.records = list(recs)
         if "git_slug" in data and not self.git_slug:
@@ -884,7 +945,7 @@ class DurationTracker:
         existing_indices = {(r.get("stage"), r.get("step")): i for i, r in enumerate(self.records)}
         stage_low = current_stage.lower() if current_stage else None
         for rec in other.records:
-            if stage_low and rec.get("stage", "").lower() == stage_low:
+            if stage_low and rec.get("stage", "").lower() == stage_low and not self._is_benchmark_record(rec):
                 continue
             key = (rec.get("stage"), rec.get("step"))
             if key not in existing_indices:
@@ -895,6 +956,11 @@ class DurationTracker:
                 existing_rec = self.records[idx]
                 if existing_rec.get("duration", 0.0) <= 0.0 or existing_rec.get("status") == "running":
                     self.records[idx] = rec
+                elif isinstance(rec.get("metadata"), dict):
+                    existing_meta = existing_rec.setdefault("metadata", {})
+                    for mk, mv in rec["metadata"].items():
+                        if mv is not None and (mk not in existing_meta or not existing_meta[mk]):
+                            existing_meta[mk] = mv
 
 
 def track_duration(stage: str, step: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None):
@@ -1063,19 +1129,85 @@ def extract_graphrag_indexing_durations(graphrag_dir: str, dur_tracker: Duration
     return extracted_any
 
 
+def extract_benchmark_duration(search_paths: Union[str, List[str]], dur_tracker: DurationTracker) -> bool:
+    """Extracts GuideLLM Concurrency Benchmark duration and metadata from benchmark_results.json."""
+    if not search_paths or not dur_tracker:
+        return False
+
+    existing_bench = next(
+        (r for r in dur_tracker.records if DurationTracker._is_benchmark_record(r)),
+        None,
+    )
+    if existing_bench is not None:
+        existing_meta = existing_bench.get("metadata") or {}
+        if existing_meta.get("levels") and existing_meta.get("api_base"):
+            return False
+
+    if isinstance(search_paths, str):
+        search_paths = [search_paths]
+
+    for bench_file in find_all_telemetry_files(search_paths, "benchmark_results.json"):
+        try:
+            with open(bench_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                dur_val = float(data.get("duration_seconds", 0.0) or 0.0)
+                try:
+                    from utils.llm_benchmark import extract_benchmark_metadata
+                    meta = extract_benchmark_metadata(data)
+                except Exception:
+                    meta = {
+                        "best_concurrency": data.get("best_concurrency"),
+                        "api_base": data.get("api_base"),
+                        "model": data.get("model"),
+                        "runner": data.get("runner"),
+                        "skipped": bool(data.get("skipped", False)),
+                        "reason": data.get("reason"),
+                        "levels": data.get("levels", []),
+                        "duration_seconds": dur_val,
+                    }
+                if existing_bench is not None:
+                    target_meta = existing_bench.setdefault("metadata", {})
+                    for mk, mv in meta.items():
+                        if mv is not None and (mk not in target_meta or not target_meta[mk]):
+                            target_meta[mk] = mv
+                    if existing_bench.get("duration", 0.0) <= 0.001 and dur_val > 0.0:
+                        existing_bench["duration"] = dur_val
+                else:
+                    dur_tracker.record_step(
+                        stage="Data Generation",
+                        step="GuideLLM Concurrency Benchmark",
+                        duration=dur_val,
+                        status="success",
+                        metadata=meta,
+                    )
+                return True
+        except Exception as e:
+            logging.debug(f"Failed to extract benchmark duration from {bench_file}: {e}")
+
+    return False
+
+
 def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_tracker: DurationTracker) -> bool:
     """Extracts/reconstructs Data Generation execution durations from generated files if not already recorded.
     Returns True if any Data Generation durations were recorded, False otherwise."""
     if not search_paths or not dur_tracker:
         return False
 
-    # If dur_tracker already contains Data Generation records, do nothing
-    has_data_gen = any(r.get("stage", "").lower() == "data generation" for r in dur_tracker.records)
-    if has_data_gen:
-        return False
-
     if isinstance(search_paths, str):
         search_paths = [search_paths]
+
+    bench_extracted = extract_benchmark_duration(search_paths, dur_tracker)
+
+    # Check if dur_tracker already contains non-benchmark Data Generation records
+    has_data_gen = any(
+        r.get("stage", "").lower() == "data generation"
+        and "guidellm" not in str(r.get("step", "")).lower()
+        and "concurrency benchmark" not in str(r.get("step", "")).lower()
+        for r in dur_tracker.records
+    )
+    if has_data_gen:
+        return bench_extracted
 
     # Look for files produced by Data Generation
     found_files = []
@@ -1092,7 +1224,7 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
                         found_files.append(os.path.join(root, f))
 
     if not found_files:
-        return False
+        return bench_extracted
 
     meta_files = [f for f in found_files if f.endswith("_metadata.txt") or f.endswith("code-metadata.json") or f.endswith("metadata.json")]
     n_files = len(meta_files) if meta_files else max(1, len(found_files) // 2)
@@ -1116,14 +1248,19 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
     save_dur = round(max(0.1, total_elapsed * 0.10), 2)
     log_dur = round(max(0.1, total_elapsed * 0.05), 2)
 
-    steps = [
+    steps = []
+    if not bench_extracted:
+        bench_dur = round(max(0.1, total_elapsed * 0.05), 2)
+        steps.append(("GuideLLM Concurrency Benchmark", bench_dur))
+
+    steps.extend([
         ("Load External Data", load_dur),
         ("Detect Languages", detect_dur),
         ("Parse Raw Code", parse_dur),
         ("LLM Metadata Extraction", llm_dur),
         ("Save Metadata Files", save_dur),
         ("Log Metadata Results", log_dur),
-    ]
+    ])
 
     for step_name, dur in steps:
         dur_tracker.record_step(
@@ -1134,4 +1271,5 @@ def extract_data_generation_durations(search_paths: Union[str, List[str]], dur_t
         )
 
     return True
+
 

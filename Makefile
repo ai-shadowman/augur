@@ -264,6 +264,44 @@ run-pipelines:
 	echo "==> Streaming pipeline run results..." && \
 	oc logs -f job/run-pipelines -n $$KFP_NAMESPACE
 
+benchmark-llm:
+	@set -a && . $(ENV_FILE) && set +a && \
+	if [ "$${LOCAL:-0}" = "1" ] || [ "$${LOCAL:-false}" = "true" ]; then \
+		echo "==> Running GuideLLM concurrency benchmark locally..." && \
+		bash workflows/examples/code_understanding/scripts/benchmark_llm.sh $${ARGS:-}; \
+	else \
+		echo "==> Submitting benchmark-llm job to OpenShift namespace $$KFP_NAMESPACE..." && \
+		oc delete job benchmark-llm -n $$KFP_NAMESPACE --ignore-not-found=true && \
+		oc delete configmap benchmark-llm-scripts -n $$KFP_NAMESPACE --ignore-not-found=true && \
+		oc create configmap benchmark-llm-scripts \
+			--from-file=benchmark_llm.sh=workflows/examples/code_understanding/scripts/benchmark_llm.sh \
+			--from-file=llm_benchmark.py=workflows/examples/code_understanding/utils/llm_benchmark.py \
+			-n $$KFP_NAMESPACE && \
+		ESCAPED_ARGS="$$(printf '%s' "$${ARGS:-}" | sed 's/,/\\,/g')" && \
+		ESCAPED_LEVELS="$$(printf '%s' "$${GUIDELLM_CONCURRENCY_LEVELS:-}" | sed 's/,/\\,/g')" && \
+		helm template agent-mesh-for-sw resources/helm \
+			--set namespace="$$KFP_NAMESPACE" \
+			--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+			--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+			--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
+			--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
+			--set benchmarkLlm.run=true \
+			--set-string benchmarkLlm.args="$$ESCAPED_ARGS" \
+			--set-string benchmarkLlm.concurrencyLevels="$$ESCAPED_LEVELS" \
+			--set-string benchmarkLlm.maxSeconds="$${GUIDELLM_MAX_SECONDS:-}" \
+			--set-string benchmarkLlm.maxRequests="$${GUIDELLM_MAX_REQUESTS:-}" \
+			--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
+			--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
+			--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
+			--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
+			-s templates/benchmark-llm-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+		echo "==> Waiting for benchmark-llm container to start..." && \
+		until oc logs job/benchmark-llm -n $$KFP_NAMESPACE >/dev/null 2>&1; do sleep 2; done && \
+		echo "==> Streaming GuideLLM benchmark results..." && \
+		oc logs -f job/benchmark-llm -n $$KFP_NAMESPACE; \
+		oc delete configmap benchmark-llm-scripts -n $$KFP_NAMESPACE --ignore-not-found=true; \
+	fi
+
 deploy-otel:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\

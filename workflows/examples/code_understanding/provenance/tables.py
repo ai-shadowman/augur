@@ -54,7 +54,8 @@ def _union_ids(values) -> list:
         except TypeError:
             items = [value]
         for item in items:
-            seen.setdefault(item, None)
+            if not _missing(item):
+                seen.setdefault(item, None)
     return list(seen)
 
 
@@ -109,6 +110,57 @@ def _flatten(renames: dict[str, str]) -> dict[str, str]:
     return flat
 
 
+def collapse_edges(relationships):
+    """Fold duplicate ``(source, target)`` edges into one row and reset the index.
+
+    Renaming two duplicate entity spellings onto the same canonical title can
+    leave two edges with identical ``(source, target)`` endpoints. Collapsing
+    them here (merging ``description``, ``weight``, and ``text_unit_ids``)
+    keeps the relationship index contiguous so GraphRAG's
+    ``finalize_relationships`` does not drop duplicate rows without resetting
+    the index and misalign ``combined_degree`` into ``NaN``.
+    """
+    if relationships is None or not len(relationships):
+        return relationships
+    relationships = relationships.reset_index(drop=True)
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i, (src, tgt) in enumerate(
+        zip(
+            relationships["source"].astype(str),
+            relationships["target"].astype(str),
+            strict=False,
+        )
+    ):
+        groups.setdefault((src, tgt), []).append(i)
+
+    if len(groups) == len(relationships):
+        return relationships
+
+    drop: list[int] = []
+    for rows in groups.values():
+        if len(rows) == 1:
+            continue
+        keep = rows[0]
+        if "description" in relationships:
+            relationships.at[keep, "description"] = _pick_description(
+                relationships, rows
+            )
+        if "weight" in relationships:
+            relationships.at[keep, "weight"] = sum(
+                0.0
+                if _missing(relationships.at[i, "weight"])
+                else float(relationships.at[i, "weight"] or 0.0)
+                for i in rows
+            )
+        if "text_unit_ids" in relationships:
+            relationships.at[keep, "text_unit_ids"] = _union_ids(
+                relationships.at[i, "text_unit_ids"] for i in rows
+            )
+        drop.extend(rows[1:])
+
+    return relationships.drop(index=drop).reset_index(drop=True)
+
+
 def rewrite_edges(relationships, renames: dict[str, str], report: GroundingReport):
     """Point every edge at the surviving titles and drop the self-loops that creates."""
     if relationships is None or not len(relationships) or not renames:
@@ -126,7 +178,7 @@ def rewrite_edges(relationships, renames: dict[str, str], report: GroundingRepor
     if loops.any():
         report.self_loops_removed += int(loops.sum())
         relationships = relationships[~loops].reset_index(drop=True)
-    return relationships
+    return collapse_edges(relationships)
 
 
 def document_for(cell, text_unit_to_document: dict[str, str]) -> str | None:
@@ -165,3 +217,26 @@ def text_unit_documents(text_units) -> dict[str, str]:
         if len(ids) == 1:
             mapping[unit_id] = str(ids[0])
     return mapping
+
+
+def document_text_units(text_units) -> dict[str, list[str]]:
+    """Map each document id to the text unit ids that belong to it."""
+    if text_units is None or not len(text_units):
+        return {}
+    if "id" not in text_units or "document_ids" not in text_units:
+        return {}
+    mapping: dict[str, list[str]] = {}
+    for unit_id, document_ids in zip(
+        text_units["id"].astype(str), text_units["document_ids"], strict=False
+    ):
+        if _missing(document_ids):
+            continue
+        try:
+            ids = list(document_ids)
+        except TypeError:
+            ids = [document_ids]
+        for doc_id in ids:
+            if not _missing(doc_id):
+                mapping.setdefault(str(doc_id), []).append(unit_id)
+    return mapping
+

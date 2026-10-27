@@ -36,21 +36,45 @@ from pathlib import PurePosixPath
 
 logger = logging.getLogger(__name__)
 
+#: Closing comment delimiters that may immediately follow the header line when
+#: a file has no extracted metadata lines below the header.
+_CLOSING_DELIMITERS = (
+    r'(?:"""|\*/|-->|--%>|\*#|#\}|--\}\}|%>|\}\}|=end|COMMENT|\{%\s*endcomment\s*%\})'
+)
+
 #: The header data generation writes. ``runtime`` is optional, and the trailing
-#: group stops at a quote or newline so a docstring delimiter is not swallowed.
+#: group stops at a quote, comment delimiter, or newline so a closing delimiter
+#: is not swallowed.
 HEADER = re.compile(
     r"This file is located at (?P<path>\S+?)\s+"
     r"from repository url (?P<repo>\S+?),\s*"
     r"repository slug (?P<slug>\S+?),\s*"
     r"multi_repo (?P<multi>true|false)"
-    r'(?:,\s*runtime\s+(?P<runtime>[^"\n]+?))?\s*(?:"""|\n|$)',
+    r"(?:,\s*runtime\s+(?P<runtime>[^\n]+?))?\s*"
+    rf"(?:{_CLOSING_DELIMITERS}|\n|$)",
     re.IGNORECASE,
 )
+
+#: Identity fields written into flattened ``*_metadata.txt`` YAML sidecar files.
+_YAML_FIELD = {
+    name: re.compile(rf"^{name}:\s*['\"]?([^\n'\"]+?)['\"]?\s*$", re.MULTILINE)
+    for name in ("file_path", "git_repo", "git_slug", "multi_repo")
+}
 
 #: Suffixes stripped before comparing a model's entity name to a real path. A
 #: model writes ``celery.worker.state`` for ``celery/worker/state.py``, so the
 #: extension has to come off for the two to meet.
-_SOURCE_SUFFIXES = (".py", ".pyx", ".pyi", ".txt", ".cfg", ".toml", ".yaml", ".yml")
+_SOURCE_SUFFIXES = (
+    ".blade.php",
+    ".py", ".pyx", ".pyi", ".java", ".kt", ".js", ".ts",
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".i",
+    ".rb", ".sh", ".sql", ".pp", ".epp", ".tf", ".tfvars",
+    ".jsp", ".ftl", ".ftlh", ".vm", ".vtl", ".xsl", ".xslt",
+    ".html", ".htm", ".j2", ".jinja", ".jinja2", ".hbs", ".handlebars",
+    ".pug", ".jade", ".ejs", ".njk", ".mustache", ".erb", ".liquid", ".twig",
+    ".xml", ".gradle", ".properties", ".json", ".cmake", ".mk", ".gemspec",
+    ".env", ".conf", ".ini", ".txt", ".cfg", ".toml", ".yaml", ".yml",
+)
 
 #: Separators a model uses interchangeably for the same path. ``_`` is
 #: deliberately absent: folding it would make ``celery.app.__init__`` collide
@@ -196,6 +220,27 @@ class Corpus:
         return {f.git_slug for f in self.files if f.git_slug}
 
 
+def _parse_yaml_metadata(text: str) -> CorpusFile | None:
+    """Read a flattened ``*_metadata.txt`` YAML sidecar if all identity keys are present."""
+    sample = str(text)[:8192]
+    matches = {name: pat.search(sample) for name, pat in _YAML_FIELD.items()}
+    if not all(matches.values()):
+        return None
+    path = matches["file_path"].group(1).strip()
+    repo = matches["git_repo"].group(1).strip()
+    slug = matches["git_slug"].group(1).strip()
+    multi = matches["multi_repo"].group(1).strip().lower()
+    if not (path and repo and slug and multi in ("true", "false")):
+        return None
+    return CorpusFile(
+        path=PurePosixPath(path).as_posix(),
+        git_repo=repo.rstrip(","),
+        git_slug=slug,
+        multi_repo=multi == "true",
+        runtime=None,
+    )
+
+
 def parse_header(text: str) -> CorpusFile | None:
     """Read one document's header, or ``None`` if it has none.
 
@@ -203,10 +248,12 @@ def parse_header(text: str) -> CorpusFile | None:
     appear later in a file that documents the convention, and a match there
     would describe some other file.
     """
-    match = HEADER.search(str(text)[:1024])
+    head = str(text)[:1024]
+    match = HEADER.search(head)
     if not match:
-        return None
-    runtime = (match.group("runtime") or "").strip() or None
+        return _parse_yaml_metadata(text)
+    raw_runtime = (match.group("runtime") or "").strip()
+    runtime = re.sub(rf"\s*{_CLOSING_DELIMITERS}\s*$", "", raw_runtime, flags=re.IGNORECASE).strip() or None
     return CorpusFile(
         path=PurePosixPath(match.group("path")).as_posix(),
         git_repo=match.group("repo").rstrip(","),
@@ -232,12 +279,29 @@ def from_documents(documents) -> Corpus:
         if "id" in documents
         else [None] * len(documents)
     )
+    by_key_idx: dict[str, int] = {}
+    sidecar_keys: set[str] = set()
     for title, document_id, text in zip(titles, ids, documents["text"], strict=False):
         parsed = parse_header(text)
         if parsed is None:
             corpus.unparsed.append(title)
             continue
-        corpus.files.append(replace(parsed, document_id=document_id))
+        entry = replace(parsed, document_id=document_id)
+        is_sidecar = str(title).endswith("_metadata.txt") or HEADER.search(str(text)[:1024]) is None
+        if entry.key in by_key_idx:
+            idx = by_key_idx[entry.key]
+            if not is_sidecar and entry.key in sidecar_keys:
+                corpus.files[idx] = entry
+                sidecar_keys.discard(entry.key)
+            elif is_sidecar:
+                continue
+            else:
+                corpus.files.append(entry)
+            continue
+        by_key_idx[entry.key] = len(corpus.files)
+        if is_sidecar:
+            sidecar_keys.add(entry.key)
+        corpus.files.append(entry)
 
     if corpus.unparsed:
         logger.warning(

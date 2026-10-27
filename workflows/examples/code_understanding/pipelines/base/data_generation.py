@@ -89,8 +89,11 @@ def prepare_environment(source_path: str,
         # consumes declared constraints, which come from the manifests.
         cm_facts = dur_tracker.measure(stage="Data Generation", step="Extract Provenance Facts") if dur_tracker else nullcontext()
         with cm_facts:
+            import shutil
             from provenance.pipeline import capture as capture_provenance
-            capture_provenance(source_path, target_path, run_syft=False)
+            facts_path = capture_provenance(source_path, target_path, run_syft=False)
+            if os.path.abspath(source_path) != os.path.abspath(target_path) and os.path.exists(str(facts_path)):
+                shutil.copy2(str(facts_path), os.path.join(source_path, os.path.basename(str(facts_path))))
 
     except Exception as e:
 
@@ -133,6 +136,16 @@ def generate_raw_dataset(source_path: str, target_path: str, git_repo: str, git_
             )
 
             for filename in files:
+                if filename in {
+                    "metadata.json",
+                    "code-metadata.json",
+                    "durations.json",
+                    "tokens.json",
+                    "project_metrics.json",
+                    "benchmark_results.json",
+                    "provenance.json",
+                }:
+                    continue
                 if os.path.splitext(filename)[1] not in include_extensions:
                     continue
 
@@ -249,7 +262,22 @@ def get_parsed_code_metadata(df, language, config=False):
         flows_dir = f"flows/{flow_dir}"
         DefaultAssetLoader().download_dir(f"sdghub/{flow_dir}", download_dir=flows_dir)
 
-        flow = Flow.from_yaml(f"{flows_dir}/flow.yaml")
+        flow_yaml_path = f"{flows_dir}/flow.yaml"
+        if os.path.isfile(flow_yaml_path):
+            import re
+            with open(flow_yaml_path, "r", encoding="utf-8") as f:
+                flow_yaml_text = f.read()
+            cleaned_yaml_text = re.sub(
+                r"^[ \t]*(?:best_of|top_k)\s*:[^\n]*\n?",
+                "",
+                flow_yaml_text,
+                flags=re.MULTILINE,
+            )
+            if cleaned_yaml_text != flow_yaml_text:
+                with open(flow_yaml_path, "w", encoding="utf-8") as f:
+                    f.write(cleaned_yaml_text)
+
+        flow = Flow.from_yaml(flow_yaml_path)
 
         flow.set_model_config(
             model=f"{os.getenv('GRAPHRAG_LLM_PROVIDER')}/{os.getenv('GRAPHRAG_LLM_ID')}",
@@ -259,7 +287,6 @@ def get_parsed_code_metadata(df, language, config=False):
             n=1,
             max_tokens=32_000,
             response_format={"type": "json_object"},
-            top_k=1,
             timeout=llm_timeout,
             num_retries=llm_num_retries,
         )
@@ -648,6 +675,72 @@ def should_reraise_processing_error(error: Exception, *, multi_repo: bool) -> bo
     return not multi_repo or isinstance(error, RepositoryIgnoreError)
 
 
+def benchmark_and_configure_concurrency(target_path: str = None, dur_tracker=None,
+                                        override_concurrency: int = 0) -> dict:
+    """Runs the GuideLLM concurrency benchmark (unless overridden or skipped) and sets concurrency env vars."""
+    from utils.llm_benchmark import (
+        apply_best_concurrency,
+        extract_benchmark_metadata,
+        run_guidellm_benchmark,
+        save_benchmark_result,
+    )
+
+    if override_concurrency and int(override_concurrency) > 0:
+        best_c = apply_best_concurrency(int(override_concurrency))
+        existing_bench = (
+            dur_tracker.get_benchmark_result()
+            if dur_tracker and hasattr(dur_tracker, "get_benchmark_result")
+            else None
+        )
+        if existing_bench and existing_bench.get("levels"):
+            bench_result = dict(existing_bench)
+            bench_result["best_concurrency"] = best_c
+        else:
+            bench_result = {
+                "best_concurrency": best_c,
+                "runner": "override",
+                "skipped": True,
+                "reason": "Provided via override_concurrency",
+                "levels": [],
+                "duration_seconds": 0.0,
+            }
+        if dur_tracker:
+            has_bench = any(
+                "guidellm" in str(r.get("step", "")).lower()
+                or "concurrency benchmark" in str(r.get("step", "")).lower()
+                for r in dur_tracker.records
+            )
+            if not has_bench:
+                dur_tracker.record_step(
+                    stage="Data Generation",
+                    step="GuideLLM Concurrency Benchmark",
+                    duration=float(bench_result.get("duration_seconds", 0.0) or 0.0),
+                    status="success",
+                    metadata=extract_benchmark_metadata(bench_result),
+                )
+    else:
+        cm_bench = (
+            dur_tracker.measure(stage="Data Generation", step="GuideLLM Concurrency Benchmark")
+            if dur_tracker
+            else nullcontext()
+        )
+        with cm_bench:
+            bench_result = run_guidellm_benchmark(apply_env=True)
+        if dur_tracker and isinstance(bench_result, dict):
+            for rec in reversed(dur_tracker.records):
+                if rec.get("step") == "GuideLLM Concurrency Benchmark":
+                    meta = rec.setdefault("metadata", {})
+                    meta.update(extract_benchmark_metadata(bench_result))
+                    if rec.get("duration", 0.0) <= 0.001 and float(bench_result.get("duration_seconds", 0.0) or 0.0) > 0.0:
+                        rec["duration"] = float(bench_result["duration_seconds"])
+                    break
+
+    if target_path and bench_result:
+        save_benchmark_result(bench_result, target_path)
+
+    return bench_result
+
+
 ##############################################################################
 # Pipeline stage
 ##############################################################################
@@ -656,7 +749,7 @@ class DataGenerationPipeline:
 
     @enable_telemetry
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
-            multi_repo: bool = False):
+            multi_repo: bool = False, override_concurrency: int = 0):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback
 
@@ -693,8 +786,15 @@ class DataGenerationPipeline:
                 except Exception as e:
                     logging.debug(f"Failed to record pod creation overhead in data generation: {e}")
                 with dur_tracker.measure(stage="Data Generation", step="Data Generation Total", metadata={"is_aggregate": True}):
+                    bench_result = benchmark_and_configure_concurrency(
+                        dur_tracker=dur_tracker,
+                        override_concurrency=override_concurrency,
+                    )
                     prepare_environment(source_path=source_path, target_path=target_path,
                                         git_repo=git_repo, git_branch=git_branch)
+                    if target_path and bench_result:
+                        from utils.llm_benchmark import save_benchmark_result
+                        save_benchmark_result(bench_result, target_path)
                     ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
 
                     with dur_tracker.measure(stage="Data Generation", step="Detect Languages"):
@@ -720,8 +820,15 @@ class DataGenerationPipeline:
                             )
                     ignore_policy.log_summary()
             else:
+                bench_result = benchmark_and_configure_concurrency(
+                    dur_tracker=None,
+                    override_concurrency=override_concurrency,
+                )
                 prepare_environment(source_path=source_path, target_path=target_path,
                                     git_repo=git_repo, git_branch=git_branch)
+                if target_path and bench_result:
+                    from utils.llm_benchmark import save_benchmark_result
+                    save_benchmark_result(bench_result, target_path)
                 ignore_policy = RepositoryIgnorePolicy.from_repository(source_path)
                 languages = detect_languages(source_path, ignore_policy)
                 if code_tracker:
@@ -830,6 +937,18 @@ class DataGenerationPipeline:
         parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
         parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")
 
+        try:
+            from utils.duration_tracker import DurationTracker
+            dur_tr_init = DurationTracker.get_instance()
+        except Exception:
+            dur_tr_init = None
+
+        bench_result = benchmark_and_configure_concurrency(
+            target_path=parent_target_path,
+            dur_tracker=dur_tr_init,
+        )
+        best_concurrency = int(bench_result.get("best_concurrency", 0) or 0)
+
         pipeline_results = []
 
         for git_data in git_repos:
@@ -842,7 +961,8 @@ class DataGenerationPipeline:
             logging.info(f"Generating data for git repo={git_repo}, branch={git_branch}, slug={repo_slug}...")
             result = self.run(git_repo=git_repo, git_branch=git_branch,
                               source_path=source_path, target_path=target_path,
-                              multi_repo=True)
+                              multi_repo=True,
+                              override_concurrency=best_concurrency)
             pipeline_results.append(result)
 
         try:

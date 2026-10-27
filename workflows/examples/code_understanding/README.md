@@ -8,10 +8,11 @@ This directory contains the core pipelines and components for AUGUR's Code Under
 - **`pipelines/kubeflow/`**: Kubeflow Pipelines (KFP) wrappers for containerized, distributed execution across Kubernetes pods.
 - **`pipelines/graphrag.py`**: In-process GraphRAG execution runner replacing legacy shell scripts.
 - **`utils/`**: Core utilities including:
-  - [`code_metrics_tracker.py`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/code_metrics_tracker.py): Repository scope, file count, and lines of code (SLOC) measurement singleton.
-  - [`token_tracker.py`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/token_tracker.py): Real-time token usage and cost estimation singleton.
-  - [`duration_tracker.py`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/duration_tracker.py): Per-step pipeline duration measurement and latency profiling.
-  - [`graphrag_utils.py`](file:///c:/Dev/augur/workflows/examples/code_understanding/utils/graphrag_utils.py): GraphRAG querying, dependency analysis, and markdown report synthesis.
+  - `llm_benchmark.py`: GuideLLM concurrency benchmarking and auto-tuning engine (`SDG_LLM_MAX_CONCURRENCY` and `GRAPHRAG_CONCURRENT_REQUESTS`).
+  - `code_metrics_tracker.py`: Repository scope, file count, and lines of code (SLOC) measurement singleton.
+  - `token_tracker.py`: Real-time token usage and cost estimation singleton.
+  - `duration_tracker.py`: Per-step pipeline duration measurement and latency profiling.
+  - `graphrag_utils.py`: GraphRAG querying, dependency analysis, and markdown report synthesis.
 - **`telemetry/`**: Pluggable telemetry abstraction layer (`CustomTelemetry`, `MlFlowCustomTelemetry`, `BasicCustomTelemetry`).
 - **`loaders/`**: Pluggable asset loaders for local filesystem and MLflow artifact registries.
 - **`eval/`**: Benchmark evaluation and LLM-as-judge scoring.
@@ -23,6 +24,7 @@ This directory contains the core pipelines and components for AUGUR's Code Under
 
 For architectural details and implementation guides across the telemetry subsystems:
 
+- 👉 **[GUILDLLM_README.MD](../../../GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking and pipeline auto-tuning guide.
 - 👉 **[README_CODE_METRICS.md](../../../README_CODE_METRICS.md)**: Repository scope, file count & lines-of-code tracking guide.
 - 👉 **[README_METRICS.md](../../../README_METRICS.md)**: LLM token usage, duration tracking, cross-pod artifact propagation, and metrics extensibility guide.
 ## Maintainer Guides
@@ -133,5 +135,6 @@ reports/*
 
 ## Telemetry & Metrics Maintenance Guide
 
+- 👉 **[GUILDLLM_README.MD](../../../GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` and `benchmark_llm_op`).
 - 👉 **[README_LOGGING.md](../../../README_LOGGING.md)**: Unified console logging, `LOGLEVEL` environment configuration, and container stdout architecture.
 - 👉 **[README_METRICS.md](../../../README_METRICS.md)**: Telemetry architecture, LLM token metrics, pipeline duration tracking, and metric expansion guide.
