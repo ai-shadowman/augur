@@ -400,6 +400,31 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
                 or report.rstrip().endswith("|")
             )
 
+    def test_provenance_section_is_appended_without_a_model_call(self):
+        """The section is read from the index's output/ and stitched in; no query runs for it."""
+        import asyncio
+        from utils.graphrag_utils import DependencyAnalyzer
+
+        section = "## Provenance of the relationships\n\nstitched"
+        with patch.object(DependencyAnalyzer, '_setup_configuration'), \
+             patch.object(DependencyAnalyzer, '_setup_search'), \
+             patch.object(DependencyAnalyzer, '_setup_prompts'), \
+             patch.object(DependencyAnalyzer, '_extract_indexed_git_urls', return_value=set()), \
+             patch('utils.visualization_utils.log_interactive_dependency_graph'), \
+             patch('provenance.report_section.section_for', return_value=section) as section_for:
+
+            analyzer = DependencyAnalyzer(root_dir="/index/root")
+            mock_loader = MagicMock()
+            mock_loader.num_prompts.return_value = 0
+            analyzer.query_with_llm = AsyncMock()
+
+            with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader):
+                report = asyncio.run(analyzer.generate_migration_report())
+
+        section_for.assert_called_once_with(os.path.join("/index/root", "output"))
+        analyzer.query_with_llm.assert_not_called()
+        self.assertIn(section, report)
+
     def test_singleton_get_instance_and_reset(self):
         """Verify TokenCostTracker.get_instance() and reset_instance() behavior."""
         TokenCostTracker.reset_instance()

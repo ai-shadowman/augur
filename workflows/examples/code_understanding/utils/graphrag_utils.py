@@ -805,7 +805,16 @@ class DependencyAnalyzer:
         except Exception:
             duration_section = ""
 
-        sections = [s.strip() for s in [code_metrics_section, token_summary_section, duration_section] if isinstance(s, str) and s.strip()]
+        # Counted from output/edge_verdicts, no model call. Should become a
+        # render: prompt once feat/deterministic-first-cve merges.
+        try:
+            from provenance.report_section import section_for
+            provenance_section = section_for(os.path.join(self.graphrag_dir, "output"))
+        except Exception as e:  # noqa: BLE001 - a broken section must not cost the report
+            logging.warning(f"Provenance section not built in generate_migration_report: {e}")
+            provenance_section = ""
+
+        sections = [s.strip() for s in [provenance_section, code_metrics_section, token_summary_section, duration_section] if isinstance(s, str) and s.strip()]
         metrics_section = "\n\n".join(sections)
 
         if not self.multi_repo:
