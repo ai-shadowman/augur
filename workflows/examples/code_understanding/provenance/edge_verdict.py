@@ -184,9 +184,28 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
 
     Failing scope, a bare name falls back to an exact top-level key only where
     the dialect has such a scope, and for INHERITS never onto a module, since
-    a base is a type: ``Config`` is not the root ``config.py``.
+    a base is a type: ``Config`` is not the root ``config.py``. A bare name
+    no scope looked up, the subject's included, takes the same fallback on
+    the same terms, and not onto a module when another key ends in the name.
     """
     ks, kt = ev.ground(source), ev.ground(target)
+
+    def top_level(fallback: str | None, files: set[str]) -> str | None:
+        if fallback is None or not ev.global_bare(files):
+            return None
+        if kind == INHERITS and _module(ev, fallback) is not None:
+            return None
+        return fallback
+
+    def unscoped(fallback: str | None) -> str | None:
+        # No scope says which declaration a bare subject means, so a root
+        # module is only one candidate: ``Config`` is ``config.py`` or
+        # ``app.settings.Config``, and taking the only exact match is the
+        # partial-evidence mistake. A top-level declaration is what the bare
+        # name means in a language with a top level, so it stays.
+        if fallback is None or (_module(ev, fallback) is not None and ev.named_elsewhere(fallback)):
+            return None
+        return top_level(fallback, ev.files(fallback))
 
     def scoped(bare: str, key: str, title: str, fallback: str | None) -> str | None:
         files = ev.title_files(title, key)
@@ -194,17 +213,15 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
             return fallback
         if found := ev.in_scope(dotted_key(bare), key, files, imported=kind == IMPORTS):
             return found
-        if fallback is None or not ev.global_bare(files):
-            return None
-        if kind == INHERITS and _module(ev, fallback) is not None:
-            return None
-        return fallback
+        return top_level(fallback, files)
 
     if _bare(source) and kt and subject != edge_types.SOURCE:
-        ks = scoped(source, kt, target, ks)
-    elif _bare(target) and ks and subject != edge_types.TARGET:
-        kt = scoped(target, ks, source, kt)
-    return ks, kt
+        return scoped(source, kt, target, ks), kt
+    if _bare(source):
+        ks = unscoped(ks)
+    if _bare(target) and ks and subject != edge_types.TARGET:
+        return ks, scoped(target, ks, source, kt)
+    return ks, unscoped(kt) if _bare(target) else kt
 
 
 def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str) -> tuple[str, str]:

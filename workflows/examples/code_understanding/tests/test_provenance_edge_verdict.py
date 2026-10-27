@@ -255,6 +255,16 @@ REVIEW_FILES = {
     "rq/base.ts": "export class Base {}\n",
     "rq/q.ts": "export class Model {}\nexport const Stamped = class extends Model {};\n",
     "rq/r.ts": "import { Base } from './base';\nexport const Mixed = class extends Base {};\n",
+    # A bare subject has no scope, so only the top-level fallback's guards
+    # stand between it and a root module: a base is never a module,
+    # TypeScript has no top level, and a name another key ends in is not
+    # settled by the one exact match.
+    "qconf.py": "X = 1\n",
+    "tswid.ts": "export const v = 1;\n",
+    "rcfg.py": "import os\n",
+    "rapp/__init__.py": "",
+    "rapp/base.py": "class B:\n    pass\n",
+    "rapp/settings.py": "from rapp import base\n\nclass Rcfg(base.B):\n    pass\n",
 }
 
 REVIEW_CASES = [
@@ -294,6 +304,9 @@ REVIEW_CASES = [
     ("RV::ERRORS::LATE", "RV::ERRORS::FATAL", "Rv::Errors::Late INHERITS Rv::Errors::Fatal", "unchecked", "same-file"),
     ("RQ.Q.STAMPED", "RQ.Q.MODEL", "rq.q.Stamped INHERITS rq.q.Model", "confirmed", "exact"),
     ("RQ.R.MIXED", "RQ.BASE.BASE", "rq.r.Mixed INHERITS rq.base.Base", "confirmed", "exact"),
+    ("QCONF", "PZ.B.OTHER", "Qconf INHERITS pz.b.Other", "out-of-reach", "ungrounded"),
+    ("TSWID", "RQ/BASE.TS", "Tswid IMPORTS rq/base.ts", "out-of-reach", "ungrounded"),
+    ("RCFG", "RAPP.BASE", "Rcfg IMPORTS rapp.base", "out-of-reach", "ungrounded"),
 ]
 
 

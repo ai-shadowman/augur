@@ -295,6 +295,7 @@ class EdgeEvidence:
         self.targets: dict[str, dict[str, set[str]]] = collections.defaultdict(
             lambda: collections.defaultdict(set))
         self._supertypes: dict[str, set[str]] = {}
+        self._tails = collections.Counter(k.rpartition(".")[2] for k in self.file_of)
         for kind, source, target, target_class, path in self.edges:
             if target_class == INTERNAL and kind == INHERITS and target in self.ambiguous:
                 # The oracle reached a base through a binding whose key folds
@@ -540,6 +541,10 @@ class EdgeEvidence:
             if len(resolved) == 1:
                 return next(iter(resolved))
         return None
+
+    def named_elsewhere(self, key: str) -> bool:
+        """Whether another node key ends in ``key``'s last segment."""
+        return self._tails[key.rpartition(".")[2]] > 1
 
     def global_bare(self, files: Iterable[str]) -> bool:
         """Whether a bare name used in ``files`` may mean a top-level key.
