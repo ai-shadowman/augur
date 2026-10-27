@@ -136,6 +136,34 @@ class TestUniqueOnlyAcrossTheCheckout(unittest.TestCase):
                 got = _corrected_owner(key, self.CORPUS, index, self.CHECKOUT, relative=relative)
                 self.assertEqual(got, want)
 
+    def test_a_longer_namesake_outside_the_corpus_is_a_rival(self):
+        corpus = {"m1": ["c"]}
+        checkout = {**corpus, "z": ["b", "b.c"]}
+        got = _corrected_owner("a.b.c", corpus, declarations.owners_of(corpus), checkout)
+        self.assertEqual(got, "")
+
+    def test_import_evidence_settles_what_a_rival_would_leave_open(self):
+        corpus = {"celery.app.abstract": ["configurated"], "celery.worker": ["workcontroller"]}
+        checkout = {**corpus, "celery.tests.test_worker": ["configurated"]}
+        index = declarations.owners_of(corpus)
+        cases = [
+            # ``celery.worker`` binds ``configurated`` from ``celery.app.abstract``.
+            (["celery/worker/__init__.py", "celery/app/abstract.py"], "CELERY.APP.ABSTRACT.CONFIGURATED"),
+            # A binding that leads elsewhere rejects the landing outright,
+            # rather than recording it as ambiguous.
+            (["celery/worker/__init__.py", "other/place.py"], None),
+            # No evidence: the test-module rival leaves it open.
+            (None, ""),
+        ]
+        for files, want in cases:
+            edges = EdgeEvidence([], {
+                "celery.app.abstract.configurated": ["celery/app/abstract.py"],
+                **({"celery.worker.configurated": files} if files else {}),
+            })
+            with self.subTest(files=files):
+                got = _corrected_owner("celery.worker.configurated", corpus, index, checkout, edges)
+                self.assertEqual(got, want)
+
 
 if __name__ == "__main__":
     unittest.main()

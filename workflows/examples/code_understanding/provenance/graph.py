@@ -29,7 +29,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import containment, declarations, edge_verdict, evidence, languages, packages, symbols
+from . import (
+    containment,
+    declarations,
+    edge_verdict,
+    evidence,
+    languages,
+    packages,
+    refile_rivals,
+    symbols,
+)
 from .corpus import Corpus, canonical_key, dotted_key, prefixes_of
 from .edge_evidence import EdgeEvidence
 from .grounding_report import GroundingReport
@@ -380,12 +389,10 @@ def _corrected_owner(
       with the path between the stated module and the symbol. That path is
       a class, and a binding is an alias: ``celery.app.base.Celery.tasks`` is
       not ``celery.registry.tasks = TaskRegistry()``;
-    * more than one indexed module declares the name, or the checkout has
-      another module that could have been the landing, so the right answer
-      is not determined and the caller records it instead. The second half
-      is the cluster smoke's ``abstract.Component``: refiled onto the only
-      ``Component`` its 18 documents declare, while the real base,
-      ``celery.abstract``, was not indexed.
+    * more than one indexed module declares the name, or, with no import
+      evidence to settle it, the checkout has another module that could have
+      been the landing (:mod:`provenance.refile_rivals`), so the right answer
+      is not determined and the caller records it instead.
 
     The third check is the ``..ABSTRACT`` lesson applied one layer down: the
     corpus is a subset, so a unique match inside it is only unique evidence
@@ -411,13 +418,6 @@ def _corrected_owner(
     spelled = key[: -len(symbol)].strip(". ")
     if relative and spelled and not f".{owner}".endswith(f".{spelled}"):
         return None
-    if checkout_index is None:
-        checkout_index = declarations.owners_of(checkout)
-    rivals = set(checkout_index.get(symbol, ())) - owners
-    if relative and spelled:
-        rivals = {r for r in rivals if f".{r}".endswith(f".{spelled}")}
-    if rivals:
-        return ""
     stated = next((o for o, _ in reversed(list(declarations._splits(key))) if o in corpus_symbols or o in checkout), "")
     path = key[len(stated):].strip(".").rpartition(".")[0] if stated else ""
     if path and landing in bindings and not f".{owner}".endswith(f".{path}"):
@@ -428,6 +428,13 @@ def _corrected_owner(
         bound = set()
     if bound and not bound & edges.files(edges.ground(landing)):
         return None
+    # Import evidence that leads to the landing settles it; otherwise a rival
+    # anywhere in the checkout leaves the answer open (``refile_rivals``).
+    if not bound:
+        if checkout_index is None:
+            checkout_index = declarations.owners_of(checkout)
+        if refile_rivals.rival_elsewhere(key, symbol, owners, checkout_index, relative):
+            return ""
     # An owner of ``""`` is Ruby, where ``declarations.namespace_for`` prepends
     # nothing because the walker already returned the whole ``module`` chain.
     # Joining with a dot regardless would emit ``.JEKYLL.TAGS.LINK.RENDER``.

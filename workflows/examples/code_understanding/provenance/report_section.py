@@ -29,6 +29,7 @@ from .edge_verdict import (
     CONFIRMED,
     CONTRADICTED,
     DROPPED_COLUMN,
+    DROPPED_REASONS,
     OUT_OF_REACH,
     REASON_COLUMN,
     UNCHECKED,
@@ -52,6 +53,16 @@ NOT_RUN = (
     "graph has been checked against the source. Every relationship in it is "
     "the extraction model's claim.\n"
 )
+
+INCOMPLETE = (
+    f"{TITLE}\n\n"
+    "This index's verdict table holds only the rows grounding dropped: the "
+    "workflow that writes the rest did not run, so the counts cannot be "
+    "reported. Treat every relationship in the graph as the extraction "
+    "model's claim.\n"
+)
+
+NO_TYPE = "(none)"
 
 
 def _cell(value: Any, limit: int | None = None) -> str:
@@ -101,17 +112,35 @@ def _row_lines(rows: Any) -> list[str]:
     return lines
 
 
+def _normalised(table: Any) -> tuple[Any, bool]:
+    """The table with printable types and reasons and a real boolean flag.
+
+    The flag is ``False`` throughout for a table written before the drop
+    existed, which is the second value returned.
+    """
+    table = table.copy()
+    table[edge_types.TYPE_COLUMN] = table[edge_types.TYPE_COLUMN].fillna(NO_TYPE).astype(str)
+    table[REASON_COLUMN] = table[REASON_COLUMN].fillna("").astype(str)
+    predates_drop = DROPPED_COLUMN not in table.columns
+    flag = False if predates_drop else table[DROPPED_COLUMN].map(lambda v: v is True or v == True)  # noqa: E712
+    table[DROPPED_COLUMN] = flag
+    return table, predates_drop
+
+
 def render(table: Any) -> str:
     """The section as markdown, or :data:`NOT_RUN` when there is no table."""
     if table is None:
         return NOT_RUN
+    table, predates_drop = _normalised(table)
+    if len(table) and table[DROPPED_COLUMN].all():
+        return INCOMPLETE
     verdicts = table[VERDICT_COLUMN]
     model = table[verdicts != WRITTEN]
     written = int((verdicts == WRITTEN).sum())
     total = len(model)
     split = Counter(model[VERDICT_COLUMN])
-    dropped = model[model[DROPPED_COLUMN].astype(bool)]
-    kept = model[(model[VERDICT_COLUMN] == CONTRADICTED) & ~model[DROPPED_COLUMN].astype(bool)]
+    dropped = model[model[DROPPED_COLUMN]]
+    kept = model[(model[VERDICT_COLUMN] == CONTRADICTED) & ~model[DROPPED_COLUMN]]
     out_of_reach = model[model[VERDICT_COLUMN] == OUT_OF_REACH]
     by_reason = Counter(out_of_reach[REASON_COLUMN])
     unchecked_types = Counter(out_of_reach.loc[out_of_reach[REASON_COLUMN] == UNCHECKED_TYPE, edge_types.TYPE_COLUMN])
@@ -146,7 +175,8 @@ def render(table: Any) -> str:
     if split[UNCHECKED]:
         lines += [
             f"**Unchecked** ({split[UNCHECKED]}) would have been contradictions, except "
-            "that the parser could not resolve an edge beside them, so it did not say no.",
+            "that the parser could not resolve, or does not read, an edge beside them, "
+            "so it did not say no.",
             "",
         ]
     if len(dropped):
@@ -162,11 +192,19 @@ def render(table: Any) -> str:
             "",
         ]
     else:
-        lines += ["**Dropped from the graph: 0.**", ""]
-    if len(kept):
         lines += [
-            f"**Contradicted but kept: {len(kept)}.** The source relates the pair or "
-            "their files, just not as claimed, so the row stays in the graph.",
+            "**Dropped from the graph: 0.**"
+            + (" This index was built before contradictions were dropped." if predates_drop else ""),
+            "",
+        ]
+    if len(kept):
+        outright = set(kept[REASON_COLUMN]) & set(DROPPED_REASONS)
+        lines += [
+            f"**Contradicted but kept: {len(kept)}.** "
+            + ("The source contradicts these as claimed, and the index predates the drop, "
+               "so they are still in the graph." if outright else
+               "The source relates the pair or their files, just not as claimed, so the "
+               "row stays in the graph."),
             "",
             *_row_lines(kept),
             "",

@@ -131,8 +131,53 @@ class TestSectionEdges(unittest.TestCase):
         table = pd.DataFrame([
             {"id": "1", "source": "A", "target": "B", "type": "IMPORTS", "subject": "source",
              "verdict": "contradicted", "reason": "same-file", "dropped": True},
+            {"id": "2", "source": "C", "target": "D", "type": "IMPORTS", "subject": "source",
+             "verdict": "confirmed", "reason": "exact", "dropped": False},
         ])
         self.assertIn("| A | IMPORTS | B | same-file |  |", report_section.render(table))
+
+    @staticmethod
+    def _row(**over):
+        row = {"id": "1", "source": "A", "target": "B", "type": "IMPORTS", "subject": "source",
+               "verdict": "confirmed", "reason": "exact", "dropped": False}
+        return {**row, **over}
+
+    def test_a_table_from_before_the_drop_renders_with_honest_prose(self):
+        import pandas as pd
+
+        table = pd.DataFrame([self._row(), self._row(id="2", verdict="contradicted", reason="no-edge")])
+        text = report_section.render(table.drop(columns=["dropped"]))
+        self.assertIn("**Dropped from the graph: 0.** This index was built before", text)
+        self.assertIn("**Contradicted but kept: 1.** The source contradicts these as claimed", text)
+
+    def test_missing_types_and_reasons_render_rather_than_crash(self):
+        import pandas as pd
+
+        table = pd.DataFrame([
+            self._row(type=None, verdict="out-of-reach", reason="type"),
+            self._row(id="2", type="USES", verdict="out-of-reach", reason="type"),
+            self._row(id="3", verdict="contradicted", reason=None, dropped=True),
+            self._row(id="4", verdict="contradicted", reason="no-edge", dropped=True),
+        ])
+        text = report_section.render(table)
+        self.assertIn(f"| {report_section.NO_TYPE} | 0 | 0 | 1 | 0 | 1 |", text)
+        self.assertIn("**Dropped from the graph: 2**", text)
+
+    def test_a_nan_flag_is_not_a_drop(self):
+        import pandas as pd
+
+        table = pd.DataFrame([self._row(dropped=float("nan")),
+                              self._row(id="2", verdict="contradicted", reason="wrong-kind")])
+        table["dropped"] = table["dropped"].astype(object)
+        text = report_section.render(table)
+        self.assertIn("**Dropped from the graph: 0.**", text)
+        self.assertIn("**Contradicted but kept: 1.**", text)
+
+    def test_a_table_of_dropped_rows_alone_is_incomplete(self):
+        import pandas as pd
+
+        table = pd.DataFrame([self._row(verdict="contradicted", reason="no-edge", dropped=True)])
+        self.assertEqual(report_section.render(table), report_section.INCOMPLETE)
 
 
 if __name__ == "__main__":

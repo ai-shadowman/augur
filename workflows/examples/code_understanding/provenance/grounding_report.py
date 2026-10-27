@@ -175,7 +175,7 @@ def render(report: GroundingReport, limit: int = 15) -> str:
         _section(
             lines,
             f"symbols left alone: {len(report.symbols_ambiguous)} "
-            "(several indexed modules declare the name)",
+            "(several indexed modules, or the checkout, could declare the name)",
             report.symbols_ambiguous, limit, lambda t: f"  {t}",
         )
     _edge_verdict_lines(lines, report)
