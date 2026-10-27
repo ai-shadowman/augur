@@ -1,0 +1,118 @@
+name: PR container images
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-images-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover images
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Discover Containerfiles
+        id: images
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          images = []
+          for containerfile in sorted(Path('resources/images').glob('*/Containerfile')):
+              directory = containerfile.parent
+              images.append({
+                  'image': directory.name,
+                  'context': '.' if directory.name in ('data-analysis', 'pipeline-tools') else str(directory),
+                  'file': str(containerfile),
+              })
+          if not images:
+              raise SystemExit('No eligible Containerfiles found in resources/images')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': images}) + '\n')
+          PY
+
+  build:
+    name: Build ${{ matrix.image }}
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build image archive
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: false
+          tags: quay.io/ai-shadowman/${{ matrix.image }}:pr${{ github.event.pull_request.number }}
+          outputs: type=docker,dest=${{ runner.temp }}/image.tar
+      - name: Upload image archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-image-${{ matrix.image }}
+          path: ${{ runner.temp }}/image.tar
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish ${{ matrix.image }}
+    # The dependency on the entire build matrix prevents partial build success
+    # from publishing. Fork and Dependabot PRs never receive Quay secrets.
+    needs: [discover, build]
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    env:
+      IMAGE: quay.io/ai-shadowman/${{ matrix.image }}:pr${{ github.event.pull_request.number }}
+    steps:
+      - name: Download image archive
+        uses: actions/download-artifact@v8
+        with:
+          name: pr-image-${{ matrix.image }}
+          path: ${{ runner.temp }}/pr-image
+      - name: Load image
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/pr-image/image.tar
+        run: docker load --input "$IMAGE_ARCHIVE"
+      - name: Log in to Quay
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+      - name: Push PR image
+        run: |
+          docker push "$IMAGE"
+          printf 'Published `%s`\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
