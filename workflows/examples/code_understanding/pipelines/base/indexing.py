@@ -112,7 +112,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
         # Immediately preserve prior durations.json, benchmark_results.json, tokens.json, and project_metrics.json in graphrag_source_path
         for bench_file in find_all_telemetry_files(candidate_dirs, "benchmark_results.json"):
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     dst = os.path.join(d, "benchmark_results.json")
                     if os.path.abspath(bench_file) != os.path.abspath(dst):
@@ -121,13 +121,13 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     pass
             break
         if dur_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     dur_tracker.save_to_file(os.path.join(d, "durations.json"))
                 except Exception:
                     pass
         if token_tracker:
-            for d in [graphrag_source_path, f"{graphrag_source_path}/output", f"{graphrag_source_path}/input"]:
+            for d in [graphrag_source_path, f"{graphrag_source_path}/output"]:
                 try:
                     token_tracker.save_to_file(os.path.join(d, "tokens.json"))
                 except Exception:
@@ -163,17 +163,17 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
             with cm_copy:
                 logging.info("Copying source code to GraphRAG directory...")
                 shutil.copytree(codebase_path, f"{graphrag_source_path}/input", dirs_exist_ok=True)
-                for fname in [
+                excluded_files = {
                     f"{base_t}{suffix}"
                     for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]
                     for suffix in [".json", ".txt", "_metadata.txt"]
-                ]:
-                    fpath = os.path.join(f"{graphrag_source_path}/input", fname)
-                    if os.path.exists(fpath):
-                        try:
-                            os.remove(fpath)
-                        except Exception:
-                            pass
+                }
+                # Multi-repo artifacts and reused inputs can contain nested telemetry.
+                # Let removal failures stop indexing rather than ingesting those files.
+                for root, _, files in os.walk(f"{graphrag_source_path}/input"):
+                    for fname in files:
+                        if fname in excluded_files:
+                            os.remove(os.path.join(root, fname))
                 # The provenance sidecars rode along with the code metadata.
                 # Lift them out of the corpus and merge them at the project
                 # root, where the in-pipeline stitch stage reads them.
