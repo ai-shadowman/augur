@@ -520,10 +520,15 @@ class EdgeEvidence:
                 if rule == "package":
                     # A single-type import shadows a same-package type (JLS
                     # 6.4.1); an on-demand import ends ``.*`` and matches neither.
-                    candidates += sorted(
+                    # One nothing here declares (``java.util.Timer``) still
+                    # shadows, so the walk stops at it.
+                    shadowing = sorted(
                         t for k, _, t, _, p in self.edges
                         if p == path and k == IMPORTS and t and t.endswith("." + name)
                     )
+                    if shadowing and not any(usable(c) for c in candidates + shadowing):
+                        return None
+                    candidates += shadowing
                     if namespace:
                         candidates.append(f"{namespace}.{name}")
             for key in candidates:
