@@ -5,7 +5,7 @@
 The [PR container images workflow](../../.github/workflows/pr-images.yml) runs
 when a pull request is opened, reopened, or updated with new commits. It builds
 the PR head commit for Linux AMD64, discovering every immediate subdirectory of
-`resources/images` that contains a `Containerfile`, except `pipeline-tools`.
+`resources/images` that contains a `Containerfile`, including `pipeline-tools`.
 Every eligible image is built, regardless of which files changed.
 
 Builds run in parallel without Quay credentials. Each image is saved as a workflow
@@ -17,6 +17,7 @@ images are published as:
 quay.io/ai-shadowman/data-generation:pr123
 quay.io/ai-shadowman/data-indexing:pr123
 quay.io/ai-shadowman/data-analysis:pr123
+quay.io/ai-shadowman/pipeline-tools:pr123
 ```
 
 Configure these repository secrets under **Settings → Secrets and variables →
@@ -40,9 +41,9 @@ Failed jobs can be retried while the image artifacts are retained. After they
 expire, re-run all jobs to regenerate them.
 
 New image directories are discovered automatically and use their directory as
-the build context. `data-analysis` uses the repository root to include its workflow
-package; add a corresponding context override in the discovery step for any new
-image that also needs files outside its own directory.
+the build context. `data-analysis` and `pipeline-tools` use the repository root to
+include their workflow package; add a corresponding context override in the
+discovery step for any new image that also needs files outside its own directory.
 
 ## data-generation
 

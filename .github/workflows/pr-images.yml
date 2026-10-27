@@ -35,11 +35,9 @@ jobs:
           images = []
           for containerfile in sorted(Path('resources/images').glob('*/Containerfile')):
               directory = containerfile.parent
-              if directory.name == 'pipeline-tools':
-                  continue
               images.append({
                   'image': directory.name,
-                  'context': '.' if directory.name == 'data-analysis' else str(directory),
+                  'context': '.' if directory.name in ('data-analysis', 'pipeline-tools') else str(directory),
                   'file': str(containerfile),
               })
           if not images:
