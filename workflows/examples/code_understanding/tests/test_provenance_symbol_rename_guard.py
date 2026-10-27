@@ -100,5 +100,42 @@ class TestNoRefileOntoAnAlias(unittest.TestCase):
                 self.assertEqual(got, want)
 
 
+class TestUniqueOnlyAcrossTheCheckout(unittest.TestCase):
+    """A namesake unique in the indexed subset is not unique evidence.
+
+    The cluster smoke indexed 18 documents and refiled ``abstract.Component``
+    onto ``celery.worker.consumer.Component``, the only ``Component`` among
+    them; the real base is ``celery.abstract.Component``, not indexed.
+    """
+
+    CORPUS = {
+        "celery.worker.consumer": ["component", "consumer"],
+        "celery.app.annotations": ["prepare"],
+    }
+    CHECKOUT = {
+        **CORPUS,
+        "celery.abstract": ["component"],
+        "celery.routes": ["prepare"],
+    }
+
+    def test_cases(self):
+        index = declarations.owners_of(self.CORPUS)
+        cases = [
+            # (key, relative, expected): "" is recorded as ambiguous.
+            ("abstract.component", False, ""),
+            ("celery.worker.abstract.component", False, ""),
+            ("celery.app.amqp._routes.prepare", False, ""),
+            # A relative title's rival must end with what it spells, as the
+            # landing must; ``celery.routes`` does not end with ``annotations``.
+            ("annotations.prepare", True, "CELERY.APP.ANNOTATIONS.PREPARE"),
+            # No rival in the checkout: the refile stands.
+            ("celery.worker.panel.consumer", False, "CELERY.WORKER.CONSUMER.CONSUMER"),
+        ]
+        for key, relative, want in cases:
+            with self.subTest(key=key):
+                got = _corrected_owner(key, self.CORPUS, index, self.CHECKOUT, relative=relative)
+                self.assertEqual(got, want)
+
+
 if __name__ == "__main__":
     unittest.main()

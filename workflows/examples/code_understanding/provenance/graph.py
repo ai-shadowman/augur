@@ -354,7 +354,7 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
 
 def _corrected_owner(
     key: str, corpus_symbols, corpus_index, checkout, edges=None, relative: bool = False,
-    bindings: frozenset[str] | set[str] = frozenset(),
+    bindings: frozenset[str] | set[str] = frozenset(), checkout_index=None,
 ) -> str | None:
     """The one indexed module that declares what ``key`` names, or ``None``.
 
@@ -380,8 +380,12 @@ def _corrected_owner(
       with the path between the stated module and the symbol. That path is
       a class, and a binding is an alias: ``celery.app.base.Celery.tasks`` is
       not ``celery.registry.tasks = TaskRegistry()``;
-    * more than one indexed module declares the name, so the right answer is
-      not determined and the caller records it instead.
+    * more than one indexed module declares the name, or the checkout has
+      another module that could have been the landing, so the right answer
+      is not determined and the caller records it instead. The second half
+      is the cluster smoke's ``abstract.Component``: refiled onto the only
+      ``Component`` its 18 documents declare, while the real base,
+      ``celery.abstract``, was not indexed.
 
     The third check is the ``..ABSTRACT`` lesson applied one layer down: the
     corpus is a subset, so a unique match inside it is only unique evidence
@@ -407,6 +411,13 @@ def _corrected_owner(
     spelled = key[: -len(symbol)].strip(". ")
     if relative and spelled and not f".{owner}".endswith(f".{spelled}"):
         return None
+    if checkout_index is None:
+        checkout_index = declarations.owners_of(checkout)
+    rivals = set(checkout_index.get(symbol, ())) - owners
+    if relative and spelled:
+        rivals = {r for r in rivals if f".{r}".endswith(f".{spelled}")}
+    if rivals:
+        return ""
     stated = next((o for o, _ in reversed(list(declarations._splits(key))) if o in corpus_symbols or o in checkout), "")
     path = key[len(stated):].strip(".").rpartition(".")[0] if stated else ""
     if path and landing in bindings and not f".{owner}".endswith(f".{path}"):
@@ -447,6 +458,7 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
 
     corpus_index = declarations.owners_of(corpus_symbols)
     checkout = (facts.declared_symbols if facts else None) or {}
+    checkout_index = declarations.owners_of(checkout)
     edges = EdgeEvidence.from_dict(facts.edge_evidence if facts else None)
     bindings = symbols.module_bindings(documents)
 
@@ -460,6 +472,7 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
         corrected = _corrected_owner(
             dotted_key(titles[i]), corpus_symbols, corpus_index, checkout, edges,
             relative=titles[i].lstrip().startswith("."), bindings=bindings,
+            checkout_index=checkout_index,
         )
         if corrected == "":
             report.symbols_ambiguous.append(titles[i])
