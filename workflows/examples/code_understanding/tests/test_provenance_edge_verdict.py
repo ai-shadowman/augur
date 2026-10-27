@@ -275,6 +275,27 @@ REVIEW_FILES = {
     "pw/__init__.py": "class Settingz:\n    pass\n",
     "pw/settingz.py": "DEFAULTS = {}\n",
     "pw/x.py": "from pw import Settingz\n",
+    # A fourth review. Python: an ``__init__`` importing its own submodule by
+    # absolute name binds the submodule, which hides nothing.
+    "pi/__init__.py": "from pi import sub2\n",
+    "pi/sub2.py": "def f():\n    return 1\n",
+    "pi/a.py": "from pi import sub2\n",
+    # Ruby: a plugin requires the host gem and reopens its namespace.
+    "lib/jekyll-zz.rb": "require \"jekyll\"\nmodule Jekyll\n  module ZzFilter\n  end\nend\n",
+    # Java: a single-type import of an outside type shadows a same-package one.
+    "src/com/w/Timer.java": "package com.w;\npublic class Timer {}\n",
+    "src/com/w/Job.java": "package com.w;\nimport java.util.Timer;\npublic class Job extends Timer {}\n",
+    # Python: pytest prepends a conftest.py's directory to the path.
+    "tq/conftest.py": "",
+    "tq/helpers.py": "def make():\n    return 1\n",
+    "tq/unit/test_more.py": "import helpers\n",
+    # Python: inheriting one class of a file is not inheriting its sibling;
+    # and a re-exported claimant does not borrow the ``__init__``'s imports.
+    "pe/errors.py": "class ClientErr(Exception):\n    pass\n\nclass ServerErr(Exception):\n    pass\n",
+    "pe/views.py": "from pe.errors import ClientErr\n\nclass Missing(ClientErr):\n    pass\n",
+    "pt/__init__.py": "from pt.impl import Thingy\nfrom pt.other import helper\n",
+    "pt/impl.py": "class Thingy:\n    pass\n",
+    "pt/other.py": "def helper():\n    return 1\n",
 }
 
 REVIEW_CASES = [
@@ -322,6 +343,14 @@ REVIEW_CASES = [
     ("PR/A.PY", "PR/IMPL.PY", "pr/a.py IMPORTS pr/impl.py", "contradicted", "no-edge"),
     ("PW.X", "PW.SETTINGZ", "pw.x IMPORTS pw.settingz", "out-of-reach", "ungrounded"),
     ("PW/X.PY", "PW/SETTINGZ.PY", "pw/x.py IMPORTS pw/settingz.py", "contradicted", "no-edge"),
+    ("PI/A.PY", "PI/SUB2.PY", "pi/a.py IMPORTS pi/sub2.py", "confirmed", "exact"),
+    ("LIB/JEKYLL-ZZ.RB", "JEKYLL", "lib/jekyll-zz.rb IMPORTS jekyll", "confirmed", "external"),
+    ("COM.W.JOB", "TIMER", "com.w.Job INHERITS Timer", "out-of-reach", "ungrounded"),
+    ("TQ/UNIT/TEST_MORE.PY", "TQ/HELPERS.PY", "tq/unit/test_more.py IMPORTS tq/helpers.py", "unchecked", "no-edge"),
+    ("PE.VIEWS.MISSING", "PE.ERRORS.SERVERERR", "pe.views.Missing INHERITS pe.errors.ServerErr",
+     "contradicted", "other-type"),
+    ("PE.VIEWS.MISSING", "PE.ERRORS.CLIENTERR", "pe.views.Missing INHERITS pe.errors.ClientErr", "confirmed", "exact"),
+    ("PT.THINGY", "PT.OTHER", "pt.Thingy IMPORTS pt.other", "contradicted", "other-type"),
 ]
 
 

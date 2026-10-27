@@ -127,8 +127,8 @@ def _encloses(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set) -> str | Non
     return None
 
 
-def _inherits_into(ev: EdgeEvidence, a: str, fa: set, fb: set) -> bool:
-    """Whether an oracle INHERITS edge from ``fa`` to ``fb`` starts at the claimant.
+def _inherits_into(ev: EdgeEvidence, a: str, b: str, fa: set, fb: set) -> bool:
+    """Whether an oracle INHERITS edge from ``fa`` to ``fb`` runs from the claimant to ``b``.
 
     Matched by name and file rather than by key, because a re-export
     (``rx.Worker`` for ``rx.impl.Worker``) and a member named as the claimant
@@ -136,7 +136,13 @@ def _inherits_into(ev: EdgeEvidence, a: str, fa: set, fb: set) -> bool:
     the oracle records no parents under. A member's enclosing types count;
     a module prefix ends the walk, since in ``celery.bin.celeryctl.Command``
     the ``celeryctl`` is the file and the class of that name is another type.
+    The parent is matched on its last segment, since ``errors.py`` declares
+    ``ClientError`` and ``ServerError`` and inheriting one is not the other,
+    or, for an object bound by import under another name (``Command as
+    CeleryCommand``), on the file the binding leads to.
     """
+    target = b.rpartition(".")[2]
+    landing = ev.files(b) - ev.binders[b] if b in ev.binders else set()
     names, parts = set(), a.split(".")
     for i in range(len(parts), 0, -1):
         if _module(ev, ".".join(parts[:i])) is not None:
@@ -144,6 +150,7 @@ def _inherits_into(ev: EdgeEvidence, a: str, fa: set, fb: set) -> bool:
         names.add(parts[i - 1])
     return any(
         child.rpartition(".")[2] in names and ev.files(child) & fa and ev.files(parent) & fb
+        and (parent.rpartition(".")[2] == target or ev.files(parent) & landing)
         for child, parents in ev.parents.items() for parent in parents
     )
 
@@ -174,14 +181,18 @@ def _states(ev: EdgeEvidence, kind: str, a: str, b: str, fa: set, fb: set,
     ``enclosing=False`` asks for the pair itself, which is what ``reversed``
     means: an ancestor or container match read backwards says nothing about
     which way the model got the edge round.
+
+    A re-exported claimant (``pkg.Thing``) speaks for its declaring file, not
+    for the ``__init__`` that binds it, whose imports are its own.
     """
+    fa = fa - ev.binders.get(a, set()) or fa
     if kind in ev.pairs.get((a, b), ()):
         return "exact"
     # Between two types the files' INHERITS edge has to be the claimant's own:
     # ``class celeryctl(CeleryCommand)`` joins celeryctl.py to base.py, and
     # says nothing about ``celeryctl.Command``, which inherits from object.
     if kind in {k for x in fa for y in fb for k in ev.internal.get((x, y), ())} and (
-        kind == IMPORTS or _module(ev, a) is not None or _module(ev, b) is not None or _inherits_into(ev, a, fa, fb)
+        kind == IMPORTS or _module(ev, a) is not None or _module(ev, b) is not None or _inherits_into(ev, a, b, fa, fb)
     ):
         return "lifted"
     if kind == IMPORTS and _rebinds(ev, b, fa):
@@ -273,6 +284,15 @@ def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str)
     for claimant, obj, fc, fo, _ in orders:
         if where := _states(ev, kind, claimant, obj, fc, fo):
             return CONFIRMED, where + unoriented
+    # ``require "jekyll"`` loads the gem even where the file reopens
+    # ``module Jekyll`` and the title grounds on it. Only the name or what is
+    # under it: a required gem ``foo`` says nothing about ``Foo::Bar`` here.
+    for _, _, fc, _, obj_title in orders:
+        key = dotted_key(obj_title)
+        if kind == IMPORTS and any(
+            t == key or t.startswith(key + ".") for f in fc for t, k in ev.external.get(f, ()) if k == IMPORTS
+        ):
+            return CONFIRMED, "external" + unoriented
     # Ruby's ``include`` changes ancestors where the oracle does not look.
     near = any(ev.unresolved[f] for f in fs | ft) or (kind == INHERITS and any(
         ev.mixes_in(fc, title) for _, _, fc, _, title in orders))
