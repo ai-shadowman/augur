@@ -403,6 +403,7 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
     def test_provenance_section_is_appended_without_a_model_call(self):
         """The section is read from the index's output/ and stitched in; no query runs for it."""
         import asyncio
+
         from utils.graphrag_utils import DependencyAnalyzer
 
         section = "## Provenance of the relationships\n\nstitched"
