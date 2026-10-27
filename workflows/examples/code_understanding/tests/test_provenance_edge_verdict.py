@@ -248,6 +248,13 @@ REVIEW_FILES = {
     # nothing onto a sibling class that inherits from object.
     "pz/a.py": "from pz.b import Other\n\nclass Helper:\n    pass\n\nclass Sub(Other):\n    def run(self):\n        pass\n",
     "pz/b.py": "class Other:\n    pass\n",
+    # Ruby and TypeScript: a class made by assignment has a superclass too.
+    "lib/rv/errors.rb": "module Rv\n  module Errors\n    Fatal = Class.new(::RuntimeError)\n"
+                        "    Late = Class.new(Fatal)\n  end\nend\n",
+    "lib/rv/other.rb": "module Rv\n  class Base\n  end\n  Sub = Class.new(Base) do\n    def x; end\n  end\nend\n",
+    "rq/base.ts": "export class Base {}\n",
+    "rq/q.ts": "export class Model {}\nexport const Stamped = class extends Model {};\n",
+    "rq/r.ts": "import { Base } from './base';\nexport const Mixed = class extends Base {};\n",
 }
 
 REVIEW_CASES = [
@@ -282,6 +289,11 @@ REVIEW_CASES = [
     ("PZ.A.HELPER", "PZ.B.OTHER", "pz.a.Helper INHERITS pz.b.Other", "contradicted", "wrong-kind"),
     # A member named as the claimant still lifts through its class.
     ("PZ.A.SUB.RUN", "PZ.B.OTHER", "pz.a.Sub.run INHERITS pz.b.Other", "confirmed", "lifted"),
+    ("RV::SUB", "RV::BASE", "Rv::Sub INHERITS Rv::Base", "confirmed", "exact"),
+    # ``Fatal`` is itself assigned, so the base stays unresolved.
+    ("RV::ERRORS::LATE", "RV::ERRORS::FATAL", "Rv::Errors::Late INHERITS Rv::Errors::Fatal", "unchecked", "same-file"),
+    ("RQ.Q.STAMPED", "RQ.Q.MODEL", "rq.q.Stamped INHERITS rq.q.Model", "confirmed", "exact"),
+    ("RQ.R.MIXED", "RQ.BASE.BASE", "rq.r.Mixed INHERITS rq.base.Base", "confirmed", "exact"),
 ]
 
 

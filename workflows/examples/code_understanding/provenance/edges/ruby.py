@@ -36,7 +36,10 @@ finds ``Parent::Base``. That case is unresolved, not walked. A plugin defining
 reading wrong, and the code does not try to rule it out. A class declared only outside every load-path ``lib/`` does not
 count for code inside one, since lib code does not load benchmarks or
 fixtures. A name found as a constant assignment (``Error = Class.new``) is
-unresolved, because its value is not syntax. A name the checkout never
+unresolved, because its value is not syntax. The class such an assignment
+makes (``Generator = Class.new(Plugin)``) has its argument resolved as a
+superclass, since it is evaluated where ``class Generator < Plugin`` would
+evaluate it. A name the checkout never
 declares is external, and so is a core class even where the checkout reopens
 it (``class Hash; ...; end``): reopening adds methods and does not move the
 class. Core is read from ruby 2.6.10p210 with ``--disable-gems``.
@@ -54,6 +57,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Iterator
 from pathlib import PurePosixPath
 
 from ..corpus import dotted_key
@@ -148,6 +152,40 @@ def _has_ancestors(node) -> bool:
         if child.type not in _SCOPES:
             stack.extend(child.named_children)
     return False
+
+
+def _assigned_classes(root) -> Iterator[tuple[str, str]]:
+    """``(owner, superclass as written)`` for each ``X = Class.new(Base)``.
+
+    The class is real and has a superclass, but no ``class`` statement says
+    so, and without an edge a true claim about it reads as contradicted.
+    ``Class.new`` with no argument is ``Object``'s subclass, as ``class X;
+    end`` is, and has no edge. A method body is not entered, since its
+    constants are not the file's.
+    """
+    stack = [(root, ())]
+    while stack:
+        node, prefix = stack.pop()
+        for child in node.named_children:
+            if child.type in ("class", "module") and (name := child.child_by_field_name("name")) is not None:
+                stack.append((child, (*prefix, node_text(name))))
+            elif child.type in _SCOPES:
+                continue
+            elif child.type == "assignment" and (written := _class_new_base(child)):
+                yield ".".join((*prefix, node_text(child.child_by_field_name("left")))), written
+            else:
+                stack.append((child, prefix))
+
+
+def _class_new_base(assignment) -> str | None:
+    left, right = assignment.child_by_field_name("left"), assignment.child_by_field_name("right")
+    if left is None or left.type != "constant" or right is None or right.type != "call":
+        return None
+    receiver, method = right.child_by_field_name("receiver"), right.child_by_field_name("method")
+    if receiver is None or node_text(receiver).removeprefix("::") != "Class" or node_text(method) != "new":
+        return None
+    arguments = right.child_by_field_name("arguments")
+    return node_text(arguments.named_children[0]) if arguments is not None and arguments.named_children else None
 
 
 def _norm(path: str) -> str | None:
@@ -345,4 +383,7 @@ class RubyResolver:
             resolved = self._constant(capture.owner, capture.written, path)
             edges.add(resolved.edge(INHERITS, dotted_key(capture.owner), capture.written, path,
                                     detail=capture.detail))
+        for owner, written in _assigned_classes(parse(source, RUBY).root_node):
+            resolved = self._constant(owner, written, path)
+            edges.add(resolved.edge(INHERITS, dotted_key(owner), written, path, detail="extends"))
         return edges, False

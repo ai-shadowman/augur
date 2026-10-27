@@ -19,7 +19,9 @@ binds, or a JavaScript global constructor (read from Node v22.21.0's
 ``globalThis``; for a type-only lib name such as ``Iterable`` there is no
 equivalent, so it is unresolved). ``extends mixin(Base)`` is an expression
 and unresolved. A name bound to a value (``const Base = mixin(X)``) is
-unresolved for the reason it is in Python.
+unresolved for the reason it is in Python. A class expression bound to a
+name (``const T = class extends Model {}``) has its bases resolved as a class
+declaration's are, with the binding as the owner.
 
 **Scope is the module's top level.** Declarations, export flags and bindings
 are read off the root statements, not the symbol walk, which flattens
@@ -34,6 +36,7 @@ blocks an ``export *`` only when it is itself exported, as ES modules say.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from ..corpus import dotted_key
@@ -81,6 +84,36 @@ JS_GLOBALS = frozenset({
 
 _DOTTED = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*")
 _TYPE_ARGUMENTS = re.compile(r"<[^<>]*>")
+
+def _assigned_classes(root) -> Iterator[tuple[str, str, str | None]]:
+    """``(owner, base as written, relation)`` for each ``const T = class extends Base {}``.
+
+    The class is real and has a base, but it is a value bound to a name, so
+    the symbol walk records a binding and no class, and without an edge a
+    true claim about it reads as contradicted. A function body is not entered.
+    """
+    stack = [(root, ())]
+    while stack:
+        node, prefix = stack.pop()
+        for child in node.named_children:
+            if child.type in TYPESCRIPT.functions:
+                continue
+            value = child.child_by_field_name("value") if child.type in _VALUE_HOLDERS else None
+            name = child.child_by_field_name("name")
+            if value is not None and value.type == "class" and name is not None:
+                owner = (*prefix, node_text(name))
+                for written, relation in TYPESCRIPT.base_names(value):
+                    yield ".".join(owner), written, relation
+                stack.append((value, owner))
+            elif child.type in TYPESCRIPT.classes and name is not None:
+                stack.append((child, (*prefix, node_text(name))))
+            else:
+                stack.append((child, prefix))
+
+
+#: Nodes that bind a name to a value: ``const T = ...`` and a class field.
+_VALUE_HOLDERS = ("variable_declarator", "public_field_definition")
+
 
 @dataclass
 class _Module:
@@ -274,6 +307,9 @@ class TypeScriptResolver(ModuleResolver):
             resolved = self._base(path, capture.written)
             owner = dotted_key(f"{module_key(path)}.{capture.owner}")
             edges.add(resolved.edge(INHERITS, owner, capture.written, path, detail=capture.detail))
+        for owner, written, detail in _assigned_classes(parse(source, TYPESCRIPT).root_node):
+            resolved = self._base(path, written)
+            edges.add(resolved.edge(INHERITS, dotted_key(f"{module_key(path)}.{owner}"), written, path, detail=detail))
         return edges, False
 
     def _base(self, path: str, written: str) -> Resolution:

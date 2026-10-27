@@ -205,6 +205,14 @@ class TestTypeScriptBases(unittest.TestCase):
          "import { Logger } from '@ex/common';\ninterface I {}\ninterface M extends I, Logger {}",
          {(INHERITS, "I", "packages.core.src.m.i", INTERNAL),
           (INHERITS, "Logger", "packages.common.services.logger.service.logger", INTERNAL)}),
+        ("a class expression bound to a name",
+         "import { Logger } from '@ex/common';\nexport const M = class extends Logger {};",
+         {(INHERITS, "Logger", "packages.common.services.logger.service.logger", INTERNAL)}),
+        ("a class expression in a static field",
+         "class Base {}\nclass H {\n  static P = class implements Base {};\n}",
+         {(INHERITS, "Base", "packages.core.src.m.base", INTERNAL)}),
+        ("a class expression inside a function is not the module's",
+         "class Base {}\nfunction f() {\n  const X = class extends Base {};\n}", set()),
     ]
 
     def test_cases(self):
@@ -358,7 +366,7 @@ class TestNest(unittest.TestCase):
 
     BY_CLASS = {
         (IMPORTS, INTERNAL): 5603, (IMPORTS, EXTERNAL): 1721, (IMPORTS, UNRESOLVED): 5,
-        (INHERITS, INTERNAL): 353, (INHERITS, EXTERNAL): 80, (INHERITS, UNRESOLVED): 16,
+        (INHERITS, INTERNAL): 354, (INHERITS, EXTERNAL): 80, (INHERITS, UNRESOLVED): 16,
     }
 
     #: ``packages/microservices/server/server-grpc.ts``, checked by hand.
@@ -398,7 +406,7 @@ class TestNest(unittest.TestCase):
         self.assertEqual({e.detail for e in self.scan.edges if e.kind == INHERITS}, {"extends", "implements"})
 
     def test_sources_join_and_internal_bases_are_class_nodes(self):
-        modules, classes = set(), set()
+        modules, classes, bindings = set(), set(), set()
         paths = {e.path for e in self.scan.edges} | {
             str(p.relative_to(NEST)) for p in NEST.rglob("*") if p.suffix in TYPESCRIPT.suffixes
         }
@@ -407,11 +415,11 @@ class TestNest(unittest.TestCase):
             source = (NEST / path).read_text(encoding="utf-8", errors="replace")
             modules.add(dotted_key(package_for(path, source, dialect)))
             namespace = namespace_for(path, source, dialect)
-            classes |= {
-                dotted_key(f"{namespace}.{name}" if namespace else name)
-                for kind, name in symbols_in_tree(source, dialect) if kind == CLASS
-            }
-        unjoined = [e for e in self.scan.edges if e.source not in (modules if e.kind == IMPORTS else classes)]
+            for kind, name in symbols_in_tree(source, dialect):
+                (classes if kind == CLASS else bindings).add(dotted_key(f"{namespace}.{name}" if namespace else name))
+        # ``static ConfigProxy = class implements ...`` is a class the inventory holds as a binding.
+        unjoined = [e for e in self.scan.edges
+                    if e.source not in (modules if e.kind == IMPORTS else classes | bindings)]
         self.assertEqual(unjoined, [])
         not_nodes = [
             e for e in self.scan.edges

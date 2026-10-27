@@ -144,6 +144,14 @@ class TestRubySuperclasses(unittest.TestCase):
         ("an expression", "class S < Struct.new(:a); end",
          {(INHERITS, "Struct.new(:a)", None, UNRESOLVED)}),
         ("include is not inheritance", "class C\n  include Comparable\nend", set()),
+        ("Class.new's argument is looked up where a class statement's would be",
+         "module Gem2\n  module Tags\n    Link = Class.new(Base) do\n      def x; end\n    end\n  end\nend",
+         {(INHERITS, "Base", "gem2.tags.base", INTERNAL)}),
+        ("Class.new of a core class", "module Gem2\n  Oops = Class.new(::StandardError)\nend",
+         {(INHERITS, "::StandardError", "standarderror", EXTERNAL)}),
+        ("Class.new of an assigned constant", "module Gem2\n  E = Class.new(Errors::Fatal)\nend",
+         {(INHERITS, "Errors::Fatal", None, UNRESOLVED)}),
+        ("Class.new with no argument is Object's subclass", "module Gem2\n  Drop = Class.new\nend", set()),
     ]
 
     #: ``Errors`` is declared at the top level and as ``Gem2::Errors``.
@@ -207,7 +215,7 @@ class TestJekyll(unittest.TestCase):
 
     BY_CLASS = {
         (IMPORTS, INTERNAL): 71, (IMPORTS, EXTERNAL): 77, (IMPORTS, UNRESOLVED): 56,
-        (INHERITS, INTERNAL): 77, (INHERITS, EXTERNAL): 11, (INHERITS, UNRESOLVED): 13,
+        (INHERITS, INTERNAL): 78, (INHERITS, EXTERNAL): 14, (INHERITS, UNRESOLVED): 25,
     }
 
     #: ``lib/jekyll.rb``'s edges that are not internal, checked by hand: the
@@ -231,12 +239,15 @@ class TestJekyll(unittest.TestCase):
         self.assertEqual(self.scan.by_class("ruby"), self.BY_CLASS)
 
     def test_sources_join_and_internal_superclasses_are_class_nodes(self):
-        modules, classes = set(), set()
+        modules, classes, bindings = set(), set(), set()
         for path in sorted(str(p.relative_to(JEKYLL)) for p in JEKYLL.rglob("*.rb")):
             source = (JEKYLL / path).read_text(encoding="utf-8", errors="replace")
             modules.add(dotted_key(package_for(path, source, RUBY)))
-            classes |= {dotted_key(name) for kind, name in symbols_in_tree(source, RUBY) if kind == CLASS}
-        unjoined = [e for e in self.scan.edges if e.source not in (modules if e.kind == IMPORTS else classes)]
+            for kind, name in symbols_in_tree(source, RUBY):
+                (classes if kind == CLASS else bindings).add(dotted_key(name))
+        # ``Generator = Class.new(Plugin)`` makes a class the inventory holds as a binding.
+        unjoined = [e for e in self.scan.edges
+                    if e.source not in (modules if e.kind == IMPORTS else classes | bindings)]
         self.assertEqual(unjoined, [])
         not_nodes = [
             e for e in self.scan.edges
