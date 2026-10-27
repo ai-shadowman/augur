@@ -27,6 +27,7 @@ TABLES = {
     "commons-lang parser smoke": RUNS / "commons-lang-parser-smoke-120b-dedup" / "output",
     "jekyll parser smoke": RUNS / "jekyll-parser-smoke-120b-dedup" / "output",
     "cluster smoke": RUNS / "cluster-smoke-120b-drop" / "root" / "output",
+    "cluster smoke, section run": RUNS / "cluster-smoke-120b-section" / "root" / "output",
 }
 
 
