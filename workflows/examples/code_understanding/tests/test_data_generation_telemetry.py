@@ -1,3 +1,5 @@
+import __future__
+import ast
 import io
 import json
 import logging
@@ -5,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -503,6 +506,128 @@ class TestFallbackExtraction(unittest.TestCase):
                     git_branch="main",
                 )
             self.assertIn("No .txt files found", str(ctx.exception))
+
+
+class TestIndexingTelemetryExclusion(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.codebase = self.root / "codebase"
+        self.graphrag = self.root / "graphrag"
+        self.codebase.mkdir()
+        (self.graphrag / "input").mkdir(parents=True)
+
+    def run_indexing(self, inspect_input):
+        from pipelines.base.indexing import generate_graphrag_index
+
+        with patch("utils.graphrag_utils.DependencyAnalyzer.prepare_settings"), \
+             patch("utils.prompt_utils.prepare_indexing_config"), \
+             patch("utils.duration_tracker.find_all_telemetry_files", return_value=[]), \
+             patch("utils.duration_tracker.DurationTracker.get_instance", return_value=None), \
+             patch("utils.token_tracker.TokenCostTracker.get_instance", return_value=None), \
+             patch("utils.code_metrics_tracker.CodeMetricsTracker.get_instance", return_value=None), \
+             patch("loaders.default_asset_loader.DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS", "results/repo-datasets", create=True), \
+             patch("loaders.default_asset_loader.DefaultAssetLoader.log_results"), \
+             patch("pipelines.graphrag.run_graphrag", side_effect=inspect_input):
+            generate_graphrag_index.__wrapped__(
+                str(self.codebase), str(self.graphrag), multi_repo=True,
+            )
+
+    def test_root_and_nested_telemetry_are_absent_when_indexing_starts(self):
+        names = (
+            "tokens.json", "tokens.txt", "tokens_metadata.txt",
+            "durations.json", "durations.txt", "durations_metadata.txt",
+            "project_metrics.json", "project_metrics.txt", "project_metrics_metadata.txt",
+            "benchmark_results.json", "benchmark_results.txt", "benchmark_results_metadata.txt",
+        )
+        for relative in ("", "repo-a", "repo-b/deep"):
+            folder = self.codebase / relative
+            folder.mkdir(parents=True, exist_ok=True)
+            for name in names:
+                (folder / name).write_text("{}", encoding="utf-8")
+        (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
+        (self.codebase / "repo-a" / "Main_metadata.txt").write_text("source metadata", encoding="utf-8")
+        observed = []
+
+        def inspect_input(root):
+            observed.extend(sorted(
+                str(path.relative_to(Path(root) / "input"))
+                for path in (Path(root) / "input").rglob("*") if path.is_file()
+            ))
+
+        self.run_indexing(inspect_input)
+        self.assertEqual(observed, ["Main.txt", "repo-a/Main_metadata.txt"])
+        self.assertTrue((self.codebase / "repo-a" / "tokens.txt").exists())
+
+    def test_stale_nested_telemetry_is_removed_from_reused_input(self):
+        stale = self.graphrag / "input" / "old-repo" / "tokens_metadata.txt"
+        stale.parent.mkdir()
+        stale.write_text("old telemetry", encoding="utf-8")
+        (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
+        observed = []
+
+        def inspect_input(root):
+            observed.append(stale.exists())
+            self.assertEqual((Path(root) / "input" / "Main.txt").read_text(), "application source")
+
+        self.run_indexing(inspect_input)
+        self.assertEqual(observed, [False])
+
+    def test_cleanup_failure_prevents_indexing(self):
+        (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
+        (self.codebase / "tokens.txt").write_text("telemetry", encoding="utf-8")
+        observed = []
+
+        with patch("os.remove", side_effect=PermissionError("cannot remove telemetry")):
+            with self.assertRaises(PermissionError):
+                self.run_indexing(lambda root: observed.append(root))
+        self.assertEqual(observed, [])
+
+    def test_telemetry_only_input_does_not_count_as_application_text(self):
+        folder = self.codebase / "repo-a"
+        folder.mkdir()
+        (folder / "tokens_metadata.txt").write_text("telemetry", encoding="utf-8")
+        observed = []
+
+        with self.assertRaisesRegex(RuntimeError, "No .txt files found"):
+            self.run_indexing(lambda root: observed.append(root))
+        self.assertEqual(observed, [])
+
+    def test_kubeflow_wrappers_keep_telemetry_outside_input(self):
+        from types import SimpleNamespace
+        from utils.code_metrics_tracker import CodeMetricsTracker
+
+        component_path = Path(BASE_DIR) / "pipelines" / "kubeflow" / "indexing.py"
+        tree = ast.parse(component_path.read_text(encoding="utf-8"))
+        for name in ("graphrag_indexing_op", "run_indexing_multi_repo_op"):
+            with self.subTest(component=name):
+                root = self.root / name
+                (root / "input").mkdir(parents=True)
+                (root / "output").mkdir()
+                (root / "input" / "Main.txt").write_text("application source", encoding="utf-8")
+                component = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
+                component.decorator_list = []
+                namespace = {}
+                exec(compile(ast.Module(body=[component], type_ignores=[]), str(component_path), "exec",
+                             flags=__future__.annotations.compiler_flag), namespace)
+
+                with patch("utils.kubeflow_utils.read_from_input_artifact", side_effect=lambda _: nullcontext(str(self.codebase))), \
+                     patch("utils.kubeflow_utils.write_to_output_artifact", side_effect=lambda _: nullcontext(str(root))), \
+                     patch("pipelines.base.indexing.generate_graphrag_index"), \
+                     patch("pipelines.base.indexing.IndexingPipeline.run_multi_repo"), \
+                     patch.object(DurationTracker, "get_instance", return_value=DurationTracker()), \
+                     patch.object(TokenCostTracker, "get_instance", return_value=TokenCostTracker()), \
+                     patch.object(CodeMetricsTracker, "get_instance", return_value=CodeMetricsTracker()):
+                    if name == "graphrag_indexing_op":
+                        namespace[name](None, None, SimpleNamespace(log_metric=lambda *_: None))
+                    else:
+                        namespace[name](str(self.codebase), None, SimpleNamespace(path=str(root / "eval.csv")))
+
+                self.assertEqual(sorted(path.name for path in (root / "input").iterdir()), ["Main.txt"])
+                for folder in (root, root / "output"):
+                    for filename in ("tokens.json", "durations.json", "project_metrics.json"):
+                        self.assertTrue((folder / filename).is_file())
 
 
 if __name__ == "__main__":
