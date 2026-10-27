@@ -50,6 +50,7 @@ interpreter running the scan, 3.11 in the pinned environment.
 from __future__ import annotations
 
 import builtins
+import posixpath
 import re
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
@@ -197,6 +198,10 @@ class PythonResolver:
         self._init_names: dict[str, set[str]] = {}
         self._importer = ""
         self._all: dict[str, frozenset[str] | None] = {}
+        #: Directories holding a ``conftest.py``, which pytest's default
+        #: import mode prepends to ``sys.path``.
+        self._conftest_dirs = sorted(
+            posixpath.dirname(p) for p in inventory.paths if posixpath.basename(p) == "conftest.py")
 
     # ----------------------------------------------------------------- modules
 
@@ -233,6 +238,13 @@ class PythonResolver:
                 f"{name} is in the checkout at {', '.join(where)}, which this file is not beneath, "
                 f"so whether it is on the path is not in the source"
             )
+        # pytest prepends a ``conftest.py``'s directory, so ``import helpers``
+        # anywhere under ``tests/`` may be ``tests/helpers.py``. Whether pytest
+        # runs it, and in which import mode, is not in the source.
+        written = name.replace(".", "/")
+        if found := [f"{d}/{written}" for d in self._conftest_dirs if self._importer.startswith(f"{d}/") and any(
+                f"{d}/{written}{tail}" in self.inventory.paths for tail in (".py", "/__init__.py"))]:
+            return unresolved(f"{name} is {found[0]} if pytest puts {found[0].rpartition('/')[0]}/ on the path")
         return Resolution(EXTERNAL, dotted_key(name))
 
     def _found(self, name: str) -> Resolution:
@@ -288,11 +300,13 @@ class PythonResolver:
             captures, _ = import_captures_in(source, PYTHON)
             for capture in captures:
                 # ``from . import x`` binds the submodule itself, which is the
-                # edge, not something that hides it.
-                if not capture.scoped and capture.written != ".":
-                    names |= {alias or n for n, alias in capture.names if n != "*"}
-                    if not capture.names:
-                        names.add(capture.alias or capture.written.split(".", 1)[0])
+                # edge, not something that hides it; so do ``from pkg import
+                # x`` and ``import pkg.x as x`` spelled from inside ``pkg``.
+                if capture.scoped or capture.written in (".", package):
+                    continue
+                names |= {alias or n for n, alias in capture.names if n != "*"}
+                if not capture.names and capture.written != f"{package}.{capture.alias}":
+                    names.add(capture.alias or capture.written.split(".", 1)[0])
             self._init_names[path] = names
         return name in self._init_names[path]
 
