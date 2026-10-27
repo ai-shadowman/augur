@@ -1,5 +1,49 @@
 # Container Image Build Process
 
+## Pull request builds (GitHub Actions)
+
+The [PR container images workflow](../../.github/workflows/pr-images.yml) runs
+when a pull request is opened, reopened, or updated with new commits. It builds
+the PR head commit for Linux AMD64, discovering every immediate subdirectory of
+`resources/images` that contains a `Containerfile`, except `pipeline-tools`.
+Every eligible image is built, regardless of which files changed.
+
+Builds run in parallel without Quay credentials. Each image is saved as a workflow
+artifact retained for one day. Only after **all builds succeed** do separate jobs
+download those exact images and publish them to Quay. For PR #123, the current
+images are published as:
+
+```text
+quay.io/ai-shadowman/data-generation:pr123
+quay.io/ai-shadowman/data-indexing:pr123
+quay.io/ai-shadowman/data-analysis:pr123
+```
+
+Configure these repository secrets under **Settings → Secrets and variables →
+Actions** before using automatic publishing:
+
+| Secret | Value |
+| --- | --- |
+| `QUAY_USERNAME` | Quay username or robot account name, such as `ai-shadowman+github_actions` |
+| `QUAY_TOKEN` | Password or robot token with push access to every eligible image repository |
+
+The image repositories must exist under `ai-shadowman`, and the account must have
+write access to them. Missing or invalid credentials fail the publishing jobs.
+PRs from forks and Dependabot PRs build without publishing because repository
+secrets are unavailable to those runs.
+
+New commits cancel superseded runs for that PR. A subsequent successful run
+replaces the same `pr<number>` tags; it does not update `latest`. A failed build
+prevents all publishing, but a failure during publishing can leave some images
+pushed and marks the workflow as failed. Closing a PR does not delete its tags.
+Failed jobs can be retried while the image artifacts are retained. After they
+expire, re-run all jobs to regenerate them.
+
+New image directories are discovered automatically and use their directory as
+the build context. `data-analysis` uses the repository root to include its workflow
+package; add a corresponding context override in the discovery step for any new
+image that also needs files outside its own directory.
+
 ## data-generation
 
 ```bash
