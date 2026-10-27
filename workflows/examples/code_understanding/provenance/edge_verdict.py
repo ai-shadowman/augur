@@ -161,11 +161,13 @@ def _rebinds(ev: EdgeEvidence, b: str, fa: set) -> bool:
     ``from pkg import Thing`` reaches ``pkg/impl.py``'s ``Thing`` through
     ``pkg/__init__.py``, so the oracle joins the file to the ``__init__``
     alone, and "pkg.a IMPORTS pkg.impl.Thing" would read as no edge. The
-    binding's chase already reaches the declaring file. Only names: a claim
-    about ``pkg/impl.py`` itself is a transitive load, not a stated import.
+    binding's chase already reaches the declaring file. A module re-exported
+    by name (``from pkg import helpers``, bound in the ``__init__`` from
+    ``pkg.impl``) is the bound object itself, so it qualifies too. A claim
+    about ``pkg/impl.py`` after ``from pkg import Thing`` does not: the file
+    binds ``Thing``, not ``impl``, and the transitive load is not a stated
+    import.
     """
-    if _module(ev, b) is not None:
-        return False
     name = b.rpartition(".")[2]
     declarers = ev.files(b) - ev.binders.get(b, set())
     return any(

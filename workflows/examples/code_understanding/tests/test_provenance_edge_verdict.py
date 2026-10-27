@@ -270,6 +270,16 @@ REVIEW_FILES = {
     "pr/__init__.py": "from pr.impl import Gadget\n",
     "pr/impl.py": "class Gadget:\n    pass\n",
     "pr/a.py": "from pr import Gadget\n\ndef go():\n    return Gadget()\n",
+    # A module re-exported by name is the bound object itself, so the path
+    # claim holds too; a same-named function the ``__init__`` defines does not.
+    "pm/__init__.py": "from pm.impl import helpers\n",
+    "pm/impl/__init__.py": "",
+    "pm/impl/helpers.py": "def h():\n    return 1\n",
+    "pm/a.py": "from pm import helpers\n\ndef go():\n    return helpers.h()\n",
+    "pq/__init__.py": "def helpers():\n    return 1\n",
+    "pq/impl/__init__.py": "",
+    "pq/impl/helpers.py": "def h():\n    return 1\n",
+    "pq/a.py": "from pq import helpers\n",
     # Python: a class declared in an ``__init__`` and a sibling module of the
     # same name fold to one key, as an import-bound collision does.
     "pw/__init__.py": "class Settingz:\n    pass\n",
@@ -341,6 +351,9 @@ REVIEW_CASES = [
     ("PR.A", "PR.IMPL.GADGET", "pr.a IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
     ("PR.A.GO", "PR.IMPL.GADGET", "pr.a.go IMPORTS pr.impl.Gadget", "confirmed", "re-export"),
     ("PR/A.PY", "PR/IMPL.PY", "pr/a.py IMPORTS pr/impl.py", "contradicted", "no-edge"),
+    ("PM.A", "PM.IMPL.HELPERS", "pm.a IMPORTS pm.impl.helpers", "confirmed", "re-export"),
+    ("PM/A.PY", "PM/IMPL/HELPERS.PY", "pm/a.py IMPORTS pm/impl/helpers.py", "confirmed", "re-export"),
+    ("PQ.A", "PQ.IMPL.HELPERS", "pq.a IMPORTS pq.impl.helpers", "contradicted", "no-edge"),
     ("PW.X", "PW.SETTINGZ", "pw.x IMPORTS pw.settingz", "out-of-reach", "ungrounded"),
     ("PW/X.PY", "PW/SETTINGZ.PY", "pw/x.py IMPORTS pw/settingz.py", "contradicted", "no-edge"),
     ("PI/A.PY", "PI/SUB2.PY", "pi/a.py IMPORTS pi/sub2.py", "confirmed", "exact"),
