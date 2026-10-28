@@ -279,7 +279,7 @@ class EdgeEvidence:
                  modules: dict[str, Iterable[str]] | None = None,
                  mixins: dict[str, Iterable[str]] | None = None, calls: dict[str, Any] | None = None):
         #: The CALLS oracle's evidence, travelling with the rest; empty for facts
-        #: written before 2026-10-28, which leaves CALLS out of reach by type.
+        #: written before 2026-10-28, which leaves CALLS out of reach as uncovered.
         self.calls = CallEvidence.from_dict(calls)
         self.namespaces: dict[str, str] = dict(namespaces or {})
         self.opaque: frozenset[str] = frozenset(opaque)
