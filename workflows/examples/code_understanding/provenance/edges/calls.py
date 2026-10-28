@@ -182,6 +182,10 @@ class _Context:
     prefix: tuple[str, ...] = ()
     #: See :attr:`Call.binds`.
     binds: tuple[str, ...] = ()
+    #: The one name a module- or class-level assignment binds, qualified in the
+    #: file, for the lambda on its right: ``__len__ = lambda x: len(x.obj)``
+    #: makes the calls inside ``__len__``'s own.
+    named: str | None = None
 
 
 @dataclass
@@ -264,7 +268,8 @@ class CallResolver:
                 names = _target_names(left)
                 # ``a = b = f()`` nests rightward; the outer names stay bound.
                 bound = tuple(sorted({*ctx.binds, *(f.key(".".join((*ctx.prefix, n))) for n in names)}))
-                stack.extend((c, replace(ctx, binds=bound if c != left else ctx.binds))
+                named = ".".join((*ctx.prefix, next(iter(names)))) if len(names) == 1 else None
+                stack.extend((c, replace(ctx, binds=bound, named=named) if c != left else ctx)
                              for c in reversed(node.named_children))
                 continue
             if kind == "function_definition":
@@ -291,6 +296,8 @@ class CallResolver:
                 params = node.child_by_field_name("parameters")
                 scope.bound |= parameter_names(params)
                 inside = replace(ctx, scopes=(*ctx.scopes, scope))
+                if ctx.named and not ctx.in_function and node.parent is not None and node.parent.type == "assignment":
+                    inside = replace(inside, caller=ctx.named)
                 stack.extend((c, ctx if c == params else inside) for c in node.named_children)
                 continue
             if kind in _COMPREHENSIONS:
@@ -433,6 +440,8 @@ class CallResolver:
         parts = rest.split(".")
         if len(parts) > 1:
             return ct.declined(ct.SELF_ATTRIBUTE, f"{written} calls an attribute of an attribute")
+        if parts[0] == "__class__":
+            return ct.Landing(INTERNAL, cls)  # ``self.__class__(...)`` instantiates the class
         return self.declarations.member(cls, [dotted_key(parts[0])], instance=True)
 
     def _super(self, obj: Node, attr: str, scopes: tuple[Scope, ...]) -> ct.Landing:
@@ -464,8 +473,17 @@ def _held(node: Node) -> list[Node]:
     dotted right side, so ``x = f()`` is a call and not also a reference.
     """
     if node.type == "assignment":
-        right = node.child_by_field_name("right")
-        return [right] if right is not None and right.type in ("identifier", "attribute") else []
+        # ``get_app = get_app or self._get_default_app``: each operand is held.
+        found, stack = [], [node.child_by_field_name("right")]
+        while stack:
+            right = stack.pop()
+            if right is None:
+                continue
+            if right.type in ("identifier", "attribute"):
+                found.append(right)
+            elif right.type in ("boolean_operator", "conditional_expression", "parenthesized_expression"):
+                stack.extend(right.named_children)
+        return found
     found, stack = [], list(node.named_children)
     while stack:
         child = stack.pop()

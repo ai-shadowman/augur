@@ -37,9 +37,9 @@ WHY_SKIPPED = f"no celery 2.5.5 checkout at {CELERY}"
 CELERY_SITES = 12360
 CELERY_AST_SITES = 7253
 CELERY_CATEGORIES = {
-    "internal": 2994, "external": 1424, "builtin": 1635, "local": 2320, "self-attribute": 996, "attribute": 52, "dynamic": 340, "literal": 84, "binding": 617, "star": 90, "unbound": 1, "inherited": 1763, "ambiguous": 18, "import": 19, "module": 0, "not-declared": 7,
+    "internal": 2998, "external": 1421, "builtin": 1635, "local": 2320, "self-attribute": 996, "attribute": 52, "dynamic": 340, "literal": 84, "binding": 617, "star": 90, "unbound": 1, "inherited": 1762, "ambiguous": 18, "import": 19, "module": 0, "not-declared": 7,
 }
-CELERY_INTERNAL_PAIRS = 2334
+CELERY_INTERNAL_PAIRS = 2338
 
 
 def calls_of(files: dict, path: str) -> list:
@@ -160,6 +160,9 @@ CASES = [
      "m.py", "k", ct.LOCAL, None),
     ("an alias of a parameter is a local",
      {"m.py": "def f(cls):\n    k = cls\n    k()\n"}, "m.py", "k", ct.LOCAL, None),
+    ("self.__class__ is the enclosing class",
+     {"m.py": "class C(object):\n    def copy(self):\n        return self.__class__()\n"},
+     "m.py", "self.__class__", INTERNAL, "m.c"),
     # From the adversarial review, 2026-10-28: each was a confident wrong edge.
     ("an instance attribute set in a base shadows a subclass method",
      {"m.py": "class B(object):\n    def __init__(self):\n        self.run = None\n"
@@ -253,6 +256,11 @@ class TestResolution(unittest.TestCase):
             ("len", "m.c.m"),
             ("len", "m"),
         })
+
+    def test_a_lambda_bound_in_a_class_calls_on_behalf_of_its_name(self):
+        files = {"m.py": "def g(): pass\nclass P(object):\n    __len__ = lambda x: g()\n    h = g()\n"}
+        callers = {(c.written, c.caller) for c in calls_of(files, "m.py")}
+        self.assertEqual(callers, {("g", "m.p.__len__"), ("g", "m.p")})
 
     def test_binds_names_what_the_call_runs_on_behalf_of(self):
         files = {"m.py": """\
