@@ -188,6 +188,45 @@ class TestResolution(unittest.TestCase):
             ("len", "m"),
         })
 
+    def test_binds_names_what_the_call_runs_on_behalf_of(self):
+        files = {"m.py": """\
+            def deco(f): return f
+            def make(): pass
+            @deco
+            def f(): pass
+            route = make()
+            class C(object):
+                attr = make()
+                @deco
+                def m(self):
+                    make()
+            """}
+        binds = {(c.written, c.caller, c.binds) for c in calls_of(files, "m.py")}
+        self.assertEqual(binds, {
+            ("deco", "m", ("m.f",)),
+            ("make", "m", ("m.route",)),
+            ("make", "m.c", ("m.c.attr",)),
+            ("deco", "m.c", ("m.c.m",)),
+            ("make", "m.c.m", ()),
+        })
+
+    def test_properties_are_recorded(self):
+        files = {"m.py": """\
+            class C(object):
+                @property
+                def a(self): pass
+                @a.setter
+                def a(self, v): pass
+                @cached_property
+                def b(self): pass
+                @staticmethod
+                def c(): pass
+            """}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "m.py").write_text(textwrap.dedent(files["m.py"]))
+            found = CallResolver(Inventory(files, Path(tmp))).declarations.properties
+        self.assertEqual(found, {"m.c.a", "m.c.b"})
+
     def test_every_caller_is_a_node(self):
         files = {"m.py": "class C(object):\n    class D(object):\n        def m(self):\n            len([])\n"
                          "    if True:\n        def n(self):\n            len([])\n"}

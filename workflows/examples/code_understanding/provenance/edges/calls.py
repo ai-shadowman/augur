@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -108,6 +108,11 @@ class Call:
     #: Folded callee key when ``category`` is internal, external or builtin.
     target: str | None = None
     reason: str | None = None
+    #: Declarations the call runs on behalf of without being inside them: the
+    #: one a decorator wraps, or the names a module- or class-level assignment
+    #: binds (``_first_route = firstmethod("route_for_task")``). The caller
+    #: stays the enclosing scope, which is what executes it.
+    binds: tuple[str, ...] = ()
 
     @property
     def target_class(self) -> str:
@@ -164,6 +169,20 @@ class _Scope:
     qualified: str | None = None
 
 
+@dataclass(frozen=True)
+class _Context:
+    """Where the walk is: the scopes around a node, and what a call there belongs to."""
+
+    scopes: tuple[_Scope, ...] = ()
+    #: The innermost declaration, qualified within the file; ``""`` for the module.
+    caller: str = ""
+    in_function: bool = False
+    #: The enclosing classes while no function intervenes.
+    prefix: tuple[str, ...] = ()
+    #: See :attr:`Call.binds`.
+    binds: tuple[str, ...] = ()
+
+
 @dataclass
 class _File:
     path: str
@@ -172,6 +191,10 @@ class _File:
     found: FileBindings
     symbols: dict[str, set[str]]
     other: set[str]
+
+    def key(self, qualified: str) -> str:
+        return dotted_key(f"{self.namespace}.{qualified}" if self.namespace and qualified
+                          else qualified or self.module)
 
 
 class CallResolver:
@@ -191,65 +214,74 @@ class CallResolver:
         f = _File(path, namespace, dotted_key(module_key(path)), found, symbols,
                   _other_bindings(found.tree, python2=found.mode == PYTHON2))
         out: list[Call] = []
-        self._walk(f, found.tree, (), "", False, out)
+        self._walk(f, found.tree, out)
         return out, found.used_ast
 
     # -------------------------------------------------------------------- walk
 
-    def _walk(self, f: _File, root: Node, scopes: tuple[_Scope, ...], caller: str,
-              in_function: bool, out: list[Call]) -> None:
-        stack: list[tuple[Node, tuple[_Scope, ...], str, bool, tuple[str, ...]]] = [
-            (root, scopes, caller, in_function, ())]
+    def _walk(self, f: _File, root: Node, out: list[Call]) -> None:
+        stack: list[tuple[Node, _Context]] = [(root, _Context())]
         while stack:
-            node, scopes, caller, in_function, prefix = stack.pop()
+            node, ctx = stack.pop()
             kind = node.type
             if kind == "decorator":
                 inner = next((c for c in node.named_children if c.type != "comment"), None)
                 if inner is not None and inner.type != "call":
-                    out.append(self._site(f, inner, scopes, caller))
+                    out.append(self._site(f, inner, ctx))
             if kind == "call":
                 fn = node.child_by_field_name("function")
                 if fn is not None:
-                    out.append(self._site(f, fn, scopes, caller))
+                    out.append(self._site(f, fn, ctx))
+            if kind == "decorated_definition" and not ctx.in_function:
+                # A decorator runs in the enclosing scope, on behalf of the
+                # declaration it wraps; the model files it under the latter.
+                definition = node.child_by_field_name("definition")
+                name = definition.child_by_field_name("name") if definition is not None else None
+                wraps = (f.key(".".join((*ctx.prefix, node_text(name)))),) if name is not None else ()
+                stack.extend((c, replace(ctx, binds=wraps if c.type == "decorator" else ()))
+                             for c in reversed(node.named_children))
+                continue
+            if kind == "assignment" and not ctx.in_function and (left := node.child_by_field_name("left")):
+                names = _target_names(left)
+                bound = tuple(f.key(".".join((*ctx.prefix, n))) for n in sorted(names)) or ctx.binds
+                stack.extend((c, replace(ctx, binds=bound if c != left else ctx.binds))
+                             for c in reversed(node.named_children))
+                continue
             if kind == "function_definition":
                 name = node_text(node.child_by_field_name("name"))
-                inner_caller = caller if in_function else ".".join((*prefix, name))
-                scope = self._function_scope(f, node, scopes, prefix, in_function)
+                caller = ctx.caller if ctx.in_function else ".".join((*ctx.prefix, name))
+                scope = self._function_scope(f, node, ctx.scopes, ctx.prefix, ctx.in_function)
                 body = node.child_by_field_name("body")
-                for child in node.named_children:
-                    if child == body:
-                        stack.append((child, (*scopes, scope), inner_caller, True, prefix))
-                    elif child.type != "identifier":
-                        stack.append((child, scopes, caller, in_function, prefix))
+                inside = replace(ctx, scopes=(*ctx.scopes, scope), caller=caller, in_function=True, binds=())
+                stack.extend((c, inside if c == body else ctx) for c in node.named_children
+                             if c.type != "identifier")
                 continue
             if kind == "class_definition":
                 name = node_text(node.child_by_field_name("name"))
                 body = node.child_by_field_name("body")
-                inner_prefix = prefix if in_function else (*prefix, name)
-                inner_caller = caller if in_function else ".".join(inner_prefix)
-                scope = _Scope(_CLASS_SCOPE, qualified=None if in_function else ".".join(inner_prefix))
-                for child in node.named_children:
-                    if child == body:
-                        stack.append((child, (*scopes, scope), inner_caller, in_function, inner_prefix))
-                    elif child.type != "identifier":
-                        stack.append((child, scopes, caller, in_function, prefix))
+                prefix = ctx.prefix if ctx.in_function else (*ctx.prefix, name)
+                scope = _Scope(_CLASS_SCOPE, qualified=None if ctx.in_function else ".".join(prefix))
+                inside = replace(ctx, scopes=(*ctx.scopes, scope), prefix=prefix, binds=(),
+                                 caller=ctx.caller if ctx.in_function else ".".join(prefix))
+                stack.extend((c, inside if c == body else ctx) for c in node.named_children
+                             if c.type != "identifier")
                 continue
             if kind == "lambda":
                 scope = _Scope(_FUNCTION_SCOPE)
                 params = node.child_by_field_name("parameters")
                 scope.bound |= _parameter_names(params)
-                for child in node.named_children:
-                    inside = child != params
-                    stack.append((child, (*scopes, scope) if inside else scopes, caller, in_function, prefix))
+                inside = replace(ctx, scopes=(*ctx.scopes, scope))
+                stack.extend((c, ctx if c == params else inside) for c in node.named_children)
                 continue
             if kind in _COMPREHENSIONS:
                 scope = _Scope(_COMPREHENSION_SCOPE)
                 for clause in node.named_children:
                     if clause.type == "for_in_clause":
                         scope.bound |= _target_names(clause.child_by_field_name("left"))
-                stack.extend((c, (*scopes, scope), caller, in_function, prefix) for c in node.named_children)
+                inside = replace(ctx, scopes=(*ctx.scopes, scope))
+                stack.extend((c, inside) for c in node.named_children)
                 continue
-            stack.extend((c, scopes, caller, in_function, prefix) for c in reversed(node.named_children))
+            stack.extend((c, ctx) for c in reversed(node.named_children))
 
     def _function_scope(self, f: _File, node: Node, scopes, prefix, in_function) -> _Scope:
         scope = _Scope(_FUNCTION_SCOPE)
@@ -269,11 +301,11 @@ class CallResolver:
 
     # --------------------------------------------------------------- resolving
 
-    def _site(self, f: _File, fn: Node, scopes: tuple[_Scope, ...], caller: str) -> Call:
+    def _site(self, f: _File, fn: Node, ctx: _Context) -> Call:
         written = " ".join(node_text(fn).split())
-        key = dotted_key(f"{f.namespace}.{caller}" if f.namespace and caller else caller or f.module)
-        landing = self._callee(f, fn, written, scopes)
-        return Call(key, written, f.path, fn.start_point[0] + 1, landing.category, landing.key, landing.reason)
+        landing = self._callee(f, fn, written, ctx.scopes)
+        return Call(f.key(ctx.caller), written, f.path, fn.start_point[0] + 1, landing.category,
+                    landing.key, landing.reason, ctx.binds)
 
     def _callee(self, f: _File, fn: Node, written: str, scopes: tuple[_Scope, ...]) -> ct.Landing:
         if fn.type == "attribute":

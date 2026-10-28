@@ -130,6 +130,9 @@ class Declarations:
         self.bases: dict[str, list[Edge]] = {}
         #: Class key to the folded names its methods assign through ``self``.
         self.assigned: dict[str, set[str]] = {}
+        #: Method keys a property decorator wraps. Reading one calls it, and no
+        #: call site says so, which a verdict needs to know.
+        self.properties: set[str] = set()
         self._bindings: dict[str, FileBindings] = {}
         self._mro: dict[str, list[str | _Opaque] | None] = {}
         for path in sorted(inventory.paths):
@@ -154,6 +157,7 @@ class Declarations:
             self.bases[key] = [by_written[(key, w)] for w, _ in PYTHON.base_names(node)
                                if (key, w) in by_written]
             self.assigned.setdefault(key, set()).update(_self_assigned(node))
+            self.properties.update(f"{key}.{name}" for name in _properties(node))
 
     def key(self, path: str, qualified: str) -> str:
         namespace = self.namespaces[path]
@@ -379,6 +383,33 @@ def _self_assigned(class_node: Node) -> set[str]:
                         found.add(node_text(attr).lower())
             inner.extend(n.named_children)
     return found
+
+
+def _properties(class_node: Node) -> Iterator[str]:
+    """Folded names of the methods a ``property``-like decorator wraps.
+
+    ``property``, ``cached_property``, kombu's ``cached_property`` and the
+    ``x.setter`` family: any decorator whose last segment ends in
+    ``property`` or is a setter, getter or deleter.
+    """
+    body = class_node.child_by_field_name("body")
+    stack = list(body.named_children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type in ("class_definition", "function_definition"):
+            continue
+        if node.type != "decorated_definition":
+            stack.extend(node.named_children)
+            continue
+        definition = node.child_by_field_name("definition")
+        name = definition.child_by_field_name("name") if definition is not None else None
+        if name is None:
+            continue
+        for decorator in (c for c in node.named_children if c.type == "decorator"):
+            last = node_text(decorator).lstrip("@").split("(")[0].strip().rpartition(".")[2]
+            if last.endswith("property") or last in ("setter", "getter", "deleter"):
+                yield node_text(name).lower()
+                break
 
 
 def _attribute_targets(node: Node | None) -> Iterator[Node]:
