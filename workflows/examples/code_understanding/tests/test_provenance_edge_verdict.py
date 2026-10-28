@@ -580,8 +580,8 @@ class TestDrop(unittest.TestCase):
 #: left is the one kept INHERITS row and the CALLS contradictions, which are
 #: reported and never dropped (12 and 5). MANIFEST, Relationship layer Phase 8.
 PINNED = {
-    "parser-full-120b": (1359, 5, 2441, 141),
-    "parser-full-120b-typed": (1469, 13, 1324, 119),
+    "parser-full-120b": (1359, 5, 2443, 139),
+    "parser-full-120b-typed": (1469, 13, 1326, 117),
 }
 
 

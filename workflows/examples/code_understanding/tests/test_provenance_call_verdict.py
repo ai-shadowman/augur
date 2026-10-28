@@ -47,6 +47,10 @@ CHECKOUT = {
             run(helper)
         def hands_back():
             return (helper, ())
+        resolver = None
+        def install():
+            global resolver
+            resolver = helper
         def deco(f): return f
         @deco
         def wrapped(): pass
@@ -82,6 +86,7 @@ CASES = [
     ("a callable passed, not called", "PKG.CORE.HANDS_ON", "PKG.UTIL.HELPER", SOURCE, "out-of-reach", "reference"),
     ("a callable returned by a claimant that makes no call", "PKG.CORE.HANDS_BACK", "PKG.UTIL.HELPER", SOURCE,
      "out-of-reach", "reference"),
+    ("a callable assigned, not called", "PKG.CORE.INSTALL", "PKG.UTIL.HELPER", SOURCE, "out-of-reach", "reference"),
     ("another dialect's file", "PKG.CORE.SETTLED", "LIB/THING.RB", SOURCE, "out-of-reach", "dialect"),
     ("ungrounded", "PKG.CORE.SETTLED", "PKG.NOWHERE.THING", SOURCE, "out-of-reach", "ungrounded"),
     # ``pkg.top`` calls ``pkg.sub.deep.deep``; that is not a call to ``pkg``.

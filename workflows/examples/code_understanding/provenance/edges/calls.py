@@ -247,7 +247,7 @@ class CallResolver:
                                 node.start_point[0] + 1, ct.DYNAMIC, None,
                                 "a Python 2 backtick repr, read as a string by the grammar", ctx.binds))
                 continue
-            if kind in ("argument_list", "return_statement"):
+            if kind in ("argument_list", "return_statement", "assignment"):
                 references.extend(self._site(f, held, ctx) for held in _held(node))
             if kind == "decorated_definition" and not ctx.in_function:
                 # A decorator runs in the enclosing scope, on behalf of the
@@ -448,7 +448,14 @@ _HOLDERS = frozenset({"tuple", "list", "expression_list", "parenthesized_express
 
 
 def _held(node: Node) -> list[Node]:
-    """Names an argument list passes, or a ``return`` hands back, without calling them."""
+    """Names an argument list passes, a ``return`` hands back, or an assignment binds, uncalled.
+
+    ``app_or_default = _app_or_default`` (decided 2026-10-28): only a bare or
+    dotted right side, so ``x = f()`` is a call and not also a reference.
+    """
+    if node.type == "assignment":
+        right = node.child_by_field_name("right")
+        return [right] if right is not None and right.type in ("identifier", "attribute") else []
     found, stack = [], list(node.named_children)
     while stack:
         child = stack.pop()
