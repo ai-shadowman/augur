@@ -14,10 +14,13 @@ Two kinds, with honestly different reach:
   names is a resolution through the file's own bindings, and each dialect's
   resolver says where that stops.
 
-**CALLS is out of scope** and should not be inferred from the absence of an
-entry here. The callee's identity is not syntactically present, and resolving
-it against any evidence set smaller than the program is the partial-evidence
-failure in its purest form.
+**CALLS is Python only, and lives apart** in :mod:`.calls`, because it is a
+different kind of claim. The callee's identity is not syntactically present,
+and resolving it against any evidence set smaller than the program is the
+partial-evidence failure in its purest form, so that module emits an edge only
+where the file's bindings and the whole checkout settle it, and counts every
+other call site by reason. It is not in :func:`scan_checkout` and no verdict
+reads it yet.
 
 Coverage, by dialect. Only a dialect whose capture is written, tested and
 measured is claimed; tree-sitter reading a language is not the same as
@@ -32,7 +35,7 @@ typescript  yes     yes      none; constructed cases and a nest pin
 ruby        yes     yes      none; constructed cases and a jekyll pin
 =========== ======= ======== ===========================================
 
-Named gaps, which no figure here covers: CALLS in every dialect; Ruby's
+Named gaps, which no figure here covers: CALLS outside Python; Ruby's
 ``include`` and ``extend``, which are method calls rather than inheritance
 syntax; and Python's ``__future__``, counted as an import as every other
 import capture in this package counts it. Each dialect's module names the
