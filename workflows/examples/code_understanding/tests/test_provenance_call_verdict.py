@@ -43,6 +43,10 @@ CHECKOUT = {
             load("pkg.other:Thing")
         def chain():
             settled()
+        def hands_on(run):
+            run(helper)
+        def hands_back():
+            return (helper, ())
         def deco(f): return f
         @deco
         def wrapped(): pass
@@ -55,6 +59,7 @@ CHECKOUT = {
             def index(self):
                 return self[0]
         """,
+    "lib/thing.rb": "class Thing\nend\n",
     "pkg/top.py": "from pkg.sub.deep import deep\ndef f():\n    deep()\n",
 }
 
@@ -74,6 +79,10 @@ CASES = [
      "unchecked", "imports-by-name"),
     ("a property read", "PKG.CORE.C.READS", "PKG.CORE.C.P", SOURCE, "out-of-reach", "property"),
     ("a protocol call", "PKG.CORE.C.INDEX", "PKG.CORE.C.__GETITEM__", SOURCE, "out-of-reach", "protocol"),
+    ("a callable passed, not called", "PKG.CORE.HANDS_ON", "PKG.UTIL.HELPER", SOURCE, "out-of-reach", "reference"),
+    ("a callable returned by a claimant that makes no call", "PKG.CORE.HANDS_BACK", "PKG.UTIL.HELPER", SOURCE,
+     "out-of-reach", "reference"),
+    ("another dialect's file", "PKG.CORE.SETTLED", "LIB/THING.RB", SOURCE, "out-of-reach", "dialect"),
     ("ungrounded", "PKG.CORE.SETTLED", "PKG.NOWHERE.THING", SOURCE, "out-of-reach", "ungrounded"),
     # ``pkg.top`` calls ``pkg.sub.deep.deep``; that is not a call to ``pkg``.
     ("a package does not contain its subpackages' calls", "PKG/__INIT__.PY", "PKG.SUB.DEEP.DEEP", SOURCE,

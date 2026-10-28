@@ -144,6 +144,10 @@ class CallScan:
     """Every call site one checkout's Python states, with the denominator beside it."""
 
     calls: list[Call] = field(default_factory=list)
+    #: Callables named without being called, settled ones only: an argument
+    #: (``mpromise(instantiate, route)``) or a returned value. A claim that
+    #: the holder calls one is true at run time and not stated as a call.
+    references: list[Call] = field(default_factory=list)
     #: Evidence to file count, as :class:`provenance.edges.EdgeScan` counts it.
     files: Counter = field(default_factory=Counter)
 
@@ -204,6 +208,11 @@ class CallResolver:
 
     def calls(self, path: str, source: str) -> tuple[list[Call], bool]:
         """Every call site in one file, and whether ``ast`` read it."""
+        found, _references, used_ast = self.walk(path, source)
+        return found, used_ast
+
+    def walk(self, path: str, source: str) -> tuple[list[Call], list[Call], bool]:
+        """Every call site and every settled reference in one file, and whether ``ast`` read it."""
         found = self.resolver.bindings(path, source)
         symbols: dict[str, set[str]] = {}
         for kind, name in symbols_in_tree(source, PYTHON):
@@ -212,12 +221,13 @@ class CallResolver:
         f = _File(path, namespace, dotted_key(module_key(path)), found, symbols,
                   ct.module_rebinding(found.tree, found.mode == PYTHON2), first_lines(found.tree))
         out: list[Call] = []
-        self._walk(f, found.tree, out)
-        return out, found.used_ast
+        references: list[Call] = []
+        self._walk(f, found.tree, out, references)
+        return out, [r for r in references if r.target], found.used_ast
 
     # -------------------------------------------------------------------- walk
 
-    def _walk(self, f: _File, root: Node, out: list[Call]) -> None:
+    def _walk(self, f: _File, root: Node, out: list[Call], references: list[Call]) -> None:
         stack: list[tuple[Node, _Context]] = [(root, _Context())]
         while stack:
             node, ctx = stack.pop()
@@ -230,6 +240,8 @@ class CallResolver:
                 fn = node.child_by_field_name("function")
                 if fn is not None:
                     out.append(self._site(f, fn, ctx))
+            if kind in ("argument_list", "return_statement"):
+                references.extend(self._site(f, held, ctx) for held in _held(node))
             if kind == "decorated_definition" and not ctx.in_function:
                 # A decorator runs in the enclosing scope, on behalf of the
                 # declaration it wraps; the model files it under the latter.
@@ -424,6 +436,24 @@ class CallResolver:
         return self.declarations.after(method.cls, dotted_key(attr))
 
 
+#: Containers a returned callable may sit in: ``return (unpickle_backend, args)``.
+_HOLDERS = frozenset({"tuple", "list", "expression_list", "parenthesized_expression"})
+
+
+def _held(node: Node) -> list[Node]:
+    """Names an argument list passes, or a ``return`` hands back, without calling them."""
+    found, stack = [], list(node.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type == "keyword_argument":
+            child = child.child_by_field_name("value") or child
+        if child.type in ("identifier", "attribute"):
+            found.append(child)
+        elif child.type in _HOLDERS and node.type == "return_statement":
+            stack.extend(child.named_children)
+    return found
+
+
 def _innermost_function(scopes: tuple[Scope, ...]) -> Scope | None:
     return next((s for s in reversed(scopes) if s.kind != COMPREHENSION_SCOPE), None)
 
@@ -447,8 +477,9 @@ def scan_calls(root: Path, inventory: Inventory | None = None) -> CallScan:
         if source is None:
             scan.files[("python", "unreadable")] += 1
             continue
-        found, used_ast = resolver.calls(path, source)
+        found, references, used_ast = resolver.walk(path, source)
         scan.calls.extend(found)
+        scan.references.extend(references)
         evidence = "ast" if used_ast else "tree-sitter-recovered" if has_error(source, PYTHON) else "tree-sitter"
         scan.files[("python", evidence)] += 1
     return scan

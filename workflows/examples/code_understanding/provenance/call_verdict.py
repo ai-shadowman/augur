@@ -15,10 +15,13 @@ an import graph does not.
                  reached: ``reversed``, ``transitive`` (within three settled
                  hops), ``no-calls`` or ``no-edge``. Reported, never dropped:
                  decided 2026-10-28.
-``out-of-reach`` an endpoint does not ground, or no call-site oracle can see
-                 the claim: a property read (``property``), an implicit
-                 protocol call such as ``self[k]`` (``protocol``), or an
-                 endpoint bound by assignment (``binding``).
+``out-of-reach`` an endpoint does not ground or sits in a file of another
+                 dialect (``dialect``: the oracle reads Python only), or no
+                 call-site oracle can see the claim: a property read
+                 (``property``), an implicit protocol call such as ``self[k]``
+                 (``protocol``), an endpoint bound by assignment
+                 (``binding``), or a callable the claimant passes or returns
+                 without calling (``reference``; decided 2026-10-28).
 ``unchecked``    a site in the claimant did not settle (``unsettled``),
                  something it calls imports by name (``imports-by-name``), or
                  the object overrides the method the oracle resolved, or is
@@ -34,6 +37,7 @@ from __future__ import annotations
 from . import edge_types
 from .call_evidence import CallEvidence
 from .corpus import dotted_key
+from .dialects import PYTHON, dialect_for
 from .edge_evidence import EdgeEvidence
 
 CALLS = "CALLS"
@@ -126,6 +130,8 @@ def verdict(ev: EdgeEvidence, cev: CallEvidence, source: str, target: str, subje
             return CONFIRMED, "external" + unoriented
     if not (ks and kt):
         return OUT_OF_REACH, "ungrounded"
+    if any(dialect_for(f) is not PYTHON for f in ev.files(ks) | ev.files(kt)):
+        return OUT_OF_REACH, "dialect"
     for claimant, obj, _ in orders:
         if where := _reaches(cev, claimant, obj):
             return CONFIRMED, where + unoriented
@@ -135,6 +141,12 @@ def verdict(ev: EdgeEvidence, cev: CallEvidence, source: str, target: str, subje
     for claimant, obj, _ in orders:
         if why := _blind(cev, claimant, obj):
             return OUT_OF_REACH, why
+    for claimant, obj, _ in orders:
+        # The claimant itself too: ``__reduce__`` returns a callable and makes
+        # no call, so it is no caller.
+        held = {t for c in {claimant, *cev.within(claimant)} for t in cev.references.get(c, ())}
+        if cev.follow(obj) in held:
+            return OUT_OF_REACH, "reference"
     claimant, obj, _ = orders[0]
     if len(orders) == 1 and _reaches(cev, obj, claimant) in ("exact", "init"):
         return CONTRADICTED, "reversed"
