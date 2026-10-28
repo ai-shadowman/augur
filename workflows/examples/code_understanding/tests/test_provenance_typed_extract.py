@@ -120,6 +120,7 @@ class TestParser(unittest.TestCase):
             '("relationship"<|>A<|>B<|>IMPORTS<|>A IMPORTS B<|>8)##'
             '("relationship"<|>B<|>A<|>calls<|>B CALLS A<|>3)##'
             '("relationship"<|>C<|>D<|>C USES D, the old tuple<|>5)##'
+            '("relationship"<|>E<|>F<|>IMPORTS<|>4)##'
         )
         graph = asyncio.run(extractor._process_results({0: output}, "<|>", "##"))
         ab = graph.get_edge_data("A", "B")
@@ -128,6 +129,9 @@ class TestParser(unittest.TestCase):
         self.assertEqual(ab["weight"], 11.0)
         cd = graph.get_edge_data("C", "D")
         self.assertEqual((cd["description"], cd[edge_types.CLAIMS_COLUMN]), ("C USES D, the old tuple", []))
+        # Five fields whose fourth is exactly a type: the type kept, the prose dropped.
+        ef = graph.get_edge_data("E", "F")
+        self.assertEqual((ef["description"], ef[edge_types.CLAIMS_COLUMN]), ("IMPORTS", [f"E{SEP}IMPORTS{SEP}F"]))
 
 
     def test_the_strategy_turns_claims_relative_to_each_row(self):

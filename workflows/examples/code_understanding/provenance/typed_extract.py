@@ -19,7 +19,8 @@ graphrag's own and keeps the column, and the grounding pass carries it
 keeps a fixed column list, so the verdict workflow joins it back afterwards.
 
 A five-field record (an index built from the old prompt, or a model that
-drops the field) still parses, with no claim, and :mod:`provenance.edge_types`
+drops the field) still parses, with no claim unless its fourth field is
+exactly a type, which is a model that kept the type and dropped the prose, and :mod:`provenance.edge_types`
 falls back to the prose for it. The field is kept raw here and validated where
 it is read, so a type outside the vocabulary stays countable.
 
@@ -36,7 +37,7 @@ import logging
 import re
 from typing import Any
 
-from .edge_types import BACKWARD, CLAIMS_COLUMN, FORWARD
+from .edge_types import BACKWARD, CLAIMS_COLUMN, FORWARD, PRECEDENCE
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +112,16 @@ def _graph_extractor():
     def _add_relationship(graph, attributes, source_doc_id, join):
         source = clean_str(attributes[1].upper())
         target = clean_str(attributes[2].upper())
-        # Six fields carry the type at four; five are the old tuple, untyped.
+        # Six fields carry the type at four. Five are the old tuple, untyped,
+        # unless field four is exactly a type and nothing else: the model kept
+        # the type and dropped the description, 25 of 606 smoke rows.
         typed = len(attributes) >= 6
-        field = clean_str(attributes[3]).strip().upper() if typed else ""
-        description = clean_str(attributes[4] if typed else attributes[3])
+        bare = clean_str(attributes[3]).strip().upper()
+        if not typed and bare in PRECEDENCE:
+            field, description, typed = bare, clean_str(attributes[3]), True
+        else:
+            field = bare if typed else ""
+            description = clean_str(attributes[4] if typed else attributes[3])
         edge_source_id = clean_str(str(source_doc_id))
         claims = [f"{source}{_SEP}{field}{_SEP}{target}"] if typed else []
         try:
