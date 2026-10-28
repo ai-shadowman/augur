@@ -44,6 +44,7 @@ against ``ast`` on every file ``ast`` accepts.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -55,8 +56,20 @@ from ..declarations import module_key, namespace_for
 from ..dialects import PYTHON, dialect_for
 from ..treesitter import CLASS, FUNCTION, METHOD, has_error, node_text, symbols_in_tree
 from . import call_targets as ct
+from .call_scopes import (
+    CLASS_SCOPE,
+    COMPREHENSION_SCOPE,
+    FUNCTION_SCOPE,
+    Scope,
+    bind_body,
+    decorators,
+    first_lines,
+    nonlocal_names,
+    ordered_parameters,
+    parameter_names,
+)
 from .model import EXTERNAL, INTERNAL, UNRESOLVED, Edge, Inventory, checkout_files
-from .python import _DOTTED, PYTHON2, FileBindings, PythonResolver, _other_bindings, _target_names
+from .python import _DOTTED, PYTHON2, PYTHON2_BUILTINS, FileBindings, PythonResolver, _target_names
 
 if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from tree_sitter import Node
@@ -65,7 +78,6 @@ logger = logging.getLogger(__name__)
 
 CALLS = "CALLS"
 
-_FUNCTION_SCOPE, _CLASS_SCOPE, _COMPREHENSION_SCOPE = "function", "class", "comprehension"
 _COMPREHENSIONS = frozenset({"list_comprehension", "set_comprehension", "dictionary_comprehension",
                              "generator_expression"})
 _LITERALS = frozenset({"string", "concatenated_string", "list", "dictionary", "set", "tuple",
@@ -152,28 +164,11 @@ class CallScan:
         return Counter(c.caller for c in self.calls if c.target is None)
 
 
-@dataclass
-class _Scope:
-    kind: str
-    #: Names any statement binds here, imports excluded.
-    bound: set[str] = field(default_factory=set)
-    #: Names a local import binds, shaped as :attr:`FileBindings.bound`.
-    imports: dict = field(default_factory=dict)
-    globals: set[str] = field(default_factory=set)
-    #: A star import or ``exec`` here may bind anything.
-    opaque: bool = False
-    #: For a method: the class key, the receiver, and whether it is rebound.
-    cls: str | None = None
-    receiver: str | None = None
-    #: For a class body: the class's qualified name in the file.
-    qualified: str | None = None
-
-
 @dataclass(frozen=True)
 class _Context:
     """Where the walk is: the scopes around a node, and what a call there belongs to."""
 
-    scopes: tuple[_Scope, ...] = ()
+    scopes: tuple[Scope, ...] = ()
     #: The innermost declaration, qualified within the file; ``""`` for the module.
     caller: str = ""
     in_function: bool = False
@@ -191,6 +186,9 @@ class _File:
     found: FileBindings
     symbols: dict[str, set[str]]
     other: set[str]
+    #: Qualified name to the first line declaring it, for a call that runs
+    #: while the module or class body is still executing.
+    first_line: dict[str, int] = field(default_factory=dict)
 
     def key(self, qualified: str) -> str:
         return dotted_key(f"{self.namespace}.{qualified}" if self.namespace and qualified
@@ -212,7 +210,7 @@ class CallResolver:
             symbols.setdefault(name, set()).add(kind)
         namespace = namespace_for(path, source, PYTHON)
         f = _File(path, namespace, dotted_key(module_key(path)), found, symbols,
-                  _other_bindings(found.tree, python2=found.mode == PYTHON2))
+                  ct.module_rebinding(found.tree, found.mode == PYTHON2), first_lines(found.tree))
         out: list[Call] = []
         self._walk(f, found.tree, out)
         return out, found.used_ast
@@ -243,7 +241,8 @@ class CallResolver:
                 continue
             if kind == "assignment" and not ctx.in_function and (left := node.child_by_field_name("left")):
                 names = _target_names(left)
-                bound = tuple(f.key(".".join((*ctx.prefix, n))) for n in sorted(names)) or ctx.binds
+                # ``a = b = f()`` nests rightward; the outer names stay bound.
+                bound = tuple(sorted({*ctx.binds, *(f.key(".".join((*ctx.prefix, n))) for n in names)}))
                 stack.extend((c, replace(ctx, binds=bound if c != left else ctx.binds))
                              for c in reversed(node.named_children))
                 continue
@@ -260,21 +259,22 @@ class CallResolver:
                 name = node_text(node.child_by_field_name("name"))
                 body = node.child_by_field_name("body")
                 prefix = ctx.prefix if ctx.in_function else (*ctx.prefix, name)
-                scope = _Scope(_CLASS_SCOPE, qualified=None if ctx.in_function else ".".join(prefix))
+                scope = Scope(CLASS_SCOPE, qualified=None if ctx.in_function else ".".join(prefix))
                 inside = replace(ctx, scopes=(*ctx.scopes, scope), prefix=prefix, binds=(),
                                  caller=ctx.caller if ctx.in_function else ".".join(prefix))
                 stack.extend((c, inside if c == body else ctx) for c in node.named_children
                              if c.type != "identifier")
                 continue
             if kind == "lambda":
-                scope = _Scope(_FUNCTION_SCOPE)
+                scope = Scope(FUNCTION_SCOPE)
                 params = node.child_by_field_name("parameters")
-                scope.bound |= _parameter_names(params)
+                scope.bound |= parameter_names(params)
                 inside = replace(ctx, scopes=(*ctx.scopes, scope))
                 stack.extend((c, ctx if c == params else inside) for c in node.named_children)
                 continue
             if kind in _COMPREHENSIONS:
-                scope = _Scope(_COMPREHENSION_SCOPE)
+                scope = Scope(COMPREHENSION_SCOPE,
+                               transparent=kind == "list_comprehension" and f.found.mode == PYTHON2)
                 for clause in node.named_children:
                     if clause.type == "for_in_clause":
                         scope.bound |= _target_names(clause.child_by_field_name("left"))
@@ -283,31 +283,41 @@ class CallResolver:
                 continue
             stack.extend((c, ctx) for c in reversed(node.named_children))
 
-    def _function_scope(self, f: _File, node: Node, scopes, prefix, in_function) -> _Scope:
-        scope = _Scope(_FUNCTION_SCOPE)
+    def _function_scope(self, f: _File, node: Node, scopes, prefix, in_function) -> Scope:
+        scope = Scope(FUNCTION_SCOPE)
         params = node.child_by_field_name("parameters")
-        names = _ordered_parameters(params)
+        names = ordered_parameters(params)
         scope.bound |= set(names)
-        rebound = _bind_body(self, f, node.child_by_field_name("body"), scope)
+        rebound = bind_body(self, f, node.child_by_field_name("body"), scope)
         enclosing = scopes[-1] if scopes else None
         first = params.named_children[0] if params is not None and params.named_children else None
-        if (not in_function and enclosing is not None and enclosing.kind == _CLASS_SCOPE
-                and first is not None and first.type == "identifier"):
-            decorators = _decorators(node)
-            if "staticmethod" not in decorators and names[0] not in rebound:
+        qualified = ".".join((*prefix, node_text(node.child_by_field_name("name"))))
+        if (not in_function and enclosing is not None and enclosing.kind == CLASS_SCOPE
+                and first is not None and first.type == "identifier"
+                # ``helper = staticmethod(helper)`` rewraps it after the def.
+                and f.symbols.get(qualified) == {METHOD}):
+            wrapped_by = decorators(node)
+            if ("staticmethod" not in wrapped_by and names[0] not in rebound
+                    and names[0] not in nonlocal_names(node.child_by_field_name("body"))):
                 scope.cls = dotted_key(f"{f.namespace}.{'.'.join(prefix)}" if f.namespace else ".".join(prefix))
                 scope.receiver = names[0]
+                scope.nested = len(prefix) > 1
         return scope
 
     # --------------------------------------------------------------- resolving
 
     def _site(self, f: _File, fn: Node, ctx: _Context) -> Call:
         written = " ".join(node_text(fn).split())
-        landing = self._callee(f, fn, written, ctx.scopes)
+        line = fn.start_point[0] + 1
+        # A call outside any function runs while the module or class body is
+        # still executing, so only what is bound above it is visible.
+        immediate = not any(s.kind == FUNCTION_SCOPE for s in ctx.scopes)
+        landing = self._callee(f, fn, written, ctx.scopes, line if immediate else None)
         return Call(f.key(ctx.caller), written, f.path, fn.start_point[0] + 1, landing.category,
                     landing.key, landing.reason, ctx.binds)
 
-    def _callee(self, f: _File, fn: Node, written: str, scopes: tuple[_Scope, ...]) -> ct.Landing:
+    def _callee(self, f: _File, fn: Node, written: str, scopes: tuple[Scope, ...],
+                line: int | None) -> ct.Landing:
         if fn.type == "attribute":
             obj, attr = fn.child_by_field_name("object"), fn.child_by_field_name("attribute")
             if obj is not None and obj.type == "call" and attr is not None:
@@ -320,12 +330,12 @@ class CallResolver:
 
         for i in range(len(scopes) - 1, -1, -1):
             scope = scopes[i]
-            if scope.kind == _CLASS_SCOPE:
-                if i != len(scopes) - 1:
+            if scope.kind == CLASS_SCOPE:
+                if any(not s.transparent for s in scopes[i + 1:]):
                     continue  # a class body does not enclose its methods
                 if scope.qualified is None:
                     return ct.declined(ct.LOCAL, f"{head} is read in the body of a class inside a function")
-                return self._module(f, head, rest, written, owner=f"{scope.qualified}.<call>")
+                return self._module(f, head, rest, written, f"{scope.qualified}.<call>", line)
             if scope.opaque:
                 return ct.declined(ct.STAR, f"a star import or exec in the caller may bind {head}")
             if head in scope.globals:
@@ -336,9 +346,10 @@ class CallResolver:
                 return ct.declined(ct.LOCAL, f"{head} is bound inside the caller")
             if head in scope.imports:
                 return self._imported(f, scope.imports[head], head, rest)
-        return self._module(f, head, rest, written, owner="")
+        return self._module(f, head, rest, written, "", line)
 
-    def _module(self, f: _File, head: str, rest: str, written: str, owner: str) -> ct.Landing:
+    def _module(self, f: _File, head: str, rest: str, written: str, owner: str,
+                line: int | None = None) -> ct.Landing:
         """The head through the class body (when ``owner`` names one) and the module.
 
         :meth:`PythonResolver._base` decides whether the name is settled, so a
@@ -356,8 +367,14 @@ class CallResolver:
             return self._declined(resolved.reason or "")
         enclosing = owner.rpartition(".")[0]
         if enclosing and f"{enclosing}.{head}" in f.symbols:
+            if line is not None and f.first_line.get(f"{enclosing}.{head}", 0) > line:
+                return self._module(f, head, rest, written, "", line)
             return self.declarations.in_file(f.path, [*enclosing.split("."), *members])
         if head in f.symbols:
+            if line is not None and f.first_line.get(head, 0) > line:
+                if head in PYTHON2_CALLABLES or head in PYTHON2_BUILTINS or hasattr(builtins, head):
+                    return ct.Landing(ct.BUILTIN, dotted_key(written))
+                return ct.declined(ct.UNBOUND, f"{head} is declared only below the call, which runs first")
             return self.declarations.in_file(f.path, members)
         if resolved.target_class == EXTERNAL and head not in f.found.bound:
             return ct.Landing(ct.BUILTIN, resolved.key)
@@ -389,124 +406,26 @@ class CallResolver:
             return ct.declined(ct.SELF_ATTRIBUTE, f"{written} calls an attribute of an attribute")
         return self.declarations.member(cls, [dotted_key(parts[0])], instance=True)
 
-    def _super(self, obj: Node, attr: str, scopes: tuple[_Scope, ...]) -> ct.Landing:
+    def _super(self, obj: Node, attr: str, scopes: tuple[Scope, ...]) -> ct.Landing:
         fn = obj.child_by_field_name("function")
         if fn is None or node_text(fn) != "super":
             return ct.declined(ct.DYNAMIC, f"{node_text(obj)}.{attr} calls an attribute of a call")
-        method = next((s for s in reversed(scopes) if s.kind == _FUNCTION_SCOPE), None)
+        method = next((s for s in reversed(scopes) if s.kind == FUNCTION_SCOPE), None)
         if method is None or not method.cls or method is not _innermost_function(scopes):
             return ct.declined(ct.DYNAMIC, "super() outside a method of a recorded class")
         args = obj.child_by_field_name("arguments")
         given = [node_text(a) for a in args.named_children] if args is not None else []
+        if given and method.nested:
+            return ct.declined(ct.DYNAMIC, f"super({', '.join(given)}) in a nested class names the module's "
+                                           f"{given[0]}, not this class")
         if given and (len(given) != 2 or dotted_key(given[0]) != method.cls.rpartition(".")[2]
                       or given[1] != method.receiver):
             return ct.declined(ct.DYNAMIC, f"super({', '.join(given)}) names another class or receiver")
         return self.declarations.after(method.cls, dotted_key(attr))
 
 
-def _innermost_function(scopes: tuple[_Scope, ...]) -> _Scope | None:
-    return next((s for s in reversed(scopes) if s.kind != _COMPREHENSION_SCOPE), None)
-
-
-# ------------------------------------------------------------------ bindings
-
-def _ordered_parameters(params: Node | None) -> list[str]:
-    names: list[str] = []
-    for child in params.named_children if params is not None else ():
-        if child.type == "identifier":
-            names.append(node_text(child))
-        elif child.type in ("default_parameter", "typed_default_parameter"):
-            if (name := child.child_by_field_name("name")) is not None:
-                names.extend(_target_names(name) or [node_text(name)])
-        elif child.type in ("typed_parameter", "list_splat_pattern", "dictionary_splat_pattern",
-                            "tuple_pattern"):
-            names.extend(sorted(_identifiers(child, stop={"type"})))
-    return names
-
-
-def _parameter_names(params: Node | None) -> set[str]:
-    return set(_ordered_parameters(params))
-
-
-def _identifiers(node: Node, stop: set[str]) -> set[str]:
-    found, stack = set(), [node]
-    while stack:
-        n = stack.pop()
-        if n.type == "identifier":
-            found.add(node_text(n))
-        elif n.type not in stop:
-            stack.extend(n.named_children)
-    return found
-
-
-def _decorators(function: Node) -> set[str]:
-    parent = function.parent
-    if parent is None or parent.type != "decorated_definition":
-        return set()
-    return {" ".join(node_text(d).lstrip("@").split()) for d in parent.named_children if d.type == "decorator"}
-
-
-def _bind_body(resolver: CallResolver, f: _File, body: Node | None, scope: _Scope) -> set[str]:
-    """Fill ``scope`` from a function body; return the names bound other than as parameters.
-
-    Nested functions, classes and lambdas are not entered, but their names are
-    bound here. Comprehension targets are bound here too, which over-declines
-    in Python 3 and is exact for a Python 2 list comprehension, whose
-    variable leaks into the function.
-    """
-    rebound: set[str] = set()
-    stack = list(body.named_children) if body is not None else []
-    while stack:
-        node = stack.pop()
-        kind = node.type
-        if kind == "decorated_definition":
-            stack.extend(c for c in node.named_children if c.type == "decorator")
-            node = node.child_by_field_name("definition") or node
-            kind = node.type
-        if kind in ("function_definition", "class_definition"):
-            rebound.add(node_text(node.child_by_field_name("name")))
-            stack.extend(c for c in node.named_children if c.type in ("parameters", "argument_list"))
-            continue
-        if kind == "lambda":
-            continue
-        if kind in ("assignment", "augmented_assignment", "for_statement", "for_in_clause"):
-            rebound |= _target_names(node.child_by_field_name("left"))
-        elif kind == "as_pattern_target" or kind == "case_pattern":
-            rebound |= _identifiers(node, stop=set()) if kind == "case_pattern" else _target_names(node)
-        elif kind == "except_clause" and len(values := node.children_by_field_name("value")) > 1:
-            rebound |= _target_names(values[1])
-        elif kind == "named_expression" and (name := node.child_by_field_name("name")):
-            rebound |= _target_names(name)
-        elif kind == "delete_statement":
-            rebound |= {n for c in node.named_children for n in _target_names(c)}
-        elif kind in ("global_statement", "nonlocal_statement"):
-            names = {node_text(c) for c in node.named_children if c.type == "identifier"}
-            if kind == "global_statement":
-                scope.globals |= names
-            else:
-                rebound |= names
-        elif kind == "exec_statement":
-            scope.opaque = True
-        elif kind in ("import_statement", "import_from_statement", "future_import_statement"):
-            _bind_import(resolver, f, node, scope)
-            continue
-        stack.extend(node.named_children)
-    rebound -= scope.globals
-    scope.bound |= rebound
-    scope.bound -= scope.globals
-    return rebound
-
-
-def _bind_import(resolver: CallResolver, f: _File, node: Node, scope: _Scope) -> None:
-    res = resolver.resolver
-    stars: list = []
-    for capture in PYTHON.import_edges(node):
-        if capture.written.startswith("."):
-            resolved, name = res.relative(capture.written, f.path)
-        else:
-            resolved, name = res.absolute(capture.written, f.path, f.found.mode)
-        res.bind(capture, resolved, name, f.path, f.found.mode, scope.imports, stars)
-    scope.opaque |= bool(stars)
+def _innermost_function(scopes: tuple[Scope, ...]) -> Scope | None:
+    return next((s for s in reversed(scopes) if s.kind != COMPREHENSION_SCOPE), None)
 
 
 # ---------------------------------------------------------------------- scan

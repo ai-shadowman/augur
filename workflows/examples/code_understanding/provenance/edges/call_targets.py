@@ -52,6 +52,7 @@ from ..declarations import namespace_for
 from ..dialects import PYTHON, dialect_for
 from ..facts import SKIP_DIRS
 from ..treesitter import (
+    BINDING,
     CLASS,
     FUNCTION,
     METHOD,
@@ -60,7 +61,7 @@ from ..treesitter import (
     symbols_in_tree,
 )
 from .model import EXTERNAL, INHERITS, INTERNAL, UNRESOLVED, Edge, Inventory
-from .python import FileBindings, PythonResolver
+from .python import PYTHON2, FileBindings, PythonResolver, _other_bindings, _target_names
 
 if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
     from tree_sitter import Node
@@ -134,6 +135,7 @@ class Declarations:
         #: call site says so, which a verdict needs to know.
         self.properties: set[str] = set()
         self._bindings: dict[str, FileBindings] = {}
+        self._rebinding: dict[str, set[str]] = {}
         self._mro: dict[str, list[str | _Opaque] | None] = {}
         for path in sorted(inventory.paths):
             if dialect_for(path) is PYTHON and not _skipped(path):
@@ -158,6 +160,23 @@ class Declarations:
                                if (key, w) in by_written]
             self.assigned.setdefault(key, set()).update(_self_assigned(node))
             self.properties.update(f"{key}.{name}" for name in _properties(node))
+            # A class-body import or loop target rebinds the name for every
+            # lookup through the class, which the symbol walk does not record.
+            body = node.child_by_field_name("body")
+            for name in _class_rebinding(body, self._python2(path)) if body is not None else ():
+                self.kinds.setdefault(f"{key}.{dotted_key(name)}", set()).add(BINDING)
+
+    def _python2(self, path: str) -> bool:
+        found = self.bindings(path)
+        return found is not None and found.mode == PYTHON2
+
+    def rebinding(self, path: str) -> set[str]:
+        """Module-level names ``path`` binds by anything but ``def``, ``class`` and ``=``."""
+        if path not in self._rebinding:
+            found = self.bindings(path)
+            self._rebinding[path] = set() if found is None else module_rebinding(
+                found.tree, found.mode == PYTHON2)
+        return self._rebinding[path]
 
     def key(self, path: str, qualified: str) -> str:
         namespace = self.namespaces[path]
@@ -219,9 +238,20 @@ class Declarations:
         if held is None or found is None:
             return declined(NOT_DECLARED, f"{path} is not read")
         first, rest = members[0], [dotted_key(m) for m in members[1:]]
+        if first in self.rebinding(path):
+            return declined(BINDING_REASON, f"{path} rebinds {first} by a for, with, except, global, del "
+                                            f"or starred statement")
         if first in held:
             if first in found.bound:
                 return declined(BINDING_REASON, f"{path} binds {first} by import and by a statement")
+            for written, _resolved, name in found.stars:
+                with self.preserved():
+                    self.resolver._importer = path
+                    listed = self.resolver._dunder_all(name) if name else None
+                if listed is None:
+                    return declined(STAR, f"{path} star-imports {written}, which may rebind {first}")
+                if first in listed:
+                    return declined(BINDING_REASON, f"{path} binds {first} and star-imports it from {written}")
             return self._settle(self.key(path, first), held[first], rest, instance=False)
         entries = set(found.bound.get(first, ()))
         if not entries:
@@ -298,12 +328,15 @@ class Declarations:
         order = self.mro(cls)
         if order is None:
             return declined(INHERITED, f"{cls} has no consistent method resolution order")
+        # The instance dict beats every class, so an assignment anywhere in the
+        # order shadows a declaration anywhere in it.
+        if instance and (by := next((e for e in order if not isinstance(e, _Opaque)
+                                     and name in self.assigned.get(e, ())), None)):
+            return declined(SELF_ATTRIBUTE, f"{by} assigns self.{name}")
         for entry in order:
             if isinstance(entry, _Opaque):
                 return declined(INHERITED, f"{cls}.{name}: base {entry.written} is outside the checkout "
                                            f"or unresolved, and comes before any declaration")
-            if instance and name in self.assigned.get(entry, ()):
-                return declined(SELF_ATTRIBUTE, f"{entry} assigns self.{name}")
             if (kinds := self.kinds.get(f"{entry}.{name}")) is not None:
                 return self._settle(f"{entry}.{name}", kinds, rest[1:], instance=False)
         if hasattr(object, name):
@@ -383,6 +416,55 @@ def _self_assigned(class_node: Node) -> set[str]:
                         found.add(node_text(attr).lower())
             inner.extend(n.named_children)
     return found
+
+
+def module_rebinding(tree: Node, python2: bool) -> set[str]:
+    """Module-level names bound by anything the symbol walk does not record.
+
+    :func:`.python._other_bindings` (``for``, ``with``, ``except``, ``global``
+    and the rest), plus ``del`` and the starred target of an unpacking, which
+    both the symbol walk and ``_other_bindings`` pass over. A name in here may
+    hold anything by the time a call reads it.
+    """
+    found = _other_bindings(tree, python2=python2)
+    stack = list(tree.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type in ("function_definition", "class_definition", "lambda", "decorated_definition"):
+            continue
+        if node.type == "delete_statement":
+            found |= {n for c in node.named_children for n in _target_names(c)}
+        elif node.type == "assignment" and (left := node.child_by_field_name("left")) is not None:
+            found |= {node_text(i) for splat in _descendants(left, "list_splat_pattern")
+                      for i in splat.named_children if i.type == "identifier"}
+        stack.extend(node.named_children)
+    return found
+
+
+def _class_rebinding(body: Node, python2: bool) -> set[str]:
+    """Names a class body binds by import or a loop-like statement, not by ``def``/``=``."""
+    found = module_rebinding(body, python2)
+    stack = list(body.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type in ("function_definition", "class_definition", "lambda", "decorated_definition"):
+            continue
+        for capture in PYTHON.import_edges(node):
+            if capture.names:
+                found |= {alias or n for n, alias in capture.names if n != "*"}
+            else:
+                found.add(capture.alias or capture.written.split(".", 1)[0])
+        stack.extend(node.named_children)
+    return found
+
+
+def _descendants(node: Node, kind: str) -> Iterator[Node]:
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type == kind:
+            yield n
+        stack.extend(n.named_children)
 
 
 def _properties(class_node: Node) -> Iterator[str]:

@@ -37,11 +37,11 @@ WHY_SKIPPED = f"no celery 2.5.5 checkout at {CELERY}"
 CELERY_SITES = 12360
 CELERY_AST_SITES = 7253
 CELERY_CATEGORIES = {
-    "internal": 2989, "external": 1419, "builtin": 1635, "local": 2457, "self-attribute": 888,
+    "internal": 2987, "external": 1419, "builtin": 1635, "local": 2460, "self-attribute": 887,
     "attribute": 52, "dynamic": 340, "literal": 84, "binding": 615, "star": 90, "unbound": 1,
     "inherited": 1763, "ambiguous": 17, "import": 3, "module": 0, "not-declared": 7,
 }
-CELERY_INTERNAL_PAIRS = 2330
+CELERY_INTERNAL_PAIRS = 2328
 
 
 def calls_of(files: dict, path: str) -> list:
@@ -152,6 +152,62 @@ CASES = [
     ("abstract method", {"m.py": "class C(object):\n    def a(self):\n        self.b()\n"},
      "m.py", "self.b", ct.NOT_DECLARED, None),
     ("attribute of a function", {"m.py": "def f(): pass\nf.delay()\n"}, "m.py", "f.delay", ct.ATTRIBUTE, None),
+    # From the adversarial review, 2026-10-28: each was a confident wrong edge.
+    ("an instance attribute set in a base shadows a subclass method",
+     {"m.py": "class B(object):\n    def __init__(self):\n        self.run = None\n"
+              "class C(B):\n    def run(self): pass\n    def go(self):\n        self.run()\n"},
+     "m.py", "self.run", ct.SELF_ATTRIBUTE, None),
+    ("an instance attribute set later in the order still shadows",
+     {"m.py": "class A(object):\n    def run(self): pass\nclass B(object):\n    def __init__(self):\n"
+              "        self.run = None\nclass C(A, B):\n    def go(self):\n        self.run()\n"},
+     "m.py", "self.run", ct.SELF_ATTRIBUTE, None),
+    ("another file's global rebinding",
+     {"m.py": "def f(): pass\ndef install():\n    global f\n    f = len\n", "n.py": "import m\nm.f()\n"},
+     "n.py", "m.f", ct.BINDING_REASON, None),
+    ("another file's star import may rebind",
+     {"m.py": "def f(): pass\ntry:\n    from _speed import *\nexcept ImportError:\n    pass\n",
+      "n.py": "import m\nm.f()\n"},
+     "n.py", "m.f", ct.STAR, None),
+    ("another file's with target",
+     {"m.py": "def f(): pass\nwith open('x') as f:\n    pass\n", "n.py": "import m\nm.f()\n"},
+     "n.py", "m.f", ct.BINDING_REASON, None),
+    ("a star-imported name its module rebinds",
+     {"a.py": "__all__ = ['f']\ndef f(): pass\nfor f in [len]:\n    pass\n", "n.py": "from a import *\nf()\n"},
+     "n.py", "f", ct.BINDING_REASON, None),
+    ("a module-level call before the def reaches the builtin",
+     {"m.py": "x = open('f')\ndef open(p): pass\n"}, "m.py", "open", ct.BUILTIN, "open"),
+    ("a call before any binding",
+     {"m.py": "@deco\ndef g(): pass\ndef deco(f): return f\n"}, "m.py", "deco", ct.UNBOUND, None),
+    ("a class-body call before the class's def reaches the module",
+     {"m.py": "def f(): pass\nclass C(object):\n    x = f()\n    def f(self): pass\n"},
+     "m.py", "f", INTERNAL, "m.f"),
+    ("super(Inner, self) in a nested class names the module's Inner",
+     {"m.py": "class A(object):\n    def m(self): pass\nclass Inner(A): pass\nclass Mid(Inner):\n"
+              "    def m(self): pass\nclass Outer(object):\n    class Inner(Mid):\n        def m(self):\n"
+              "            super(Inner, self).m()\n"},
+     "m.py", "super(Inner, self).m", ct.DYNAMIC, None),
+    ("a Python 2 list comprehension in a class body sees the class",
+     {"m.py": "print 'x'\ndef f(): pass\nclass C:\n    def f(): pass\n    xs = [f() for i in range(2)]\n"},
+     "m.py", "f", INTERNAL, "m.c.f"),
+    ("a class-body import shadows an inherited method",
+     {"util.py": "def run(): pass\n", "m.py": "class B(object):\n    def run(self): pass\nclass C(B):\n"
+                                              "    from util import run\n    def go(self):\n        self.run()\n"},
+     "m.py", "self.run", ct.BINDING_REASON, None),
+    ("a class-body for target shadows an inherited method",
+     {"m.py": "class B(object):\n    def run(self): pass\nclass C(B):\n    for run in [len]:\n        pass\n"
+              "    def go(self):\n        self.run()\n"},
+     "m.py", "self.run", ct.BINDING_REASON, None),
+    ("a method rewrapped by assignment has no receiver",
+     {"m.py": "class C(object):\n    def go(self): pass\n    def helper(x):\n        x.go()\n"
+              "    helper = staticmethod(helper)\n"},
+     "m.py", "x.go", ct.LOCAL, None),
+    ("starred unpacking rebinds", {"m.py": "def f(): pass\na, *f = [1, len]\nf()\n"},
+     "m.py", "f", ct.BINDING_REASON, None),
+    ("del unbinds", {"m.py": "def f(): pass\ndel f\nf()\n"}, "m.py", "f", ct.BINDING_REASON, None),
+    ("nonlocal rebinds the receiver",
+     {"m.py": "class C(object):\n    def run(self): pass\n    def go(self):\n        def g():\n"
+              "            nonlocal self\n            self = 1\n        g()\n        self.run()\n"},
+     "m.py", "self.run", ct.LOCAL, None),
     ("Python 2 implicit relative import",
      {"p/__init__.py": "", "p/a.py": "def f(): pass\n", "p/m.py": "print 'x'\nfrom a import f\nf()\n"},
      "p/m.py", "f", INTERNAL, "p.a.f"),
@@ -195,6 +251,7 @@ class TestResolution(unittest.TestCase):
             @deco
             def f(): pass
             route = make()
+            a = b = make()
             class C(object):
                 attr = make()
                 @deco
@@ -205,6 +262,7 @@ class TestResolution(unittest.TestCase):
         self.assertEqual(binds, {
             ("deco", "m", ("m.f",)),
             ("make", "m", ("m.route",)),
+            ("make", "m", ("m.a", "m.b")),
             ("make", "m.c", ("m.c.attr",)),
             ("deco", "m.c", ("m.c.m",)),
             ("make", "m.c.m", ()),
