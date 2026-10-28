@@ -271,8 +271,10 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
 
 def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str) -> tuple[str, str]:
     """``(verdict, reason)`` for one edge of type ``kind``."""
-    if kind not in CHECKABLE or (kind == CALLS and not ev.calls):
+    if kind not in CHECKABLE:
         return OUT_OF_REACH, "type"
+    if kind == CALLS and not ev.calls:
+        return OUT_OF_REACH, "uncovered"  # facts from before the CALLS oracle, or no Python
     if kind == CALLS:
         return call_verdict.verdict(ev, ev.calls, source, target, subject)
     ks, kt = _ground(ev, kind, source, target, subject)

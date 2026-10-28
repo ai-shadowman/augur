@@ -144,7 +144,8 @@ CASES = [
     ("PKG.A.A", "PKG.A.HELPER", "pkg.a.A IMPORTS pkg.a.Helper", "contradicted", "same-file"),
     ("PKG/A.PY", "PKG/C.PY", "pkg/a.py IMPORTS pkg.c", "contradicted", "no-edge"),
     ("PKG/D.PY", "PKG/C.PY", "pkg/d.py IMPORTS pkg.c", "unchecked", "no-edge"),
-    ("PKG/A.PY", "PKG/B.PY", "pkg/a.py CALLS pkg.b", "out-of-reach", "type"),
+    # This evidence carries no call graph, as facts from before 2026-10-28 do.
+    ("PKG/A.PY", "PKG/B.PY", "pkg/a.py CALLS pkg.b", "out-of-reach", "uncovered"),
     ("PKG/A.PY", "PKG/B.PY", "pkg/a.py talks to pkg.b", "out-of-reach", "type"),
     # Partial evidence: a plausible name inside a real package that nothing
     # declares and the claimant does not import is out of reach, never a
@@ -577,9 +578,9 @@ class TestDrop(unittest.TestCase):
 #: model's rows of the grounded arm, as the harness reported them. Grounding
 #: drops the IMPORTS and INHERITS contradictions it can (4 and 9), so what is
 #: left is the one kept INHERITS row and the CALLS contradictions, which are
-#: reported and never dropped (12 and 6). MANIFEST, Relationship layer Phase 8.
+#: reported and never dropped (12 and 5). MANIFEST, Relationship layer Phase 8.
 PINNED = {
-    "parser-full-120b": (1359, 6, 2441, 140),
+    "parser-full-120b": (1359, 5, 2441, 141),
     "parser-full-120b-typed": (1469, 13, 1324, 119),
 }
 

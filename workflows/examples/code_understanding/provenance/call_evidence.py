@@ -19,6 +19,9 @@ call graph is read here, at clone time, and travels in the facts sidecar:
                            without calling: an argument or a returned value.
 ``members``                each module key's own top-level names, so a module
                            claim counts its own file and not its subpackages.
+``files``                  the files whose calls were captured. Merged with
+                           facts from before the oracle, a claimant outside
+                           them is uncovered, never call-free.
 ``rebound``                a name a module binds by import, to where it lands.
                            A bare title grounds on the binding; the oracle
                            names the declaration.
@@ -39,14 +42,14 @@ from .dialects import PYTHON
 from .edges.call_targets import MODULE
 from .edges.calls import CallResolver, CallScan, scan_calls
 from .edges.model import INTERNAL, Inventory, checkout_files
-from .treesitter import BINDING, node_text, parse
+from .treesitter import BINDING, has_error, node_text, parse
 
 #: Names that import a module named by a value rather than by syntax. Read as
 #: text, because ``imp = imp or importlib.import_module`` then ``imp(name)``
 #: is a local call the oracle declines, and it is the import.
 DYNAMIC_IMPORT_NAMES = ("__import__", "import_module", "load_source", "load_module")
 
-_SETS = ("by_name", "properties", "bindings")
+_SETS = ("by_name", "properties", "bindings", "files")
 _MAPS = ("internal", "external", "binds", "members", "references")
 
 
@@ -54,7 +57,7 @@ class CallEvidence:
     """The call graph, indexed the ways the CALLS verdict asks of it."""
 
     def __init__(self, internal=None, external=None, unsettled=None, binds=None, by_name=(),
-                 properties=(), bindings=(), members=None, rebound=None, references=None):
+                 properties=(), bindings=(), members=None, rebound=None, references=None, files=()):
         self.internal: dict[str, set[str]] = _sets(internal)
         self.external: dict[str, set[str]] = _sets(external)
         self.unsettled: dict[str, int] = dict(unsettled or {})
@@ -65,6 +68,7 @@ class CallEvidence:
         self.members: dict[str, set[str]] = _sets(members)
         self.rebound: dict[str, str] = dict(rebound or {})
         self.references: dict[str, set[str]] = _sets(references)
+        self.files: frozenset[str] = frozenset(files)
         self.callers: frozenset[str] = frozenset(self.internal) | frozenset(self.external) | frozenset(
             self.unsettled)
         self._within: dict[str, list[str]] = {}
@@ -99,7 +103,13 @@ class CallEvidence:
             references[r.caller].add(r.target)
         evidence = cls(internal, external, scan.unsettled_callers(), binds, (),
                        decl.properties, (k for k, kinds in decl.kinds.items() if kinds == {BINDING}),
-                       members, _rebound(decl), references)
+                       members, _rebound(decl), references, decl.namespaces)
+        # A file tree-sitter had to recover may have lost calls (a Python 2
+        # backtick); nothing declared in it is evidence of absence.
+        for path in decl.namespaces:
+            if has_error(decl.inventory.read(path) or "", PYTHON):
+                for key in {decl.key(path, n) for n in decl.symbols.get(path, ())} | {decl.namespaces[path]}:
+                    evidence.unsettled[key] = evidence.unsettled.get(key, 0) + 1
         evidence.by_name = frozenset(evidence._reach(_mentions_dynamic_import(decl)))
         return evidence
 
@@ -131,6 +141,9 @@ class CallEvidence:
         """
         if not target.startswith(obj + "."):
             return False
+        head = target[len(obj) + 1:].split(".")[0]
+        if f"{obj}.{head}" in self.members:
+            return False  # a submodule, even where the package binds its name
         own = self.members.get(obj)
         return own is None or target[len(obj) + 1:].split(".")[0] in own
 
@@ -160,12 +173,12 @@ class CallEvidence:
         data = data or {}
         return cls(data.get("internal"), data.get("external"), data.get("unsettled"), data.get("binds"),
                    data.get("by_name", ()), data.get("properties", ()), data.get("bindings", ()),
-                   data.get("members"), data.get("rebound"), data.get("references"))
+                   data.get("members"), data.get("rebound"), data.get("references"), data.get("files", ()))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
         """Union serialised evidence from several repositories."""
-        merged = cls()
+        merged, conflicts = cls(), set()
         for part in parts:
             other = cls.from_dict(part)
             for name in _MAPS:
@@ -175,7 +188,11 @@ class CallEvidence:
                 setattr(merged, name, getattr(merged, name) | getattr(other, name))
             for k, n in other.unsettled.items():
                 merged.unsettled[k] = merged.unsettled.get(k, 0) + n
+            # Two repositories binding one key differently: neither is followed.
+            conflicts |= {k for k, v in other.rebound.items() if merged.rebound.get(k, v) != v}
             merged.rebound.update(other.rebound)
+        for k in conflicts:
+            del merged.rebound[k]
         return merged.to_dict()
 
 

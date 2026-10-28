@@ -129,6 +129,29 @@ def _normalised(table: Any) -> tuple[Any, bool]:
     return table, predates_drop
 
 
+#: CALLS out-of-reach reasons, and how the report names each.
+CALLS_BLIND = {
+    "reference": "a callable passed or returned, not called",
+    "property": "a property read",
+    "protocol": "an implicit call such as an index or len()",
+    "binding": "a name bound by assignment",
+    "dialect": "a file the CALLS parser does not read",
+}
+
+
+def _calls_reach(by_reason: Counter) -> str:
+    """The CALLS rows out of reach for reasons of their own, said in words."""
+    out = ""
+    if by_reason["uncovered"]:
+        out += (f" {by_reason['uncovered']} CALLS relationships come from files whose calls were "
+                "not captured (facts written before the CALLS parser), so nothing checked them.")
+    blind = [(n, CALLS_BLIND[r]) for r, n in by_reason.items() if r in CALLS_BLIND and n]
+    if blind:
+        out += (f" {sum(n for n, _ in blind)} CALLS relationships name something no call-site parser "
+                "can see: " + "; ".join(f"{label} ({n})" for n, label in sorted(blind, reverse=True)) + ".")
+    return out
+
+
 def render(table: Any) -> str:
     """The section as markdown, or :data:`NOT_RUN` when there is no table."""
     if table is None:
@@ -172,7 +195,8 @@ def render(table: Any) -> str:
            if unchecked_types else "")
         + f". {by_reason[UNGROUNDED]} more have a checkable type but name an endpoint the "
         "checkout does not declare, such as a third-party module the file does not "
-        "import. Read these as the model's claims.",
+        "import. Read these as the model's claims."
+        + _calls_reach(by_reason),
         "",
     ]
     if split[UNCHECKED]:

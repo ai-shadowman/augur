@@ -128,5 +128,64 @@ class TestCallVerdict(unittest.TestCase):
         self.assertFalse(CallEvidence.from_dict({}))
 
 
+def _checkout(files: dict) -> tuple[EdgeEvidence, CallEvidence]:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name, text in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(textwrap.dedent(text))
+        return EdgeEvidence.from_checkout(root), CallEvidence.from_checkout(root)
+
+
+#: The second review's reproducers, 2026-10-28: ``(case, files, source, target,
+#: subject, verdict, reason)``. Each returned a confident wrong verdict.
+REVIEW_CASES = [
+    ("a re-exported claimant speaks for its declaration",
+     {"pkg/__init__.py": "from pkg.impl import run\n", "pkg/impl.py": "def helper(): pass\ndef run():\n    helper()\n"},
+     "PKG.RUN", "PKG.IMPL.HELPER", SOURCE, "confirmed", "exact"),
+    ("reversed waits for the unsettled guard",
+     {"pkg/__init__.py": "", "pkg/a.py": "import pkg.b\ndef f(x):\n    return x.g()\n",
+      "pkg/b.py": "from pkg.a import f\ndef g():\n    f(1)\n"},
+     "PKG.A.F", "PKG.B.G", SOURCE, "unchecked", "unsettled"),
+    ("a bare object the claimant imports from a library",
+     {"config.py": "X = 1\n", "pkg/__init__.py": "",
+      "pkg/a.py": "from logging import config\ndef f():\n    config.dictConfig({})\n"},
+     "PKG.A.F", "CONFIG", SOURCE, "confirmed", "container"),
+    ("an inherited __init__",
+     {"pkg/__init__.py": "", "pkg/a.py": "class Base(object):\n    def __init__(self): pass\n"
+                                          "class C(Base): pass\ndef f():\n    return C()\n"},
+     "PKG.A.F", "PKG.A.BASE.__INIT__", SOURCE, "unchecked", "dispatch"),
+    ("a recovered parse is not evidence of absence",
+     {"pkg/__init__.py": "", "pkg/a.py": "def helper(): pass\ndef h():\n    x = `helper()`\n"},
+     "PKG.A.H", "PKG.A.HELPER", SOURCE, "unchecked", "unsettled"),
+    ("a submodule is not its package's member",
+     {"pkg/__init__.py": "util = None\n", "pkg/util.py": "from pkg.other import helper\ndef f():\n    helper()\n",
+      "pkg/other.py": "def helper(): pass\n"},
+     "PKG/__INIT__.PY", "PKG.OTHER.HELPER", SOURCE, "contradicted", "no-calls"),
+]
+
+
+class TestReviewCases(unittest.TestCase):
+    def test_cases(self):
+        for case, files, source, target, subject, expected, reason in REVIEW_CASES:
+            with self.subTest(case):
+                ev, cev = _checkout(files)
+                self.assertEqual(verdict(ev, cev, source, target, subject), (expected, reason))
+
+    def test_merging_older_facts_leaves_their_files_uncovered(self):
+        new, _ = _checkout({"a/__init__.py": "", "a/m.py": "def f(): pass\ndef g():\n    f()\n"})
+        old, _ = _checkout({"b/__init__.py": "", "b/m.py": "def p(): pass\ndef q(): pass\n"})
+        older = old.to_dict()
+        older.pop("calls")
+        merged = EdgeEvidence.from_dict(EdgeEvidence.merge([new.to_dict(), older]))
+        self.assertEqual(verdict(merged, merged.calls, "B.M.P", "B.M.Q", SOURCE), ("out-of-reach", "uncovered"))
+        self.assertEqual(verdict(merged, merged.calls, "A.M.G", "A.M.F", SOURCE), ("confirmed", "exact"))
+
+    def test_a_rebound_key_two_repositories_disagree_on_is_dropped(self):
+        one = CallEvidence(rebound={"u.f": "x.f", "u.g": "x.g"}).to_dict()
+        two = CallEvidence(rebound={"u.f": "y.f", "u.g": "x.g"}).to_dict()
+        self.assertEqual(CallEvidence.from_dict(CallEvidence.merge([one, two])).rebound, {"u.g": "x.g"})
+
+
 if __name__ == "__main__":
     unittest.main()

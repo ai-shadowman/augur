@@ -16,7 +16,9 @@ an import graph does not.
                  hops), ``no-calls`` or ``no-edge``. Reported, never dropped:
                  decided 2026-10-28.
 ``out-of-reach`` an endpoint does not ground or sits in a file of another
-                 dialect (``dialect``: the oracle reads Python only), or no
+                 dialect (``dialect``: the oracle reads Python only), the
+                 claimant's file had no calls captured (``uncovered``: facts
+                 from before the oracle, merged with newer ones), or no
                  call-site oracle can see the claim: a property read
                  (``property``), an implicit protocol call such as ``self[k]``
                  (``protocol``), an endpoint bound by assignment
@@ -80,6 +82,9 @@ def _transitive(cev: CallEvidence, claimant: str, obj: str) -> bool:
 def _dispatch(ev: EdgeEvidence, cev: CallEvidence, claimant: str, obj: str) -> bool:
     owner, _, name = cev.follow(obj).rpartition(".")
     for t in cev.targets(claimant, external=False):
+        # ``C()`` runs ``Base.__init__`` when C inherits it.
+        if name == INIT and owner in ev.supertypes(t):
+            return True
         t_owner, _, t_name = t.rpartition(".")
         if t_name == name and t_owner != owner and (
                 t_owner in ev.supertypes(owner) or owner in ev.supertypes(t_owner)):
@@ -112,26 +117,52 @@ def _module_key(ev: EdgeEvidence, key: str | None) -> str | None:
     return key
 
 
+def _scoped(ev: EdgeEvidence, cev: CallEvidence, claimant: str | None, obj: str | None,
+            title: str) -> str | None:
+    """A bare object title through the claimant's own import of that name, if it has one.
+
+    ``from logging import config`` then ``config.dictConfig()``: the claim
+    means the library's ``config``, not a root ``config.py`` the global
+    fallback grounds it on.
+    """
+    if claimant is None or obj is None or "." in dotted_key(title):
+        return obj  # an ungrounded object already gets the external rule
+    for f in sorted(ev.files(claimant)):
+        bound = dotted_key(f"{ev.namespaces.get(f, '')}.{title}")
+        if bound in cev.rebound:
+            return cev.rebound[bound]
+    return obj
+
+
 def verdict(ev: EdgeEvidence, cev: CallEvidence, source: str, target: str, subject: str) -> tuple[str, str]:
     """``(verdict, reason)`` for one CALLS row."""
     from .edge_verdict import _ground
 
     ks, kt = (_module_key(ev, k) for k in _ground(ev, CALLS, source, target, subject))
     if subject == edge_types.TARGET:
-        orders = [(kt, ks, target)]
+        raw = [(kt, ks, target)]
     elif subject == edge_types.SOURCE:
-        orders = [(ks, kt, target)]
+        raw = [(ks, kt, target)]
     else:
-        orders = [(ks, kt, target), (kt, ks, source)]
-    unoriented = "" if len(orders) == 1 else ", unoriented"
+        raw = [(ks, kt, target), (kt, ks, source)]
+    unoriented = "" if len(raw) == 1 else ", unoriented"
+    # A claimant spelled as a re-export (``celery.app.BaseApp``) speaks for
+    # the declaration it binds; an object gets the claimant's own import.
+    orders = [(cev.follow(c) if c else c, _scoped(ev, cev, c, o, title), title) for c, o, title in raw]
 
     for claimant, obj, obj_title in orders:
         if claimant and not obj and _calls_external(cev, claimant, obj_title):
             return CONFIRMED, "external" + unoriented
     if not (ks and kt):
         return OUT_OF_REACH, "ungrounded"
-    if any(dialect_for(f) is not PYTHON for f in ev.files(ks) | ev.files(kt)):
+    claimants = {c for c, _, _ in orders}
+    if any(c not in ev.file_of for c in claimants):
+        return OUT_OF_REACH, "ungrounded"  # a re-export of something outside the checkout
+    files = {f for c, o, _ in orders for k in (c, o) for f in ev.files(k)}
+    if any(dialect_for(f) is not PYTHON for f in files):
         return OUT_OF_REACH, "dialect"
+    if any(not ev.files(c) <= cev.files for c in claimants):
+        return OUT_OF_REACH, "uncovered"
     for claimant, obj, _ in orders:
         if where := _reaches(cev, claimant, obj):
             return CONFIRMED, where + unoriented
@@ -147,13 +178,15 @@ def verdict(ev: EdgeEvidence, cev: CallEvidence, source: str, target: str, subje
         held = {t for c in {claimant, *cev.within(claimant)} for t in cev.references.get(c, ())}
         if cev.follow(obj) in held:
             return OUT_OF_REACH, "reference"
-    claimant, obj, _ = orders[0]
-    if len(orders) == 1 and _reaches(cev, obj, claimant) in ("exact", "init"):
-        return CONTRADICTED, "reversed"
-    if any(cev.unsettled.get(c) for cl, _, _ in orders for c in cev.within(cl)):
+    # Absence is evidence only once every site settled, ``reversed`` included:
+    # an unresolved site may be the call back.
+    if any(cev.unsettled.get(c) for cl, _, _ in orders for c in {cl, *cev.within(cl)}):
         return UNCHECKED, "unsettled"
     if any(c in cev.by_name for cl, _, _ in orders for c in cev.within(cl)):
         return UNCHECKED, "imports-by-name"
+    claimant, obj, _ = orders[0]
+    if len(orders) == 1 and _reaches(cev, obj, claimant) in ("exact", "init"):
+        return CONTRADICTED, "reversed"
     if any(_transitive(cev, cl, ob) for cl, ob, _ in orders):
         return CONTRADICTED, "transitive" + unoriented
     if len(orders) == 1 and not cev.within(claimant):

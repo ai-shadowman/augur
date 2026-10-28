@@ -197,6 +197,18 @@ class TestKeptCalls(unittest.TestCase):
         self.assertIn("just not as claimed", text)
         self.assertNotIn("predates the drop", text)
 
+    def test_calls_without_evidence_are_not_called_uncheckable_by_type(self):
+        import pandas as pd
+
+        rows = [{"id": "1", "source": "A.F", "target": "B.G", "type": "CALLS", "subject": "source",
+                 "verdict": "out-of-reach", "reason": "uncovered", "dropped": False},
+                {"id": "2", "source": "A.F", "target": "B.H", "type": "CALLS", "subject": "source",
+                 "verdict": "out-of-reach", "reason": "reference", "dropped": False}]
+        text = report_section.render(pd.DataFrame(rows))
+        self.assertIn("1 CALLS relationships come from files whose calls were not captured", text)
+        self.assertIn("a callable passed or returned, not called (1)", text)
+        self.assertNotIn("CALLS 1", text)
+
 
 if __name__ == "__main__":
     unittest.main()

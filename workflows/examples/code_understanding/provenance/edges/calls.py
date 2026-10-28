@@ -240,6 +240,13 @@ class CallResolver:
                 fn = node.child_by_field_name("function")
                 if fn is not None:
                     out.append(self._site(f, fn, ctx))
+            if kind == "string" and node_text(node).startswith("`"):
+                # Python 2's repr backticks, which this grammar reads as a string:
+                # whatever it calls is lost, so the site counts as unreadable.
+                out.append(Call(f.key(ctx.caller), " ".join(node_text(node).split()), f.path,
+                                node.start_point[0] + 1, ct.DYNAMIC, None,
+                                "a Python 2 backtick repr, read as a string by the grammar", ctx.binds))
+                continue
             if kind in ("argument_list", "return_statement"):
                 references.extend(self._site(f, held, ctx) for held in _held(node))
             if kind == "decorated_definition" and not ctx.in_function:

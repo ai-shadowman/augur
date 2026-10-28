@@ -208,6 +208,8 @@ CASES = [
      {"m.py": "class C(object):\n    def run(self): pass\n    def go(self):\n        def g():\n"
               "            nonlocal self\n            self = 1\n        g()\n        self.run()\n"},
      "m.py", "self.run", ct.LOCAL, None),
+    ("a Python 2 backtick repr is an unreadable site", {"m.py": "print 'x'\ndef f():\n    x = `len([])`\n"},
+     "m.py", "`len([])`", ct.DYNAMIC, None),
     ("Python 2 implicit relative import",
      {"p/__init__.py": "", "p/a.py": "def f(): pass\n", "p/m.py": "print 'x'\nfrom a import f\nf()\n"},
      "p/m.py", "f", INTERNAL, "p.a.f"),
