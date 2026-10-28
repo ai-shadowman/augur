@@ -35,33 +35,11 @@ AUGUR features end-to-end telemetry embedded directly into its execution reports
 - Helm CLI (`helm`)
 - Make (`make`)
 
-## Disconnected / Air-Gapped Environment Considerations
-
-In air-gapped or disconnected OpenShift clusters without public internet access, external runtime dependency downloads will fail. 
-
-### Tiktoken Tokenizer Cache
-OpenAI's `tiktoken` library (used by GraphRAG for chunking, token counting, and prompt context budgeting) dynamically downloads its BPE vocabulary file from `https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken` on first use. In a disconnected environment, this causes container pods to hang or crash with `urllib.error.URLError`.
-
-To prevent external network access at runtime, the `cl100k_base.tiktoken` file is pre-downloaded and baked into each pipeline container image under `/opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` alongside the `TIKTOKEN_CACHE_DIR` environment variable.
-
-For complete build instructions and hashing details, see:
-👉 **[resources/images/README.md](resources/images/README.md#offline--disconnected-support-tiktoken-cache)**
-
 ## Quickstart & Usage
 
-### Running Locally
-To run AUGUR standalone on a target repository without Kubeflow:
-```bash
-export GIT_REPO="https://github.com/my-org/my-service"
-export GIT_BRANCH="main"
-export GRAPHRAG_LLM_API_BASE="http://vllm-endpoint:8000/v1"
-export GRAPHRAG_LLM_MODEL="openai/gpt-oss-120b"
-export EMBED_LLM_API_BASE="http://vllm-endpoint:8000/v1"
-export EMBED_LLM_MODEL="e5-mistral-7b-instruct"
+### AUGUR Configuration Reference
 
-# Run all 3 stages locally (Data Generation -> Indexing -> Analysis)
-python workflows/examples/code_understanding/pipelines/orchestrator.py
-```
+**[README_ENV.md](README_ENV.md)**: AUGUR .env configuration file reference
 
 ### Running in OpenShift AI Pipelines (Kubeflow)
 Deploy Helm templates and compile pipelines to YAML:
@@ -80,16 +58,42 @@ PYTHONPATH=workflows/examples/code_understanding \
 python workflows/examples/code_understanding/pipelines/orchestrator.py
 ```
 
+### Running Locally
+To run AUGUR standalone on a target repository without Kubeflow:
+```bash
+export GIT_REPO="https://github.com/my-org/my-service"
+export GIT_BRANCH="main"
+export GRAPHRAG_LLM_API_BASE="http://vllm-endpoint:8000/v1"
+export GRAPHRAG_LLM_MODEL="openai/gpt-oss-120b"
+export EMBED_LLM_API_BASE="http://vllm-endpoint:8000/v1"
+export EMBED_LLM_MODEL="e5-mistral-7b-instruct"
+
+# Run all 3 stages locally (Data Generation -> Indexing -> Analysis)
+python workflows/examples/code_understanding/pipelines/orchestrator.py
+```
+
 ### Running Test Suites
 AUGUR includes an automated unit testing suite across all telemetry and pipeline components:
 ```bash
 python -m unittest discover -s workflows/examples/code_understanding/tests
 ```
 
+## Disconnected / Air-Gapped Environment Considerations
+
+In air-gapped or disconnected OpenShift clusters without public internet access, external runtime dependency downloads will fail. 
+
+### Tiktoken Tokenizer Cache
+OpenAI's `tiktoken` library (used by GraphRAG for chunking, token counting, and prompt context budgeting) dynamically downloads its BPE vocabulary file from `https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken` on first use. In a disconnected environment, this causes container pods to hang or crash with `urllib.error.URLError`.
+
+To prevent external network access at runtime, the `cl100k_base.tiktoken` file is pre-downloaded and baked into each pipeline container image under `/opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4` alongside the `TIKTOKEN_CACHE_DIR` environment variable.
+
+For complete build instructions and hashing details, see:
+👉 **[resources/images/README.md](resources/images/README.md#offline--disconnected-support-tiktoken-cache)**
+
 ## Documentation & Guides
-- 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` standalone OpenShift job and `benchmark_llm_op` pre-pipeline auto-tuning).
-- 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
-- 👉 **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
-- 👉 **[resources/images/README.md](resources/images/README.md)**: Container image build process and disconnected/air-gapped registry mirroring.
-- 👉 **[resources/openshift/README.md](resources/openshift/README.md)**: OpenShift image build process
-- 👉 **[workflows/examples/code_understanding/README.md](workflows/examples/code_understanding/README.md)**: Code understanding package overview.
+- **[GUILDLLM_README.MD](GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` standalone OpenShift job and `benchmark_llm_op` pre-pipeline auto-tuning).
+- **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
+- **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
+- **[resources/images/README.md](resources/images/README.md)**: Container image build process and disconnected/air-gapped registry mirroring.
+- **[resources/openshift/README.md](resources/openshift/README.md)**: OpenShift image build process
+- **[workflows/examples/code_understanding/README.md](workflows/examples/code_understanding/README.md)**: Code understanding package overview.
