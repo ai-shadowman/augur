@@ -45,6 +45,34 @@ the build context. `data-analysis` and `pipeline-tools` use the repository root 
 include their workflow package; add a corresponding context override in the
 discovery step for any new image that also needs files outside its own directory.
 
+## Tagged release builds (GitHub Actions)
+
+The [release container images workflow](../../.github/workflows/release-images.yml)
+runs when a Git tag is pushed. It checks that the tagged commit belongs to
+`main`'s history, then builds and pushes the four images for Linux AMD64 using
+the existing `QUAY_USERNAME` and `QUAY_TOKEN` secrets. Each image uses the exact
+Git tag, for example:
+
+```text
+quay.io/ai-shadowman/data-generation:v1.0.4
+quay.io/ai-shadowman/data-indexing:v1.0.4
+quay.io/ai-shadowman/data-analysis:v1.0.4
+quay.io/ai-shadowman/pipeline-tools:v1.0.4
+```
+
+Tags must be valid container image tags. Images build and push independently;
+a failure in one image does not prevent the others from publishing. The image
+list and build contexts are defined directly in the workflow matrix.
+
+Merge the workflow into `main` before creating a release tag. To release:
+
+```bash
+git switch main
+git pull --ff-only
+git tag -a v1.0.4 -m "Release v1.0.4"
+git push origin v1.0.4
+```
+
 ## data-generation
 
 ```bash
