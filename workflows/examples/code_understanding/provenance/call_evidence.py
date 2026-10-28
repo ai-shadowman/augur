@@ -21,7 +21,9 @@ call graph is read here, at clone time, and travels in the facts sidecar:
                            claim counts its own file and not its subpackages.
 ``files``                  the files whose calls were captured. Merged with
                            facts from before the oracle, a claimant outside
-                           them is uncovered, never call-free.
+                           them is uncovered, never call-free. ``None`` for
+                           evidence written before the field: coverage
+                           unknown, so nothing is held uncovered.
 ``rebound``                a name a module binds by import, to where it lands.
                            A bare title grounds on the binding; the oracle
                            names the declaration.
@@ -49,7 +51,7 @@ from .treesitter import BINDING, has_error, node_text, parse
 #: is a local call the oracle declines, and it is the import.
 DYNAMIC_IMPORT_NAMES = ("__import__", "import_module", "load_source", "load_module")
 
-_SETS = ("by_name", "properties", "bindings", "files")
+_SETS = ("by_name", "properties", "bindings")
 _MAPS = ("internal", "external", "binds", "members", "references")
 
 
@@ -57,7 +59,8 @@ class CallEvidence:
     """The call graph, indexed the ways the CALLS verdict asks of it."""
 
     def __init__(self, internal=None, external=None, unsettled=None, binds=None, by_name=(),
-                 properties=(), bindings=(), members=None, rebound=None, references=None, files=()):
+                 properties=(), bindings=(), members=None, rebound=None, references=None,
+                 files: Iterable[str] | None = ()):
         self.internal: dict[str, set[str]] = _sets(internal)
         self.external: dict[str, set[str]] = _sets(external)
         self.unsettled: dict[str, int] = dict(unsettled or {})
@@ -68,7 +71,7 @@ class CallEvidence:
         self.members: dict[str, set[str]] = _sets(members)
         self.rebound: dict[str, str] = dict(rebound or {})
         self.references: dict[str, set[str]] = _sets(references)
-        self.files: frozenset[str] = frozenset(files)
+        self.files: frozenset[str] | None = None if files is None else frozenset(files)
         self.callers: frozenset[str] = frozenset(self.internal) | frozenset(self.external) | frozenset(
             self.unsettled)
         self._within: dict[str, list[str]] = {}
@@ -166,6 +169,8 @@ class CallEvidence:
         out.update({name: sorted(getattr(self, name)) for name in _SETS})
         out["unsettled"] = dict(sorted(self.unsettled.items()))
         out["rebound"] = dict(sorted(self.rebound.items()))
+        if self.files is not None:
+            out["files"] = sorted(self.files)
         return out
 
     @classmethod
@@ -173,7 +178,8 @@ class CallEvidence:
         data = data or {}
         return cls(data.get("internal"), data.get("external"), data.get("unsettled"), data.get("binds"),
                    data.get("by_name", ()), data.get("properties", ()), data.get("bindings", ()),
-                   data.get("members"), data.get("rebound"), data.get("references"), data.get("files", ()))
+                   data.get("members"), data.get("rebound"), data.get("references"),
+                   data.get("files", () if not data.get("internal") else None))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
@@ -188,6 +194,9 @@ class CallEvidence:
                 setattr(merged, name, getattr(merged, name) | getattr(other, name))
             for k, n in other.unsettled.items():
                 merged.unsettled[k] = merged.unsettled.get(k, 0) + n
+            # Coverage unknown in any part carrying calls leaves it unknown.
+            if merged.files is not None:
+                merged.files = None if other.files is None else merged.files | other.files
             # Two repositories binding one key differently: neither is followed.
             conflicts |= {k for k, v in other.rebound.items() if merged.rebound.get(k, v) != v}
             merged.rebound.update(other.rebound)

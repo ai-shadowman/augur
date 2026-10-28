@@ -186,6 +186,14 @@ class TestReviewCases(unittest.TestCase):
         self.assertEqual(verdict(merged, merged.calls, "B.M.P", "B.M.Q", SOURCE), ("out-of-reach", "uncovered"))
         self.assertEqual(verdict(merged, merged.calls, "A.M.G", "A.M.F", SOURCE), ("confirmed", "exact"))
 
+    def test_evidence_from_before_the_files_field_holds_nothing_uncovered(self):
+        ev, cev = _checkout({"a/__init__.py": "", "a/m.py": "def f(): pass\ndef g():\n    f()\n"})
+        data = cev.to_dict()
+        data.pop("files")
+        older = CallEvidence.from_dict(data)
+        self.assertIsNone(older.files)
+        self.assertEqual(verdict(ev, older, "A.M.G", "A.M.F", SOURCE), ("confirmed", "exact"))
+
     def test_a_rebound_key_two_repositories_disagree_on_is_dropped(self):
         one = CallEvidence(rebound={"u.f": "x.f", "u.g": "x.g"}).to_dict()
         two = CallEvidence(rebound={"u.f": "y.f", "u.g": "x.g"}).to_dict()

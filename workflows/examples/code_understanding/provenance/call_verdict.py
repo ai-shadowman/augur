@@ -161,7 +161,7 @@ def verdict(ev: EdgeEvidence, cev: CallEvidence, source: str, target: str, subje
     files = {f for c, o, _ in orders for k in (c, o) for f in ev.files(k)}
     if any(dialect_for(f) is not PYTHON for f in files):
         return OUT_OF_REACH, "dialect"
-    if any(not ev.files(c) <= cev.files for c in claimants):
+    if cev.files is not None and any(not ev.files(c) <= cev.files for c in claimants):
         return OUT_OF_REACH, "uncovered"
     for claimant, obj, _ in orders:
         if where := _reaches(cev, claimant, obj):
