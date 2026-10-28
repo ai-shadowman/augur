@@ -39,8 +39,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import edge_types, stitch, typed_extract
 from . import facts as facts_module
-from . import stitch
 from .edge_evidence import EdgeEvidence
 from .models import RepoFacts
 
@@ -78,6 +78,10 @@ VERDICT_WORKFLOW_NAME = "edge_verdicts"
 VERDICT_AFTER_WORKFLOW = "finalize_graph"
 #: The table's name in output storage, so it uploads with everything else.
 VERDICT_TABLE = "edge_verdicts"
+#: The grounded rows' type-field claims, written by the stitch and joined back
+#: onto the finalised relationships, since ``finalize_relationships`` keeps a
+#: fixed column list (:mod:`provenance.typed_extract`).
+CLAIMS_TABLE = "relationship_claims"
 
 
 def facts_path(root: str | Path) -> Path:
@@ -271,6 +275,9 @@ async def run_workflow(config, context):
         result["grounding"] = grounding.to_dict()
         await write_table_to_storage(entities, "entities", context.output_storage)
         await write_table_to_storage(relationships, "relationships", context.output_storage)
+        if edge_types.CLAIMS_COLUMN in relationships:
+            claims = relationships[["source", "target", edge_types.CLAIMS_COLUMN]]
+            await write_table_to_storage(claims, CLAIMS_TABLE, context.output_storage)
         if grounding.edge_verdicts:
             # The rows the drop removed never reach finalize_graph; the verdict
             # workflow appends the rows it finalised to these.
@@ -315,6 +322,10 @@ async def run_verdict_workflow(config, context):
     from . import edge_verdict
 
     relationships = await load_table_from_storage("relationships", context.output_storage)
+    if await storage_has_table(CLAIMS_TABLE, context.output_storage):
+        claims = await load_table_from_storage(CLAIMS_TABLE, context.output_storage)
+        relationships = with_claims(relationships, claims)
+        await write_table_to_storage(relationships, "relationships", context.output_storage)
     # Grounding left the rows it dropped here. Only those are kept, so a rerun
     # of this workflow does not append the finalised rows twice.
     dropped = []
@@ -333,6 +344,23 @@ async def run_verdict_workflow(config, context):
     return WorkflowFunctionOutput(result={"edge_verdicts": counts})
 
 
+def with_claims(relationships, claims):
+    """The finalised relationships with the grounded rows' claims and ``type`` joined on.
+
+    By ``(source, target)``, which ``finalize_relationships`` keeps unique. A
+    row the stitch did not see (none, in the product's order) gets no claims
+    and its type from the prose, as :func:`provenance.edge_types.with_type` does.
+    """
+    keyed = {(s, t): c for s, t, c in zip(claims["source"], claims["target"],
+                                          claims[edge_types.CLAIMS_COLUMN], strict=True)}
+    out = relationships.drop(columns=[edge_types.CLAIMS_COLUMN, edge_types.TYPE_COLUMN], errors="ignore")
+    out[edge_types.CLAIMS_COLUMN] = [
+        [] if (c := keyed.get((s, t))) is None or isinstance(c, float) else list(c)
+        for s, t in zip(out["source"], out["target"], strict=True)
+    ]
+    return edge_types.with_type(out)
+
+
 def install(config, method: str = "standard") -> bool:
     """Insert the stitch into ``config``'s workflow list, after ``finalize_graph``.
 
@@ -346,6 +374,9 @@ def install(config, method: str = "standard") -> bool:
 
     PipelineFactory.register(WORKFLOW_NAME, run_workflow)
     PipelineFactory.register(VERDICT_WORKFLOW_NAME, run_verdict_workflow)
+    # The type field's parser, under graphrag's own name; with a five-field
+    # prompt it extracts exactly as the stock one does, claims left empty.
+    typed_extract.register()
 
     names = list(config.workflows or PipelineFactory.pipelines.get(method, []))
     if WORKFLOW_NAME in names:

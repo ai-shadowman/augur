@@ -25,6 +25,15 @@ out in node insertion order. The description keeps it, since the prompt asks
 for ``<source> <TYPE> <target>``. :func:`subject_of` reads which column the
 claim's subject names, one line at a time, because a per-chunk merge joins
 A->B and B->A on a newline and such a row really does point both ways.
+
+**The type field, since Relationship layer Phase 9.** An index extracted by
+:mod:`provenance.typed_extract` carries a ``claims`` column: one token per
+claim the model made, its type field and its direction relative to the row's
+own columns (``IMPORTS>``: the source imports the target; ``CALLS<``: the
+target calls the source). Where a row has a valid claim, the type and subject
+are read from it and the prose is not consulted; a row without one (an
+AUGUR-written row, an index from before the field, a field outside the
+vocabulary) falls back to the description, so old indexes read as before.
 """
 
 from __future__ import annotations
@@ -81,14 +90,54 @@ def type_of(description: str | None) -> str:
     return next((t for t in PRECEDENCE + AUGUR_WRITTEN if t in named), UNTYPED)
 
 
-def with_type(relationships: Any) -> Any:
-    """A copy of a relationships frame with the derived ``type`` column added.
+#: The column :mod:`provenance.typed_extract` writes, and its direction marks.
+CLAIMS_COLUMN = "claims"
+FORWARD, BACKWARD = ">", "<"
 
+
+def claims_of(value: Any) -> list[tuple[str, str]]:
+    """The valid ``(type, direction)`` claims in one ``claims`` cell.
+
+    A cell is a list or array of tokens, or missing (``None``, NaN) on a row
+    the model did not write. A field outside the prompt's vocabulary is not a
+    claim: the model was offered seven types, and an eighth says nothing.
+    """
+    if value is None or isinstance(value, float | str):
+        return []
+    found = []
+    for token in value:
+        token = str(token)
+        claimed, direction = token[:-1], token[-1:]
+        if direction in (FORWARD, BACKWARD) and claimed in PRECEDENCE:
+            found.append((claimed, direction))
+    return found
+
+
+def claimed_type(value: Any) -> str | None:
+    """The most specific valid claimed type, or ``None`` with none."""
+    named = {t for t, _ in claims_of(value)}
+    return next((t for t in PRECEDENCE if t in named), None)
+
+
+def claimed_subject(value: Any) -> str | None:
+    """Which column the chosen type's claims make the subject, or ``None``."""
+    chosen = claimed_type(value)
+    if chosen is None:
+        return None
+    sides = {SOURCE if d == FORWARD else TARGET for t, d in claims_of(value) if t == chosen}
+    return sides.pop() if len(sides) == 1 else BOTH
+
+
+def with_type(relationships: Any) -> Any:
+    """A copy of a relationships frame with the ``type`` column added.
+
+    From the claims where a row has a valid one, else from the description.
     Takes and returns a pandas DataFrame; pandas is not imported here so the
     module stays importable where the test suite stubs it.
     """
     out = relationships.copy()
-    out[TYPE_COLUMN] = [type_of(d) for d in out["description"]]
+    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out)
+    out[TYPE_COLUMN] = [claimed_type(c) or type_of(d) for c, d in zip(claims, out["description"], strict=True)]
     return out
 
 
@@ -169,8 +218,9 @@ def subject_of(source: str, target: str, description: str | None) -> str:
 def with_subject(relationships: Any) -> Any:
     """A copy of a relationships frame with the derived ``subject`` column added."""
     out = relationships.copy()
+    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out)
     out[SUBJECT_COLUMN] = [
-        subject_of(s, t, d)
-        for s, t, d in zip(out["source"], out["target"], out["description"], strict=True)
+        claimed_subject(c) or subject_of(s, t, d)
+        for s, t, d, c in zip(out["source"], out["target"], out["description"], claims, strict=True)
     ]
     return out

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .edge_types import CLAIMS_COLUMN
 from .grounding_report import GroundingReport
 
 
@@ -181,7 +182,8 @@ def merge_duplicate_edges(relationships, report: GroundingReport):
     degree. 71 pairs on the celery 120b arm.
 
     Merged the way graphrag merges a pair across chunks: descriptions joined
-    on a newline, chunks unioned, weights summed. Orientation counts, as it
+    on a newline, chunks unioned, weights summed, and the type field's claims
+    (:mod:`provenance.typed_extract`) unioned. Orientation counts, as it
     does in ``finalize_relationships``.
     """
     if relationships is None or not len(relationships):
@@ -201,6 +203,9 @@ def merge_duplicate_edges(relationships, report: GroundingReport):
             frame.at[keep, "text_unit_ids"] = _union_ids(group["text_unit_ids"])
         if "weight" in frame:
             frame.at[keep, "weight"] = float(group["weight"].fillna(0).sum())
+        if CLAIMS_COLUMN in frame:
+            # Relative to the pair's columns, which every row of the group shares.
+            frame.at[keep, CLAIMS_COLUMN] = _union_ids(group[CLAIMS_COLUMN])
         drop.extend(rest)
     report.duplicate_edges_merged += len(drop)
     return frame.drop(index=drop).reset_index(drop=True)
