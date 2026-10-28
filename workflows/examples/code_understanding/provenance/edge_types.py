@@ -136,7 +136,7 @@ def with_type(relationships: Any) -> Any:
     module stays importable where the test suite stubs it.
     """
     out = relationships.copy()
-    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out)
+    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out["description"])
     out[TYPE_COLUMN] = [claimed_type(c) or type_of(d) for c, d in zip(claims, out["description"], strict=True)]
     return out
 
@@ -218,7 +218,7 @@ def subject_of(source: str, target: str, description: str | None) -> str:
 def with_subject(relationships: Any) -> Any:
     """A copy of a relationships frame with the derived ``subject`` column added."""
     out = relationships.copy()
-    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out)
+    claims = out[CLAIMS_COLUMN] if CLAIMS_COLUMN in out else [None] * len(out["description"])
     out[SUBJECT_COLUMN] = [
         claimed_subject(c) or subject_of(s, t, d)
         for s, t, d, c in zip(out["source"], out["target"], out["description"], claims, strict=True)

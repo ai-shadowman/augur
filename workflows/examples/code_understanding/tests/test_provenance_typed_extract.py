@@ -12,13 +12,23 @@ and subject read from claims, grounding's duplicate merge, the join after
 """
 
 import asyncio
-import importlib.util
+import importlib.metadata
 import unittest
 
 from provenance import edge_types, typed_extract
 from provenance.grounding_report import GroundingReport
 
-HAS_GRAPHRAG = importlib.util.find_spec("graphrag") is not None
+
+def _graphrag_installed() -> bool:
+    """From the distribution's metadata: other test modules stub ``graphrag`` in sys.modules."""
+    try:
+        importlib.metadata.version("graphrag")
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+HAS_GRAPHRAG = _graphrag_installed()
 SEP = "\x1f"
 
 
