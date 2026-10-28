@@ -77,6 +77,8 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
 logger = logging.getLogger(__name__)
 
 CALLS = "CALLS"
+#: Local aliases followed in a row (``a = b; b = c`` inside one function).
+MAX_ALIAS_HOPS = 4
 
 _COMPREHENSIONS = frozenset({"list_comprehension", "set_comprehension", "dictionary_comprehension",
                              "generator_expression"})
@@ -345,8 +347,12 @@ class CallResolver:
                 return ct.declined(ct.LITERAL, f"{written} is a method of a literal")
         if fn.type not in ("identifier", "attribute") or not _DOTTED.fullmatch(written):
             return ct.declined(ct.DYNAMIC, f"{written} is an expression, not a name")
-        head, _, rest = written.partition(".")
+        return self._named(f, written, scopes, line)
 
+    def _named(self, f: _File, written: str, scopes: tuple[Scope, ...], line: int | None,
+               depth: int = 0) -> ct.Landing:
+        """A dotted name looked up through ``scopes``, innermost first."""
+        head, _, rest = written.partition(".")
         for i in range(len(scopes) - 1, -1, -1):
             scope = scopes[i]
             if scope.kind == CLASS_SCOPE:
@@ -361,6 +367,10 @@ class CallResolver:
                 break
             if head == scope.receiver and scope.cls:
                 return self._receiver(scope.cls, rest, written)
+            if head in scope.aliases and depth < MAX_ALIAS_HOPS:
+                # The right side is read in the scope that binds the alias.
+                target = ".".join(p for p in (scope.aliases[head], rest) if p)
+                return self._named(f, target, scopes[: i + 1], line, depth + 1)
             if head in scope.bound:
                 return ct.declined(ct.LOCAL, f"{head} is bound inside the caller")
             if head in scope.imports:

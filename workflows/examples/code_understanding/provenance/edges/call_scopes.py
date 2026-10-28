@@ -8,6 +8,7 @@ than letting it fall through to a module-level declaration it does not mean.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,9 @@ class Scope:
     #: A Python 2 list comprehension, which is no scope: a class body around
     #: it still encloses it.
     transparent: bool = False
+    #: Names bound once, by ``name = dotted.name`` and nothing else, to that
+    #: right side: ``Req = Request`` then ``Req(...)`` calls ``Request``.
+    aliases: dict[str, str] = field(default_factory=dict)
 
 
 
@@ -130,6 +134,9 @@ def bind_body(resolver, f, body: Node | None, scope: Scope) -> set[str]:
     variable leaks into the function.
     """
     rebound: set[str] = set()
+    params = set(scope.bound)
+    times: Counter = Counter()
+    simple: dict[str, str] = {}
     stack = list(body.named_children) if body is not None else []
     while stack:
         node = stack.pop()
@@ -139,27 +146,41 @@ def bind_body(resolver, f, body: Node | None, scope: Scope) -> set[str]:
             node = node.child_by_field_name("definition") or node
             kind = node.type
         if kind in ("function_definition", "class_definition"):
-            rebound.add(node_text(node.child_by_field_name("name")))
+            rebound.add(name := node_text(node.child_by_field_name("name")))
+            times[name] += 1
             stack.extend(c for c in node.named_children if c.type in ("parameters", "argument_list"))
             continue
         if kind == "lambda":
             continue
         if kind in ("assignment", "augmented_assignment", "for_statement", "for_in_clause"):
-            rebound |= _target_names(node.child_by_field_name("left"))
+            left = node.child_by_field_name("left")
+            names = _target_names(left)
+            rebound |= names
+            times.update(names)
+            right = node.child_by_field_name("right")
+            if (kind == "assignment" and left is not None and left.type == "identifier"
+                    and right is not None and right.type in ("identifier", "attribute")):
+                simple[node_text(left)] = " ".join(node_text(right).split())
         elif kind == "as_pattern_target" or kind == "case_pattern":
-            rebound |= _identifiers(node, stop=set()) if kind == "case_pattern" else _target_names(node)
+            names = _identifiers(node, stop=set()) if kind == "case_pattern" else _target_names(node)
+            rebound |= names
+            times.update(names)
         elif kind == "except_clause" and len(values := node.children_by_field_name("value")) > 1:
-            rebound |= _target_names(values[1])
+            rebound |= (names := _target_names(values[1]))
+            times.update(names)
         elif kind == "named_expression" and (name := node.child_by_field_name("name")):
-            rebound |= _target_names(name)
+            rebound |= (names := _target_names(name))
+            times.update(names)
         elif kind == "delete_statement":
-            rebound |= {n for c in node.named_children for n in _target_names(c)}
+            rebound |= (names := {n for c in node.named_children for n in _target_names(c)})
+            times.update(names)
         elif kind in ("global_statement", "nonlocal_statement"):
             names = {node_text(c) for c in node.named_children if c.type == "identifier"}
             if kind == "global_statement":
                 scope.globals |= names
             else:
                 rebound |= names
+                times.update(names)
         elif kind == "exec_statement":
             scope.opaque = True
         elif kind in ("import_statement", "import_from_statement", "future_import_statement"):
@@ -169,6 +190,11 @@ def bind_body(resolver, f, body: Node | None, scope: Scope) -> set[str]:
     rebound -= scope.globals
     scope.bound |= rebound
     scope.bound -= scope.globals
+    scope.aliases = {
+        n: r for n, r in simple.items()
+        if times[n] == 1 and n not in params and n not in scope.globals and n not in scope.imports
+        and r.split(".", 1)[0] != n and not scope.opaque
+    }
     return rebound
 
 

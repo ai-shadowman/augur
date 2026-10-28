@@ -37,11 +37,9 @@ WHY_SKIPPED = f"no celery 2.5.5 checkout at {CELERY}"
 CELERY_SITES = 12360
 CELERY_AST_SITES = 7253
 CELERY_CATEGORIES = {
-    "internal": 2987, "external": 1419, "builtin": 1635, "local": 2460, "self-attribute": 887,
-    "attribute": 52, "dynamic": 340, "literal": 84, "binding": 615, "star": 90, "unbound": 1,
-    "inherited": 1763, "ambiguous": 17, "import": 3, "module": 0, "not-declared": 7,
+    "internal": 2994, "external": 1424, "builtin": 1635, "local": 2320, "self-attribute": 996, "attribute": 52, "dynamic": 340, "literal": 84, "binding": 617, "star": 90, "unbound": 1, "inherited": 1763, "ambiguous": 18, "import": 19, "module": 0, "not-declared": 7,
 }
-CELERY_INTERNAL_PAIRS = 2328
+CELERY_INTERNAL_PAIRS = 2334
 
 
 def calls_of(files: dict, path: str) -> list:
@@ -152,6 +150,16 @@ CASES = [
     ("abstract method", {"m.py": "class C(object):\n    def a(self):\n        self.b()\n"},
      "m.py", "self.b", ct.NOT_DECLARED, None),
     ("attribute of a function", {"m.py": "def f(): pass\nf.delay()\n"}, "m.py", "f.delay", ct.ATTRIBUTE, None),
+    ("a local alias is followed", {"m.py": "class Request(object): pass\ndef f():\n    Req = Request\n    Req()\n"},
+     "m.py", "Req", INTERNAL, "m.request"),
+    ("an alias of a method through self",
+     {"m.py": "class C(object):\n    def run(self): pass\n    def go(self):\n        fn = self.run\n        fn()\n"},
+     "m.py", "fn", INTERNAL, "m.c.run"),
+    ("an alias bound twice is a local",
+     {"m.py": "class A(object): pass\nclass B(object): pass\ndef f(x):\n    k = A\n    if x:\n        k = B\n    k()\n"},
+     "m.py", "k", ct.LOCAL, None),
+    ("an alias of a parameter is a local",
+     {"m.py": "def f(cls):\n    k = cls\n    k()\n"}, "m.py", "k", ct.LOCAL, None),
     # From the adversarial review, 2026-10-28: each was a confident wrong edge.
     ("an instance attribute set in a base shadows a subclass method",
      {"m.py": "class B(object):\n    def __init__(self):\n        self.run = None\n"
