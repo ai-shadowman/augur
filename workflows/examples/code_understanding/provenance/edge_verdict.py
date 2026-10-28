@@ -20,8 +20,8 @@ wrote lands in exactly one bucket:
 ``unchecked``    a would-be contradiction beside an unresolved oracle edge:
                  the oracle declined, so it did not say no.
 
-Only ``IMPORTS`` and ``INHERITS`` are checkable, since only those have an
-oracle. A row is oriented claimant to object by
+``IMPORTS`` and ``INHERITS`` are checkable in four dialects, and ``CALLS``
+in Python, by :mod:`provenance.call_verdict`; nothing else has an oracle. A row is oriented claimant to object by
 :func:`provenance.edge_types.subject_of`; when that says ``unknown`` or
 ``both`` either orientation is accepted and the reason says ``unoriented``.
 
@@ -35,13 +35,16 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from . import edge_types
+from . import call_verdict, edge_types
+from .call_verdict import CALLS
 from .corpus import canonical_key, dotted_key
 from .dialects import dialect_for
 from .edge_evidence import EdgeEvidence
 from .edges import IMPORTS, INHERITS
 
-CHECKABLE = (IMPORTS, INHERITS)
+#: CALLS is Python only, and only where the facts carry the call evidence;
+#: :mod:`provenance.call_verdict` says why for every other row.
+CHECKABLE = (IMPORTS, INHERITS, CALLS)
 CONFIRMED, CONTRADICTED, OUT_OF_REACH, UNCHECKED = (
     "confirmed", "contradicted", "out-of-reach", "unchecked",
 )
@@ -66,6 +69,10 @@ TABLE_COLUMNS = ("id", "source", "target", edge_types.TYPE_COLUMN,
 #: pair or its files; so do ``unchecked`` and ``out-of-reach``, which were
 #: never contradictions.
 DROPPED_REASONS = ("reversed", "same-file", "no-edge")
+#: The types grounding drops from. A CALLS contradiction is reported and kept,
+#: decided 2026-10-28: its oracle is the newest, and its absences rest on a
+#: call graph with more blind spots than an import graph.
+DROPPED_TYPES = (IMPORTS, INHERITS)
 
 #: The side table's flag for a row grounding removed. Such a row has no
 #: finalised ``id``, so it carries its description instead, which is
@@ -264,8 +271,10 @@ def _ground(ev: EdgeEvidence, kind: str, source: str, target: str,
 
 def verdict(ev: EdgeEvidence, kind: str, source: str, target: str, subject: str) -> tuple[str, str]:
     """``(verdict, reason)`` for one edge of type ``kind``."""
-    if kind not in CHECKABLE:
+    if kind not in CHECKABLE or (kind == CALLS and not ev.calls):
         return OUT_OF_REACH, "type"
+    if kind == CALLS:
+        return call_verdict.verdict(ev, ev.calls, source, target, subject)
     ks, kt = _ground(ev, kind, source, target, subject)
     fs, ft = ev.title_files(source, ks), ev.title_files(target, kt)
     if subject == edge_types.TARGET:
@@ -381,7 +390,8 @@ def judge(relationships: Any, facts: Any, report: Any) -> Any:
     scored = record(relationships, facts, report)
     if scored is None:
         return relationships
-    drop = (scored[VERDICT_COLUMN] == CONTRADICTED) & scored[REASON_COLUMN].isin(DROPPED_REASONS)
+    drop = ((scored[VERDICT_COLUMN] == CONTRADICTED) & scored[REASON_COLUMN].isin(DROPPED_REASONS)
+            & scored[edge_types.TYPE_COLUMN].isin(DROPPED_TYPES))
     if not drop.any():
         return relationships
     dropped = scored.loc[drop]

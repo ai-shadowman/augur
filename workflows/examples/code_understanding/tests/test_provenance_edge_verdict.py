@@ -575,10 +575,12 @@ class TestDrop(unittest.TestCase):
 
 #: ``run -> (confirmed, contradicted, out-of-reach, unchecked)`` over the
 #: model's rows of the grounded arm, as the harness reported them. Grounding
-#: drops the contradictions it can (4 and 10 before the drop), so none is left.
+#: drops the IMPORTS and INHERITS contradictions it can (4 and 9), so what is
+#: left is the one kept INHERITS row and the CALLS contradictions, which are
+#: reported and never dropped (12 and 6). MANIFEST, Relationship layer Phase 8.
 PINNED = {
-    "parser-full-120b": (848, 0, 3096, 2),
-    "parser-full-120b-typed": (880, 1, 2040, 4),
+    "parser-full-120b": (1359, 6, 2441, 140),
+    "parser-full-120b-typed": (1469, 13, 1324, 119),
 }
 
 

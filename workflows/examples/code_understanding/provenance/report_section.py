@@ -151,7 +151,8 @@ def render(table: Any) -> str:
         "Built from `output/edge_verdicts` by counting, with no model call. Each "
         "relationship the extraction model wrote was compared with what a parser "
         "reads from the source, where a parser can read it: "
-        + " and ".join(CHECKABLE) + " only.",
+        + ", ".join(CHECKABLE[:-1]) + " and " + CHECKABLE[-1] + " only, and CALLS in "
+        "Python only. A CALLS contradiction is reported here and kept in the graph.",
         "",
         f"The model wrote **{total}** relationships: {split[CONFIRMED]} confirmed "
         f"({_share(split[CONFIRMED], total)}), {split[CONTRADICTED]} contradicted, "

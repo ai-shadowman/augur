@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from . import imports, symbols
+from .call_evidence import CallEvidence
 from .corpus import canonical_key, dotted_key
 from .declarations import module_key, namespace_for
 from .dialects import dialect_for
@@ -276,7 +277,10 @@ class EdgeEvidence:
                  ambiguous: Iterable[str] = (), binders: dict[str, Iterable[str]] | None = None,
                  nesting: dict[str, dict[str, list[str]]] | None = None,
                  modules: dict[str, Iterable[str]] | None = None,
-                 mixins: dict[str, Iterable[str]] | None = None):
+                 mixins: dict[str, Iterable[str]] | None = None, calls: dict[str, Any] | None = None):
+        #: The CALLS oracle's evidence, travelling with the rest; empty for facts
+        #: written before 2026-10-28, which leaves CALLS out of reach by type.
+        self.calls = CallEvidence.from_dict(calls)
         self.namespaces: dict[str, str] = dict(namespaces or {})
         self.opaque: frozenset[str] = frozenset(opaque)
         self.ambiguous: frozenset[str] = frozenset(ambiguous)
@@ -344,7 +348,8 @@ class EdgeEvidence:
         inventory = Inventory(checkout_files(root), root)
         scan = scan_checkout(root, inventory)
         rows = [(e.kind, e.source, e.target, e.target_class, e.path) for e in scan.edges]
-        return cls(rows, **node_files(root, inventory, scan.edges)._asdict())
+        calls = CallEvidence.from_checkout(root).to_dict()
+        return cls(rows, **node_files(root, inventory, scan.edges)._asdict(), calls=calls)
 
     def __bool__(self) -> bool:
         return bool(self.edges)
@@ -360,6 +365,7 @@ class EdgeEvidence:
             "nesting": {p: dict(sorted(n.items())) for p, n in sorted(self.nesting.items())},
             "modules": {k: sorted(v) for k, v in sorted(self.modules.items())},
             "mixins": {p: sorted(v) for p, v in sorted(self.mixins.items())},
+            "calls": self.calls.to_dict(),
         }
 
     @classmethod
@@ -369,7 +375,7 @@ class EdgeEvidence:
         return cls((tuple(e) for e in data.get("edges", ())), data.get("node_files", {}),
                    data.get("namespaces", {}), data.get("opaque", ()), data.get("ambiguous", ()),
                    data.get("binders", {}), data.get("nesting", {}), data.get("modules", {}),
-                   data.get("mixins", {}))
+                   data.get("mixins", {}), data.get("calls"))
 
     @classmethod
     def merge(cls, parts: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -383,8 +389,9 @@ class EdgeEvidence:
         nesting: dict[str, dict[str, list[str]]] = {}
         modules: dict[str, set[str]] = collections.defaultdict(set)
         mixins: dict[str, set[str]] = collections.defaultdict(set)
+        parts = [part or {} for part in parts]
+        calls = CallEvidence.merge(part.get("calls") for part in parts)
         for part in parts:
-            part = part or {}
             edges.update(tuple(e) for e in part.get("edges", ()))
             for key, paths in part.get("node_files", {}).items():
                 files[key].update(paths)
@@ -399,7 +406,7 @@ class EdgeEvidence:
             for path, names in part.get("mixins", {}).items():
                 mixins[path].update(names)
         return cls(edges, files, namespaces, opaque, ambiguous, binders, nesting, modules,
-                   mixins).to_dict()
+                   mixins, calls).to_dict()
 
     def imported_from(self, path: str):
         """``(target key, kinds)`` for every internal edge ``path`` states."""
