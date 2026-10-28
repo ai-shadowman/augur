@@ -52,6 +52,7 @@ from __future__ import annotations
 import builtins
 import posixpath
 import re
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -82,6 +83,9 @@ if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
 PYTHON2_BUILTINS = frozenset({
     "StandardError", "basestring", "unicode", "long", "file", "buffer", "xrange",
 })
+
+#: What a base may name in this file: a class. A call's head may name more.
+_BASE_KINDS = frozenset({CLASS})
 
 _DOTTED = re.compile(r"[^\W\d]\w*(?:\.[^\W\d]\w*)*")
 
@@ -186,6 +190,22 @@ def _other_bindings(root: Node, python2: bool = False) -> set[str]:
         inside = in_scope or kind in ("function_definition", "class_definition", "lambda")
         stack.extend((child, inside) for child in node.named_children)
     return found
+
+
+@dataclass
+class FileBindings:
+    """What one file's module-level imports bind, read once."""
+
+    mode: str
+    used_ast: bool
+    tree: Node
+    imports: set[ImportCapture]
+    #: Name to every ``(resolution, absolute module name, imported name)`` an
+    #: import binds it to; the imported name is ``""`` for ``import a.b``.
+    bound: dict[str, list[tuple[Resolution, str | None, str]]] = field(default_factory=dict)
+    #: ``(written, resolution, absolute module name)`` per star import.
+    stars: list[tuple[str, Resolution, str | None]] = field(default_factory=list)
+    edges: set[Edge] = field(default_factory=set)
 
 
 class PythonResolver:
@@ -328,11 +348,15 @@ class PythonResolver:
 
     # ------------------------------------------------------------------- edges
 
-    def edges(self, path: str, source: str) -> tuple[set[Edge], bool]:
-        """Every IMPORTS and INHERITS edge one file states, and whether ``ast`` read it."""
+    def bindings(self, path: str, source: str) -> FileBindings:
+        """The names one file's imports bind at module level, and the IMPORTS edges they state.
+
+        Shared by :meth:`edges` and the CALLS walk in :mod:`.calls`, which
+        resolves a call's head through the same bindings a base resolves
+        through, so the two cannot disagree about what a name holds.
+        """
         self._importer = path
         imports, used_ast = import_captures_in(source, PYTHON)
-        bases, _ = base_captures_in(source, PYTHON)
         tree = parse(source, PYTHON).root_node
         file_key = dotted_key(module_key(path))
         if any(c.written == "__future__" and any(n == "absolute_import" for n, _ in c.names)
@@ -343,26 +367,37 @@ class PythonResolver:
         else:
             mode = UNKNOWN
 
-        edges: set[Edge] = set()
-        bound: dict[str, list[tuple[Resolution, str | None, str]]] = {}
-        stars: list[tuple[str, Resolution, str | None]] = []
+        found = FileBindings(mode, used_ast, tree, imports)
         for capture in sorted(imports, key=_order):
-            resolved, name = self._import(capture, path, mode, file_key, edges)
+            resolved, name = self._import(capture, path, mode, file_key, found.edges)
             if capture.scoped:
                 continue
-            if not capture.names:
-                # ``import a.b`` binds ``a``; ``import a.b as x`` binds ``x``.
-                if capture.alias:
-                    bound.setdefault(capture.alias, []).append((resolved, name, ""))
-                else:
-                    top, top_name = self.absolute(capture.written.split(".", 1)[0], path, mode)
-                    bound.setdefault(capture.written.split(".", 1)[0], []).append((top, top_name, ""))
-                continue
-            for imported, alias in capture.names:
-                if imported == "*":
-                    stars.append((capture.written, resolved, name))
-                else:
-                    bound.setdefault(alias or imported, []).append((resolved, name, imported))
+            self.bind(capture, resolved, name, path, mode, found.bound, found.stars)
+        return found
+
+    def bind(self, capture: ImportCapture, resolved: Resolution, name: str | None, path: str,
+             mode: str, bound: dict, stars: list) -> None:
+        """Record what one resolved import binds, into ``bound`` and ``stars``."""
+        if not capture.names:
+            # ``import a.b`` binds ``a``; ``import a.b as x`` binds ``x``.
+            if capture.alias:
+                bound.setdefault(capture.alias, []).append((resolved, name, ""))
+            else:
+                top, top_name = self.absolute(capture.written.split(".", 1)[0], path, mode)
+                bound.setdefault(capture.written.split(".", 1)[0], []).append((top, top_name, ""))
+            return
+        for imported, alias in capture.names:
+            if imported == "*":
+                stars.append((capture.written, resolved, name))
+            else:
+                bound.setdefault(alias or imported, []).append((resolved, name, imported))
+
+    def edges(self, path: str, source: str) -> tuple[set[Edge], bool]:
+        """Every IMPORTS and INHERITS edge one file states, and whether ``ast`` read it."""
+        found = self.bindings(path, source)
+        edges, used_ast, tree, mode = found.edges, found.used_ast, found.tree, found.mode
+        bound, stars = found.bound, found.stars
+        bases, _ = base_captures_in(source, PYTHON)
 
         if bases:
             namespace = namespace_for(path, source, PYTHON)
@@ -394,7 +429,8 @@ class PythonResolver:
                     IMPORTS, file_key, f"{capture.written}{joiner}{imported}", path))
         return resolved, name
 
-    def _base(self, owner, written, namespace, symbols, other, bound, stars) -> Resolution:
+    def _base(self, owner, written, namespace, symbols, other, bound, stars,
+              accept: frozenset[str] = _BASE_KINDS) -> Resolution:
         if not _DOTTED.fullmatch(written):
             return unresolved("base is an expression, not a name")
         head, _, rest = written.partition(".")
@@ -404,7 +440,7 @@ class PythonResolver:
         # including a star import, and then the module.
         enclosing = owner.rpartition(".")[0]
         if enclosing and f"{enclosing}.{head}" in symbols:
-            return self._local(f"{enclosing}.{head}", head, rest, namespace, symbols)
+            return self._local(f"{enclosing}.{head}", head, rest, namespace, symbols, accept)
 
         starred: list[Resolution] = []
         for star_written, resolved, name in stars:
@@ -424,7 +460,7 @@ class PythonResolver:
         if head in symbols:
             if head in bound or head in other:
                 return unresolved(f"{head} is bound both in this file and by an import or another statement")
-            return self._local(head, head, rest, namespace, symbols)
+            return self._local(head, head, rest, namespace, symbols, accept)
 
         if head in other:
             return unresolved(f"{head} is bound by a for, with, except or global statement")
@@ -437,10 +473,12 @@ class PythonResolver:
             return Resolution(EXTERNAL, dotted_key(written))
         return unresolved(f"{head} is not bound in this file")
 
-    def _local(self, local: str, head: str, rest: str, namespace: str, symbols) -> Resolution:
-        if symbols[local] != {CLASS}:
-            kinds = " and a ".join(sorted(symbols[local] - {CLASS})) or "class"
-            return unresolved(f"{head} is a {kinds} here, and what it holds is not syntax")
+    def _local(self, local: str, head: str, rest: str, namespace: str, symbols,
+               accept: frozenset[str] = _BASE_KINDS) -> Resolution:
+        kinds = symbols[local]
+        if len(kinds) != 1 or not kinds <= accept:
+            held = " and a ".join(sorted(kinds - {CLASS} if accept == _BASE_KINDS else kinds)) or "class"
+            return unresolved(f"{head} is a {held} here, and what it holds is not syntax")
         return Resolution(INTERNAL, dotted_key(".".join(p for p in (namespace, local, rest) if p)))
 
     def _through(self, resolved: Resolution, name: str | None, imported: str, rest: str) -> Resolution:
