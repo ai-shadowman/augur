@@ -24,12 +24,14 @@ from pathlib import Path
 from typing import Any
 
 from . import edge_types
+from .call_verdict import CALLS
 from .edge_verdict import (
     CHECKABLE,
     CONFIRMED,
     CONTRADICTED,
     DROPPED_COLUMN,
     DROPPED_REASONS,
+    DROPPED_TYPES,
     OUT_OF_REACH,
     REASON_COLUMN,
     UNCHECKED,
@@ -199,13 +201,21 @@ def render(table: Any) -> str:
             "",
         ]
     if len(kept):
-        outright = set(kept[REASON_COLUMN]) & set(DROPPED_REASONS)
+        types, reasons = kept[edge_types.TYPE_COLUMN], kept[REASON_COLUMN]
+        droppable = types.isin(DROPPED_TYPES) & reasons.isin(DROPPED_REASONS)
+        calls = types == CALLS
+        why = []
+        if droppable.any():
+            why.append("The source contradicts these as claimed, and the index predates the drop, "
+                       "so they are still in the graph.")
+        if calls.any():
+            why.append(f"{int(calls.sum())} are CALLS, which are reported and never dropped: the "
+                       "call graph a parser reads has more blind spots than the import graph.")
+        if (~droppable & ~calls).any():
+            why.append("The source relates the pair or their files, just not as claimed, so the "
+                       "row stays in the graph.")
         lines += [
-            f"**Contradicted but kept: {len(kept)}.** "
-            + ("The source contradicts these as claimed, and the index predates the drop, "
-               "so they are still in the graph." if outright else
-               "The source relates the pair or their files, just not as claimed, so the "
-               "row stays in the graph."),
+            f"**Contradicted but kept: {len(kept)}.** " + " ".join(why),
             "",
             *_row_lines(kept),
             "",

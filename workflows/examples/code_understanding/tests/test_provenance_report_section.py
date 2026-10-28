@@ -181,5 +181,22 @@ class TestSectionEdges(unittest.TestCase):
         self.assertEqual(report_section.render(table), report_section.INCOMPLETE)
 
 
+class TestKeptCalls(unittest.TestCase):
+    def test_a_kept_calls_row_is_explained_by_the_decision_not_the_drop(self):
+        import pandas as pd
+
+        rows = [
+            {"id": "1", "source": "A.F", "target": "B.G", "type": "CALLS", "subject": "source",
+             "verdict": "contradicted", "reason": "no-edge", "dropped": False},
+            {"id": "2", "source": "A.C", "target": "B.D", "type": "INHERITS", "subject": "source",
+             "verdict": "contradicted", "reason": "other-type", "dropped": False},
+        ]
+        text = report_section.render(pd.DataFrame(rows))
+        self.assertIn("**Contradicted but kept: 2.**", text)
+        self.assertIn("1 are CALLS, which are reported and never dropped", text)
+        self.assertIn("just not as claimed", text)
+        self.assertNotIn("predates the drop", text)
+
+
 if __name__ == "__main__":
     unittest.main()
