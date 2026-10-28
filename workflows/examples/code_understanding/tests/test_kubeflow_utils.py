@@ -197,5 +197,102 @@ class TestKubeflowUtilsArtifactIO(unittest.TestCase):
         self.assertFalse(os.path.exists(ephemeral_dir))
 
 
+class TestOfflineImageBakedDependencies(unittest.TestCase):
+    """Verify all Python dependencies and local packages are baked into images with no runtime pip install."""
+
+    REPO_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../../.."))
+    IMAGE_NAMES = ("data-generation", "data-indexing", "data-analysis", "pipeline-tools")
+    REQUIRED_PYPROJECT_DEPS = (
+        "setuptools>=64",
+        "wheel",
+        "packaging",
+        "pip-requirements-parser>=32,<33",
+        "pathspec>=1.1.1,<2",
+        "litellm",
+    )
+
+    def test_all_kfp_components_disable_runtime_pip_installs(self):
+        """Verify every @dsl.component sets install_kfp_package=False and omits packages_to_install."""
+        import ast
+
+        kfp_files = (
+            os.path.join(BASE_DIR, "pipelines", "kubeflow", "data_generation.py"),
+            os.path.join(BASE_DIR, "pipelines", "kubeflow", "indexing.py"),
+            os.path.join(BASE_DIR, "pipelines", "kubeflow", "analysis.py"),
+        )
+        total_components = 0
+        for file_path in kfp_files:
+            with open(file_path, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=file_path)
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                for dec in node.decorator_list:
+                    if (
+                        isinstance(dec, ast.Call)
+                        and isinstance(dec.func, ast.Attribute)
+                        and dec.func.attr == "component"
+                    ):
+                        total_components += 1
+                        kw_map = {kw.arg: kw.value for kw in dec.keywords}
+                        self.assertNotIn(
+                            "packages_to_install",
+                            kw_map,
+                            f"{node.name} in {os.path.basename(file_path)} must not use packages_to_install at runtime",
+                        )
+                        self.assertIn(
+                            "install_kfp_package",
+                            kw_map,
+                            f"{node.name} in {os.path.basename(file_path)} must specify install_kfp_package=False",
+                        )
+                        self.assertIsInstance(kw_map["install_kfp_package"], ast.Constant)
+                        self.assertFalse(
+                            kw_map["install_kfp_package"].value,
+                            f"{node.name} in {os.path.basename(file_path)} must set install_kfp_package=False",
+                        )
+        self.assertEqual(total_components, 9)
+
+    def test_all_image_requirements_include_pyproject_dependencies(self):
+        """Verify each image's requirements.txt includes all pyproject.toml build and runtime dependencies."""
+        for image in self.IMAGE_NAMES:
+            req_path = os.path.join(self.REPO_ROOT, "resources", "images", image, "requirements.txt")
+            with open(req_path, "r", encoding="utf-8") as f:
+                lines = {line.strip() for line in f if line.strip() and not line.strip().startswith("#")}
+            for dep in self.REQUIRED_PYPROJECT_DEPS:
+                self.assertIn(
+                    dep,
+                    lines,
+                    f"Missing '{dep}' in resources/images/{image}/requirements.txt",
+                )
+            self.assertIn(
+                "kfp==2.17.0",
+                lines,
+                f"Missing 'kfp==2.17.0' in resources/images/{image}/requirements.txt",
+            )
+
+    def test_all_containerfiles_bake_code_understanding_offline(self):
+        """Verify each Containerfile copies workflows/examples/code_understanding and installs with --no-build-isolation --no-deps."""
+        for image in self.IMAGE_NAMES:
+            cf_path = os.path.join(self.REPO_ROOT, "resources", "images", image, "Containerfile")
+            with open(cf_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn(
+                f"resources/images/{image}/requirements.txt",
+                content,
+                f"{image}/Containerfile must copy requirements.txt from repo-root build context",
+            )
+            self.assertIn(
+                "COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding",
+                content,
+                f"{image}/Containerfile must copy workflows/examples/code_understanding into the image",
+            )
+            self.assertIn(
+                "pip install --no-build-isolation --no-deps ./workflows/examples/code_understanding",
+                content,
+                f"{image}/Containerfile must install code_understanding with --no-build-isolation --no-deps",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 ##############################################################################
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, install_kfp_package=False)
 def benchmark_llm_op(
     override_concurrency: int = 0,
     git_repo: str = "",
@@ -102,7 +102,7 @@ def benchmark_llm_op(
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, install_kfp_package=False)
 def prepare_environment_op(git_repo: str, 
     git_branch: str, 
     git_username: str, 
@@ -173,7 +173,7 @@ def prepare_environment_op(git_repo: str,
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, install_kfp_package=False)
 def generate_code_and_meta_op(
     git_repo: str, 
     git_branch: str,
@@ -387,7 +387,7 @@ def generate_code_and_meta_op(
 
 
 @inject_secret_as_env(secret_name="code-understanding-env")
-@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, install_kfp_package=False)
 def get_repo_list_op() -> list:
     """Downloads and returns the repo list from the asset loader."""
 

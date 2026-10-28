@@ -40,27 +40,27 @@ pushed and marks the workflow as failed. Closing a PR does not delete its tags.
 Failed jobs can be retried while the image artifacts are retained. After they
 expire, re-run all jobs to regenerate them.
 
-New image directories are discovered automatically and use their directory as
-the build context. `data-analysis` and `pipeline-tools` use the repository root to
-include their workflow package; add a corresponding context override in the
-discovery step for any new image that also needs files outside its own directory.
+New image directories are discovered automatically and use the repository root as
+the build context so every image can copy and pre-install the local
+`workflows/examples/code_understanding` package alongside its pinned
+`requirements.txt`.
 
 ## data-generation
 
+Build from the repository root so the Containerfile can COPY `workflows/examples/code_understanding`.
+
 ```bash
-cd data-generation
-podman build -t data-generation:latest .
-podman push localhost/data-generation:latest quay.io/ai-shadowman/data-generation:latest 
-cd ..
+podman build -f resources/images/data-generation/Containerfile -t data-generation:latest .
+podman push localhost/data-generation:latest quay.io/ai-shadowman/data-generation:latest
 ```
 
 ## data-indexing
 
+Build from the repository root so the Containerfile can COPY `workflows/examples/code_understanding`.
+
 ```bash
-cd data-indexing
-podman build -t data-indexing:latest .
-podman push localhost/data-indexing:latest quay.io/ai-shadowman/data-indexing:latest 
-cd ..
+podman build -f resources/images/data-indexing/Containerfile -t data-indexing:latest .
+podman push localhost/data-indexing:latest quay.io/ai-shadowman/data-indexing:latest
 ```
 
 ## data-analysis
@@ -93,13 +93,10 @@ podman build -f resources/images/pipeline-tools/Containerfile \
 
 ```bash
 TAG=wip
-cd resources/images/data-generation
-podman build -t data-generation:$TAG .
+podman build -f resources/images/data-generation/Containerfile -t data-generation:$TAG .
 podman push localhost/data-generation:$TAG quay.io/ai-shadowman/data-generation:$TAG
-cd ../data-indexing
-podman build -t data-indexing:$TAG .
-podman push localhost/data-indexing:$TAG quay.io/ai-shadowman/data-indexing:$TAG 
-cd ../../..
+podman build -f resources/images/data-indexing/Containerfile -t data-indexing:$TAG .
+podman push localhost/data-indexing:$TAG quay.io/ai-shadowman/data-indexing:$TAG
 podman build -f resources/images/data-analysis/Containerfile -t data-analysis:$TAG .
 podman push localhost/data-analysis:$TAG quay.io/ai-shadowman/data-analysis:$TAG
 podman build -f resources/images/pipeline-tools/Containerfile -t pipeline-tools:$TAG .
@@ -118,7 +115,7 @@ To prevent redownloading large Python packages across repeated builds:
      ```dockerfile
      ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
 
-     COPY requirements.txt ./requirements.txt
+     COPY --chown=1001:0 resources/images/<image>/requirements.txt ./requirements.txt
 
      RUN pip install --upgrade pip \
          && pip install -r requirements.txt
@@ -126,9 +123,9 @@ To prevent redownloading large Python packages across repeated builds:
    * As long as `requirements.txt` does not change, Podman reuses the cached layer (`--> Using cache <layer-id>`), completing in seconds with zero network downloads.
    * Standard Containerfile syntax is preserved (`RUN pip install ...`), ensuring 100% compatibility across all Podman/Buildah versions and OpenShift BuildConfigs.
 
-2. **Optimized Layer Caching in `data-analysis` and `pipeline-tools`**:
-   * `requirements.txt` is copied and installed **before** `workflows/examples/code_understanding` is copied.
-   * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install ./workflows/examples/code_understanding`), skipping heavy package downloads completely and rebuilding in seconds.
+2. **Optimized Layer Caching Across All Images (`data-generation`, `data-indexing`, `data-analysis`, and `pipeline-tools`)**:
+   * `requirements.txt` (including all build and runtime dependencies for `agentmesh-code-understanding`) is copied and installed **before** `workflows/examples/code_understanding` is copied.
+   * Modifying application code or notebooks only invalidates the final lightweight install step (`pip install --no-build-isolation --no-deps ./workflows/examples/code_understanding`), skipping heavy package downloads completely and rebuilding in seconds without network access.
 ## Building via OpenShift BuildConfig (Cluster-native Builds)
 
 Instead of building locally with Podman, you can offload builds to the OpenShift cluster using `BuildConfig` objects that push directly to `quay.io` using authentication secret `quay-secret`.
@@ -204,7 +201,7 @@ To ensure robust, 100% offline execution across `data-generation`, `data-indexin
    # Tiktoken offline cache setup
    ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
    RUN mkdir -p /opt/app-root/src/tiktoken_cache
-   COPY --chown=1001:0 cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+   COPY --chown=1001:0 resources/images/<image>/cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
    ```
 
 This pre-populates the cache so all subsequent pipeline steps run reliably in fully disconnected and air-gapped clusters.
