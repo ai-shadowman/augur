@@ -12,6 +12,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from utils.kubeflow_utils import (
+    inject_secret_as_env,
     read_from_input_artifact,
     write_to_output_artifact,
     use_ephemeral_space,
@@ -292,6 +293,28 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
                 content,
                 f"{image}/Containerfile must install code_understanding with --no-build-isolation --no-deps",
             )
+
+    def test_inject_secret_as_env_sets_image_pull_policy_always(self):
+        """Verify inject_secret_as_env sets imagePullPolicy to Always on the component task."""
+        mock_task = MagicMock()
+        mock_kfp_kubernetes = MagicMock()
+        mock_kfp_module = MagicMock()
+        mock_kfp_module.kubernetes = mock_kfp_kubernetes
+
+        @inject_secret_as_env(secret_name="code-understanding-env")
+        def sample_component():
+            return mock_task
+
+        with patch.dict(sys.modules, {"kfp": mock_kfp_module, "kfp.kubernetes": mock_kfp_kubernetes}):
+            result = sample_component()
+
+        self.assertIs(result, mock_task)
+        mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, "Always")
+        mock_kfp_kubernetes.use_config_map_as_volume.assert_called_once_with(
+            mock_task,
+            config_map_name="odh-trusted-ca-bundle",
+            mount_path="/etc/pki/ca-trust/extracted/pem/",
+        )
 
 
 if __name__ == "__main__":
