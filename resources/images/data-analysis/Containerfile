@@ -3,6 +3,7 @@ FROM ${BASE_IMAGE}
 
 USER 1001
 WORKDIR /opt/app-root/src
+ENV PYTHONPATH=/opt/app-root/src/workflows/examples/code_understanding
 
 # Tiktoken offline cache setup
 ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
