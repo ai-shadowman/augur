@@ -21,7 +21,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE, install_kfp_package=False)
 def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
                           git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
@@ -102,7 +102,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE, install_kfp_package=False)
 def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Dataset],
                             git_repo: str = "", git_branch: str = "",
                             multi_repo: bool = False):
@@ -188,7 +188,7 @@ def graphrag_evaluation_op(graphrag_dir: Input[Dataset], eval_results: Output[Da
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @inject_secret_as_env(secret_name="git-credentials")
-@dsl.component(base_image=INDEXING_BASE_IMAGE, packages_to_install=[_AGENTMESH_INSTALLABLE_URL])
+@dsl.component(base_image=INDEXING_BASE_IMAGE, install_kfp_package=False)
 def run_indexing_multi_repo_op(parent_target_path: str,
                                 graphrag_dir: Output[Dataset],
                                 eval_results: Output[Dataset]):

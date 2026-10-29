@@ -2,15 +2,16 @@ ARG BASE_IMAGE=quay.io/opendatahub/workbench-images:jupyter-datascience-ubi9-pyt
 FROM ${BASE_IMAGE}
 
 USER 1001
+WORKDIR /opt/app-root/src
 
 # Tiktoken offline cache setup
 ENV TIKTOKEN_CACHE_DIR=/opt/app-root/src/tiktoken_cache
 RUN mkdir -p /opt/app-root/src/tiktoken_cache
-COPY --chown=1001:0 cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+COPY --chown=1001:0 resources/images/data-indexing/cl100k_base.tiktoken /opt/app-root/src/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
 ENV PIP_CACHE_DIR=/opt/app-root/src/.cache/pip
 
-COPY requirements.txt ./requirements.txt
+COPY --chown=1001:0 resources/images/data-indexing/requirements.txt ./requirements.txt
 
 # Remove workbench-only extras from the base image that pipeline steps never use.
 # Their pins (urllib3<2, pydantic<2, protobuf<5, click==8.1.8, opentelemetry-sdk~=1.36)
@@ -19,3 +20,6 @@ RUN pip install --upgrade pip \
 	&& pip uninstall -y odh-elyra codeflare-sdk appengine-python-standard kfp-kubernetes opentelemetry-exporter-prometheus \
 	&& pip install -r requirements.txt
 
+COPY --chown=1001:0 workflows/examples/code_understanding ./workflows/examples/code_understanding
+
+RUN pip install --no-build-isolation --no-deps ./workflows/examples/code_understanding
