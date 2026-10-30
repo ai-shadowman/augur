@@ -294,8 +294,8 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
                 f"{image}/Containerfile must install code_understanding with --no-build-isolation --no-deps",
             )
 
-    def test_inject_secret_as_env_sets_image_pull_policy_always(self):
-        """Verify inject_secret_as_env sets imagePullPolicy to Always on the component task."""
+    def test_inject_secret_as_env_sets_image_pull_policy_default_if_not_present(self):
+        """Verify inject_secret_as_env defaults imagePullPolicy to IfNotPresent when IMAGE_PULL_POLICY is unset."""
         mock_task = MagicMock()
         mock_kfp_kubernetes = MagicMock()
         mock_kfp_module = MagicMock()
@@ -305,16 +305,38 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
         def sample_component():
             return mock_task
 
-        with patch.dict(sys.modules, {"kfp": mock_kfp_module, "kfp.kubernetes": mock_kfp_kubernetes}):
-            result = sample_component()
+        env_without_policy = {k: v for k, v in os.environ.items() if k != "IMAGE_PULL_POLICY"}
+        with patch.dict(os.environ, env_without_policy, clear=True):
+            with patch.dict(sys.modules, {"kfp": mock_kfp_module, "kfp.kubernetes": mock_kfp_kubernetes}):
+                result = sample_component()
 
         self.assertIs(result, mock_task)
-        mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, "Always")
+        mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, "IfNotPresent")
         mock_kfp_kubernetes.use_config_map_as_volume.assert_called_once_with(
             mock_task,
             config_map_name="odh-trusted-ca-bundle",
             mount_path="/etc/pki/ca-trust/extracted/pem/",
         )
+
+    def test_inject_secret_as_env_sets_image_pull_policy_from_env(self):
+        """Verify inject_secret_as_env reads IMAGE_PULL_POLICY from environment variables."""
+        for policy in ("Always", "IfNotPresent", "Never"):
+            with self.subTest(policy=policy):
+                mock_task = MagicMock()
+                mock_kfp_kubernetes = MagicMock()
+                mock_kfp_module = MagicMock()
+                mock_kfp_module.kubernetes = mock_kfp_kubernetes
+
+                @inject_secret_as_env(secret_name="code-understanding-env")
+                def sample_component():
+                    return mock_task
+
+                with patch.dict(os.environ, {"IMAGE_PULL_POLICY": policy}):
+                    with patch.dict(sys.modules, {"kfp": mock_kfp_module, "kfp.kubernetes": mock_kfp_kubernetes}):
+                        result = sample_component()
+
+                self.assertIs(result, mock_task)
+                mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, policy)
 
 
 if __name__ == "__main__":
