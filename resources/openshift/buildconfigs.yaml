@@ -20,11 +20,11 @@ items:
         git:
           uri: https://github.com/ai-shadowman/augur.git
           ref: main
-        contextDir: resources/images/data-generation
+        contextDir: ""
       strategy:
         type: Docker
         dockerStrategy:
-          dockerfilePath: Containerfile
+          dockerfilePath: resources/images/data-generation/Containerfile
       output:
         to:
           kind: DockerImage
@@ -56,11 +56,11 @@ items:
         git:
           uri: https://github.com/ai-shadowman/augur.git
           ref: main
-        contextDir: resources/images/data-indexing
+        contextDir: ""
       strategy:
         type: Docker
         dockerStrategy:
-          dockerfilePath: Containerfile
+          dockerfilePath: resources/images/data-indexing/Containerfile
       output:
         to:
           kind: DockerImage

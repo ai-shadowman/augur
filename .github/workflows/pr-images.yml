@@ -37,7 +37,7 @@ jobs:
               directory = containerfile.parent
               images.append({
                   'image': directory.name,
-                  'context': '.' if directory.name in ('data-analysis', 'pipeline-tools') else str(directory),
+                  'context': '.',
                   'file': str(containerfile),
               })
           if not images:

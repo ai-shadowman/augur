@@ -44,7 +44,7 @@ parameters:
 
 objects:
   # ---------------------------------------------------------------------------
-  # 1. Data Generation Image
+  # 1. Data Generation Image (Build context is repo root)
   # ---------------------------------------------------------------------------
   - apiVersion: build.openshift.io/v1
     kind: BuildConfig
@@ -60,11 +60,11 @@ objects:
         git:
           uri: ${AUGUR_GIT_REPO_URL}
           ref: ${AUGUR_GIT_REPO_BRANCH}
-        contextDir: resources/images/data-generation
+        contextDir: ""
       strategy:
         type: Docker
         dockerStrategy:
-          dockerfilePath: Containerfile
+          dockerfilePath: resources/images/data-generation/Containerfile
           buildArgs:
             - name: BASE_IMAGE
               value: ${BASE_IMAGE_DATASCIENCE}
@@ -83,7 +83,7 @@ objects:
           memory: 2Gi
 
   # ---------------------------------------------------------------------------
-  # 2. Data Indexing Image
+  # 2. Data Indexing Image (Build context is repo root)
   # ---------------------------------------------------------------------------
   - apiVersion: build.openshift.io/v1
     kind: BuildConfig
@@ -99,11 +99,11 @@ objects:
         git:
           uri: ${AUGUR_GIT_REPO_URL}
           ref: ${AUGUR_GIT_REPO_BRANCH}
-        contextDir: resources/images/data-indexing
+        contextDir: ""
       strategy:
         type: Docker
         dockerStrategy:
-          dockerfilePath: Containerfile
+          dockerfilePath: resources/images/data-indexing/Containerfile
           buildArgs:
             - name: BASE_IMAGE
               value: ${BASE_IMAGE_DATASCIENCE}

@@ -1,3 +1,8 @@
+setuptools>=64
+wheel
+packaging
+pip-requirements-parser>=32,<33
+litellm
 langchain==0.3.26
 pathspec>=1.1.1,<2
 langchain-community==0.3.26
