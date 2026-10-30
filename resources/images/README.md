@@ -45,6 +45,34 @@ the build context so every image can copy and pre-install the local
 `workflows/examples/code_understanding` package alongside its pinned
 `requirements.txt`.
 
+## Tagged release builds (GitHub Actions)
+
+The [release container images workflow](../../.github/workflows/release-images.yml)
+runs when a Git tag is pushed. It checks that the tagged commit belongs to
+`main`'s history, then builds and pushes the four images for Linux AMD64 using
+the existing `QUAY_USERNAME` and `QUAY_TOKEN` secrets. Each image uses the exact
+Git tag, for example:
+
+```text
+quay.io/ai-shadowman/data-generation:v1.0.4
+quay.io/ai-shadowman/data-indexing:v1.0.4
+quay.io/ai-shadowman/data-analysis:v1.0.4
+quay.io/ai-shadowman/pipeline-tools:v1.0.4
+```
+
+Tags must be valid container image tags. Images build and push independently;
+a failure in one image does not prevent the others from publishing. The image
+list and build contexts are defined directly in the workflow matrix.
+
+Merge the workflow into `main` before creating a release tag. To release:
+
+```bash
+git switch main
+git pull --ff-only
+git tag -a v1.0.4 -m "Release v1.0.4"
+git push origin v1.0.4
+```
+
 ## data-generation
 
 Build from the repository root so the Containerfile can COPY `workflows/examples/code_understanding`.
