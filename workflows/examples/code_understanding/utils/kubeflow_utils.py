@@ -118,6 +118,12 @@ def inject_secret_as_env(secret_name: str):
             try:
                 from kfp import kubernetes
 
+                try:
+                    image_pull_policy = os.getenv("IMAGE_PULL_POLICY") or "IfNotPresent"
+                    kubernetes.set_image_pull_policy(task, image_pull_policy)
+                except Exception as e:
+                    logging.error(f"KFP set_image_pull_policy failed: {e}")
+
                 keys = read_secret_keys()
                 if keys:
                     kubernetes.use_secret_as_env(
