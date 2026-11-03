@@ -24,6 +24,17 @@ spec:
       name: tempo-s3-secret
       type: s3
   storageSize: {{ .Values.otel.tempo.storageSize }}
+  retention:
+    global:
+      traces: {{ .Values.otel.tempo.retention | default "90d" }}
+  template:
+    queryFrontend:
+      jaegerQuery:
+        enabled: true
+        ingress:
+          type: route
+          route:
+            termination: edge
 ---
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector

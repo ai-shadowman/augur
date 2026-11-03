@@ -82,4 +82,4 @@ otel:
   tempo:
     bucket: tempo
     storageSize: 10Gi
-
+    retention: 90d
