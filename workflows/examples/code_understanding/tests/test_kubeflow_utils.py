@@ -320,6 +320,10 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
         mock_task.set_env_variable.assert_any_call("KFP_RUN_ID", "{{$.pipeline_job_uuid}}")
         mock_task.set_env_variable.assert_any_call("KFP_RUN_NAME", "{{$.pipeline_job_name}}")
         mock_task.set_env_variable.assert_any_call("KFP_TASK_NAME", "{{$.pipeline_task_name}}")
+        mock_task.set_env_variable.assert_any_call(
+            "OTEL_RESOURCE_ATTRIBUTES",
+            "kfp.run_id={{$.pipeline_job_uuid}},kfp.run_name={{$.pipeline_job_name}},kfp.task_name={{$.pipeline_task_name}}",
+        )
 
     def test_inject_secret_as_env_sets_image_pull_policy_from_env(self):
         """Verify inject_secret_as_env reads IMAGE_PULL_POLICY from environment variables."""

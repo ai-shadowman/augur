@@ -120,7 +120,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
 
     @classmethod
     def _configure_otel_resource_attributes(cls) -> Dict[str, str]:
-        """Merges resolved KFP/pod metadata into OTEL_RESOURCE_ATTRIBUTES."""
+        """Merges resolved KFP/pod metadata into OTEL_RESOURCE_ATTRIBUTES and active OTel TracerProviders."""
         meta = cls._resolve_kfp_metadata()
         if not meta:
             return {}
@@ -132,14 +132,75 @@ class MlFlowCustomTelemetry(CustomTelemetry):
                 item = item.strip()
                 if "=" in item:
                     k, v = item.split("=", 1)
-                    attrs[k.strip()] = v.strip()
+                    cleaned_v = cls._clean_placeholder(v)
+                    if cleaned_v:
+                        attrs[k.strip()] = cleaned_v
 
         for k, v in meta.items():
             safe_val = v.replace(",", "_").replace("=", "_").strip()
-            if safe_val and k not in attrs:
+            if safe_val:
                 attrs[k] = safe_val
 
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(f"{k}={v}" for k, v in attrs.items())
+
+        # Also patch any already-initialized OpenTelemetry TracerProvider and attach a SpanProcessor
+        # so KFP metadata is present on both Resource (resource.kfp.run_id) and Span (.kfp.run_id)
+        try:
+            from opentelemetry import trace as otel_trace
+            from opentelemetry.sdk.resources import Resource
+            from opentelemetry.sdk.trace import SpanProcessor
+
+            class _KfpMetadataSpanProcessor(SpanProcessor):
+                def __init__(self, attributes: Dict[str, str]):
+                    self._attributes = dict(attributes)
+
+                def on_start(self, span, parent_context=None):
+                    for attr_k, attr_v in self._attributes.items():
+                        try:
+                            span.set_attribute(attr_k, attr_v)
+                        except Exception:
+                            pass
+
+                def on_end(self, span):
+                    pass
+
+                def shutdown(self):
+                    pass
+
+                def force_flush(self, timeout_millis: int = 30000) -> bool:
+                    return True
+
+            providers = [otel_trace.get_tracer_provider()]
+            try:
+                from mlflow.tracing.provider import _get_tracer
+                mlflow_tracer = _get_tracer(__name__)
+                for candidate in (
+                    getattr(mlflow_tracer, "tracer_provider", None),
+                    getattr(getattr(mlflow_tracer, "_tracer", None), "tracer_provider", None),
+                ):
+                    if candidate is not None and candidate not in providers:
+                        providers.append(candidate)
+            except Exception:
+                pass
+
+            extra_resource = Resource.create(attrs)
+            for provider in providers:
+                if provider is None:
+                    continue
+                if hasattr(provider, "_resource") and provider._resource is not None:
+                    try:
+                        provider._resource = provider._resource.merge(extra_resource)
+                    except Exception:
+                        pass
+                if hasattr(provider, "add_span_processor") and not getattr(provider, "_kfp_metadata_attached", False):
+                    try:
+                        provider.add_span_processor(_KfpMetadataSpanProcessor(attrs))
+                        setattr(provider, "_kfp_metadata_attached", True)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logging.debug(f"MlFlowCustomTelemetry: optional OTel provider resource patch skipped: {e}")
+
         logging.info(
             f"MlFlowCustomTelemetry: tagging traces via OTEL_RESOURCE_ATTRIBUTES with {meta}"
         )

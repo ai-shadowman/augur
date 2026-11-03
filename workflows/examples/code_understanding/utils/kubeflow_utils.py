@@ -152,17 +152,15 @@ def inject_secret_as_env(secret_name: str):
                     run_id_placeholder = getattr(dsl, "PIPELINE_JOB_ID_PLACEHOLDER", "{{$.pipeline_job_uuid}}")
                     run_name_placeholder = getattr(dsl, "PIPELINE_JOB_NAME_PLACEHOLDER", "{{$.pipeline_job_name}}")
                     task_name_placeholder = getattr(dsl, "PIPELINE_TASK_NAME_PLACEHOLDER", "{{$.pipeline_task_name}}")
+                    run_id_val = run_id_placeholder if isinstance(run_id_placeholder, str) else "{{$.pipeline_job_uuid}}"
+                    run_name_val = run_name_placeholder if isinstance(run_name_placeholder, str) else "{{$.pipeline_job_name}}"
+                    task_name_val = task_name_placeholder if isinstance(task_name_placeholder, str) else "{{$.pipeline_task_name}}"
+                    task.set_env_variable("KFP_RUN_ID", run_id_val)
+                    task.set_env_variable("KFP_RUN_NAME", run_name_val)
+                    task.set_env_variable("KFP_TASK_NAME", task_name_val)
                     task.set_env_variable(
-                        "KFP_RUN_ID",
-                        run_id_placeholder if isinstance(run_id_placeholder, str) else "{{$.pipeline_job_uuid}}",
-                    )
-                    task.set_env_variable(
-                        "KFP_RUN_NAME",
-                        run_name_placeholder if isinstance(run_name_placeholder, str) else "{{$.pipeline_job_name}}",
-                    )
-                    task.set_env_variable(
-                        "KFP_TASK_NAME",
-                        task_name_placeholder if isinstance(task_name_placeholder, str) else "{{$.pipeline_task_name}}",
+                        "OTEL_RESOURCE_ATTRIBUTES",
+                        f"kfp.run_id={run_id_val},kfp.run_name={run_name_val},kfp.task_name={task_name_val}",
                     )
                 except Exception as e:
                     logging.error(f"KFP set run metadata env vars failed: {e}")
