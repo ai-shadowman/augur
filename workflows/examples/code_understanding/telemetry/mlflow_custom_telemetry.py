@@ -162,7 +162,22 @@ class MlFlowCustomTelemetry(CustomTelemetry):
                             pass
 
                 def on_end(self, span):
-                    pass
+                    try:
+                        import json
+                        attrs_map = getattr(span, "attributes", None) or getattr(span, "_attributes", None) or {}
+                        raw_usage = attrs_map.get("mlflow.chat.tokenUsage")
+                        if raw_usage and isinstance(raw_usage, str):
+                            usage = json.loads(raw_usage)
+                            target = getattr(span, "_attributes", None)
+                            if target is not None and isinstance(usage, dict):
+                                if "input_tokens" in usage:
+                                    target["gen_ai.usage.input_tokens"] = int(usage["input_tokens"])
+                                if "output_tokens" in usage:
+                                    target["gen_ai.usage.output_tokens"] = int(usage["output_tokens"])
+                                if "total_tokens" in usage:
+                                    target["gen_ai.usage.total_tokens"] = int(usage["total_tokens"])
+                    except Exception:
+                        pass
 
                 def shutdown(self):
                     pass
