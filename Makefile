@@ -309,16 +309,32 @@ benchmark-llm:
 deploy-otel:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
-	echo "==> Checking for OpenTelemetry and Tempo CRDs..." && \
-	if ! oc get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1 || \
-	   ! oc get crd tempostacks.tempo.grafana.com >/dev/null 2>&1; then \
-		echo "Skipping deploy-otel: OpenTelemetry and/or Tempo operators are not installed."; \
-		exit 0; \
-	fi && \
-	\
 	if [ -z "$$OTEL_SERVICE_NAME" ] || [ -z "$$OTEL_NAMESPACE" ]; then \
 		echo "Skipping deploy-otel: OTEL_SERVICE_NAME or OTEL_NAMESPACE is not set in $(ENV_FILE)."; \
 		exit 0; \
+	fi && \
+	\
+	echo "==> Checking for required OpenShift operators (OpenTelemetry, Tempo, Cluster Observability)..." && \
+	MISSING_OPERATORS=0 && \
+	CSV_LIST="$$(oc get csv -A --no-headers 2>/dev/null || true)" && \
+	if ! oc get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'opentelemetry-operator\..*Succeeded'; then \
+		echo "ERROR: Red Hat build of OpenTelemetry Operator (opentelemetry-product) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if ! oc get crd tempostacks.tempo.grafana.com >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'tempo-operator\..*Succeeded'; then \
+		echo "ERROR: Tempo Operator (tempo-product) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if ! oc get crd uiplugins.observability.openshift.io >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'cluster-observability-operator\..*Succeeded'; then \
+		echo "ERROR: Cluster Observability Operator (cluster-observability-operator) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if [ "$$MISSING_OPERATORS" -ne 0 ]; then \
+		echo "Error: Please install the missing operator(s) from OpenShift OperatorHub before running deploy-otel."; \
+		exit 1; \
 	fi && \
 	\
 	if ! oc get tempostack $$OTEL_SERVICE_NAME -n $$OTEL_NAMESPACE >/dev/null 2>&1; then \
@@ -353,4 +369,6 @@ deploy-otel:
 		--set otel.enabled=true \
 		--set otel.name=$$OTEL_SERVICE_NAME \
 		$${OTEL_TEMPO_RETENTION:+--set otel.tempo.retention=$$OTEL_TEMPO_RETENTION} \
-		-s templates/opentelemetry.yaml | oc apply -f -
+		-s templates/opentelemetry.yaml | oc apply -f - && \
+	echo "==> Enabling OpenShift Distributed Tracing UIPlugin..." && \
+	oc apply -f resources/distributed-tracing-uiplugin.yaml
