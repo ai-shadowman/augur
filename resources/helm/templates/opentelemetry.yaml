@@ -26,7 +26,7 @@ spec:
   storageSize: {{ .Values.otel.tempo.storageSize }}
   retention:
     global:
-      traces: {{ .Values.otel.tempo.retention | default "90d" }}
+      traces: {{ .Values.otel.tempo.retention | default "2160h" }}
   template:
     queryFrontend:
       jaegerQuery:
