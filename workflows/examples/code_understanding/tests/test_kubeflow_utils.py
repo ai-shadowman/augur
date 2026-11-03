@@ -317,6 +317,9 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
             config_map_name="odh-trusted-ca-bundle",
             mount_path="/etc/pki/ca-trust/extracted/pem/",
         )
+        mock_task.set_env_variable.assert_any_call("KFP_RUN_ID", "{{$.pipeline_job_uuid}}")
+        mock_task.set_env_variable.assert_any_call("KFP_RUN_NAME", "{{$.pipeline_job_name}}")
+        mock_task.set_env_variable.assert_any_call("KFP_TASK_NAME", "{{$.pipeline_task_name}}")
 
     def test_inject_secret_as_env_sets_image_pull_policy_from_env(self):
         """Verify inject_secret_as_env reads IMAGE_PULL_POLICY from environment variables."""
@@ -337,6 +340,60 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
 
                 self.assertIs(result, mock_task)
                 mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, policy)
+
+
+class TestMlFlowCustomTelemetryKfpRunTagging(unittest.TestCase):
+    """Verify MlFlowCustomTelemetry tags OTEL_RESOURCE_ATTRIBUTES with KFP run/task metadata."""
+
+    def setUp(self):
+        for pkg in ("mlflow", "litellm", "requests"):
+            if pkg not in sys.modules:
+                sys.modules[pkg] = MagicMock()
+        from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+        self.telemetry_cls = MlFlowCustomTelemetry
+        self.telemetry_cls.reset()
+
+    def tearDown(self):
+        self.telemetry_cls.reset()
+
+    def test_track_populates_otel_resource_attributes_from_kfp_env(self):
+        """Verify KFP_RUN_ID, KFP_RUN_NAME, KFP_TASK_NAME, and HOSTNAME are added to OTEL_RESOURCE_ATTRIBUTES."""
+        env = {
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://code-understanding-collector.otel.svc.cluster.local:4318",
+            "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=dev",
+            "KFP_RUN_ID": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+            "KFP_RUN_NAME": "code-understanding-run-42",
+            "KFP_TASK_NAME": "graphrag-indexing-op",
+            "HOSTNAME": "code-understanding-pipeline-xyz-pod",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            t = self.telemetry_cls()
+            t.track()
+            resource_attrs = os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
+            self.assertIn("deployment.environment=dev", resource_attrs)
+            self.assertIn("kfp.run_id=a1b2c3d4-5678-90ab-cdef-1234567890ab", resource_attrs)
+            self.assertIn("kfp.run_name=code-understanding-run-42", resource_attrs)
+            self.assertIn("kfp.task_name=graphrag-indexing-op", resource_attrs)
+            self.assertIn("k8s.pod.name=code-understanding-pipeline-xyz-pod", resource_attrs)
+            self.assertEqual(
+                os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+                "http://code-understanding-collector.otel.svc.cluster.local:4318/v1/traces",
+            )
+
+    def test_unexpanded_kfp_placeholders_are_ignored(self):
+        """Verify unexpanded '{{$.pipeline_job_uuid}}' placeholders are not written to OTEL_RESOURCE_ATTRIBUTES."""
+        env = {
+            "KFP_RUN_ID": "{{$.pipeline_job_uuid}}",
+            "KFP_RUN_NAME": "{{$.pipeline_job_name}}",
+            "KFP_TASK_NAME": "{{$.pipeline_task_name}}",
+            "HOSTNAME": "pod-abc",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            meta = self.telemetry_cls._configure_otel_resource_attributes()
+            self.assertNotIn("kfp.run_id", meta)
+            self.assertNotIn("kfp.run_name", meta)
+            self.assertNotIn("kfp.task_name", meta)
+            self.assertEqual(meta.get("k8s.pod.name"), "pod-abc")
 
 
 if __name__ == "__main__":
