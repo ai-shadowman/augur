@@ -1,6 +1,8 @@
+import json
 import logging
 import os
-from typing import Dict, Optional
+import types
+from typing import Any, Dict, Optional
 import mlflow
 import litellm
 import requests
@@ -9,6 +11,100 @@ from .custom_telemetry import CustomTelemetry
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 _SESSION_PATCHED = False
+_OTEL_SPAN_PATCHED = False
+_CURRENT_KFP_ATTRS: Dict[str, str] = {}
+
+
+def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> None:
+    """Enriches an OpenTelemetry Span or ReadableSpan with KFP metadata and parsed token usage."""
+    try:
+        attrs_to_apply = kfp_attrs if kfp_attrs is not None else _CURRENT_KFP_ATTRS
+        raw_attrs = getattr(span, "attributes", None) or getattr(span, "_attributes", None)
+        current_attrs: Dict[str, Any] = dict(raw_attrs) if raw_attrs else {}
+        changed = False
+
+        if attrs_to_apply:
+            for attr_k, attr_v in attrs_to_apply.items():
+                if current_attrs.get(attr_k) != attr_v:
+                    current_attrs[attr_k] = attr_v
+                    changed = True
+
+        raw_usage = current_attrs.get("mlflow.chat.tokenUsage")
+        if raw_usage:
+            usage = json.loads(raw_usage) if isinstance(raw_usage, str) else raw_usage
+            if isinstance(usage, dict):
+                in_t = usage.get("input_tokens", usage.get("prompt_tokens"))
+                out_t = usage.get("output_tokens", usage.get("completion_tokens"))
+                tot_t = usage.get("total_tokens")
+                if in_t is not None:
+                    current_attrs["gen_ai.usage.input_tokens"] = int(in_t)
+                    changed = True
+                if out_t is not None:
+                    current_attrs["gen_ai.usage.output_tokens"] = int(out_t)
+                    changed = True
+                if tot_t is not None:
+                    current_attrs["gen_ai.usage.total_tokens"] = int(tot_t)
+                    changed = True
+                if tot_t is not None and hasattr(span, "_name") and isinstance(span._name, str) and span._name:
+                    if "tokens:" not in span._name:
+                        in_s = int(in_t) if in_t is not None else 0
+                        out_s = int(out_t) if out_t is not None else 0
+                        tot_s = int(tot_t)
+                        span._name = f"{span._name} (tokens: {tot_s} | in: {in_s}, out: {out_s})"
+
+        if changed:
+            if getattr(span, "_end_time", True) is None and hasattr(span, "set_attribute"):
+                for k, v in current_attrs.items():
+                    try:
+                        span.set_attribute(k, v)
+                    except Exception:
+                        pass
+            target_attrs = getattr(span, "_attributes", None)
+            if target_attrs is not None and hasattr(target_attrs, "_dict"):
+                try:
+                    target_attrs._dict.update(current_attrs)
+                except Exception:
+                    pass
+            try:
+                span._attributes = types.MappingProxyType(current_attrs)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _install_otel_span_hooks() -> None:
+    """Patches OpenTelemetry SDK Span.end and SpanProcessor.on_end once so lazy TracerProviders cannot bypass enrichment."""
+    global _OTEL_SPAN_PATCHED
+    if _OTEL_SPAN_PATCHED:
+        return
+    try:
+        from opentelemetry.sdk.trace import Span as SdkSpan
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
+        _orig_span_end = SdkSpan.end
+
+        def _patched_span_end(self, end_time=None):
+            _enrich_otel_span(self)
+            return _orig_span_end(self, end_time=end_time)
+
+        SdkSpan.end = _patched_span_end
+
+        for proc_cls in (BatchSpanProcessor, SimpleSpanProcessor):
+            _orig_on_end = proc_cls.on_end
+
+            def _make_patched_on_end(orig_fn):
+                def _patched_on_end(self, span):
+                    _enrich_otel_span(span)
+                    return orig_fn(self, span)
+
+                return _patched_on_end
+
+            proc_cls.on_end = _make_patched_on_end(_orig_on_end)
+
+        _OTEL_SPAN_PATCHED = True
+    except Exception as e:
+        logging.debug(f"MlFlowCustomTelemetry: failed to install OTel span hooks: {e}")
 
 
 def _patch_session_forwarded_token():
@@ -142,6 +238,9 @@ class MlFlowCustomTelemetry(CustomTelemetry):
                 attrs[k] = safe_val
 
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(f"{k}={v}" for k, v in attrs.items())
+        _CURRENT_KFP_ATTRS.clear()
+        _CURRENT_KFP_ATTRS.update(attrs)
+        _install_otel_span_hooks()
 
         # Also patch any already-initialized OpenTelemetry TracerProvider and attach a SpanProcessor
         # so KFP metadata is present on both Resource (resource.kfp.run_id) and Span (.kfp.run_id)
@@ -162,22 +261,7 @@ class MlFlowCustomTelemetry(CustomTelemetry):
                             pass
 
                 def on_end(self, span):
-                    try:
-                        import json
-                        attrs_map = getattr(span, "attributes", None) or getattr(span, "_attributes", None) or {}
-                        raw_usage = attrs_map.get("mlflow.chat.tokenUsage")
-                        if raw_usage and isinstance(raw_usage, str):
-                            usage = json.loads(raw_usage)
-                            target = getattr(span, "_attributes", None)
-                            if target is not None and isinstance(usage, dict):
-                                if "input_tokens" in usage:
-                                    target["gen_ai.usage.input_tokens"] = int(usage["input_tokens"])
-                                if "output_tokens" in usage:
-                                    target["gen_ai.usage.output_tokens"] = int(usage["output_tokens"])
-                                if "total_tokens" in usage:
-                                    target["gen_ai.usage.total_tokens"] = int(usage["total_tokens"])
-                    except Exception:
-                        pass
+                    _enrich_otel_span(span, self._attributes)
 
                 def shutdown(self):
                     pass
@@ -298,5 +382,8 @@ class MlFlowCustomTelemetry(CustomTelemetry):
             litellm.callbacks = ["mlflow"]
         elif "mlflow" not in litellm.callbacks:
             litellm.callbacks.append("mlflow")
+
+        # Re-apply OTel resource/span hooks after MLflow tracking URI, experiment, and autolog setup
+        self._configure_otel_resource_attributes()
 
         MlFlowCustomTelemetry._initialized = True

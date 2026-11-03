@@ -399,6 +399,31 @@ class TestMlFlowCustomTelemetryKfpRunTagging(unittest.TestCase):
             self.assertNotIn("kfp.task_name", meta)
             self.assertEqual(meta.get("k8s.pod.name"), "pod-abc")
 
+    def test_enrich_otel_span_extracts_tokens_and_updates_readonly_mappingproxy(self):
+        """Verify _enrich_otel_span populates gen_ai.usage.* and human-readable span name on ReadableSpan."""
+        import types
+        from telemetry.mlflow_custom_telemetry import _enrich_otel_span
+
+        class DummyReadableSpan:
+            def __init__(self):
+                self._name = "AsyncCompletions"
+                self._end_time = 123456789
+                self._attributes = types.MappingProxyType(
+                    {"mlflow.chat.tokenUsage": '{"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500}'}
+                )
+
+            @property
+            def attributes(self):
+                return self._attributes
+
+        span = DummyReadableSpan()
+        _enrich_otel_span(span, {"kfp.run_id": "1ab1269b-8530-4fc9-88a5-a73705208c0a"})
+        self.assertEqual(span.attributes["kfp.run_id"], "1ab1269b-8530-4fc9-88a5-a73705208c0a")
+        self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 1200)
+        self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 300)
+        self.assertEqual(span.attributes["gen_ai.usage.total_tokens"], 1500)
+        self.assertEqual(span._name, "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
+
 
 if __name__ == "__main__":
     unittest.main()
