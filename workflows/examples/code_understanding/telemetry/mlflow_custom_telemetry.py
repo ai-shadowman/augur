@@ -15,6 +15,38 @@ _OTEL_SPAN_PATCHED = False
 _CURRENT_KFP_ATTRS: Dict[str, str] = {}
 
 
+def _tag_mlflow_trace_info(
+    trace_info: Any,
+    kfp_attrs: Optional[Dict[str, str]],
+    span_name: Optional[str] = None,
+) -> None:
+    """Populates tags and metadata on an MLflow TraceInfo/TraceInfoV3 object."""
+    if trace_info is None or not kfp_attrs:
+        return
+    try:
+        mlflow_tags: Dict[str, str] = {}
+        for attr_k, attr_v in kfp_attrs.items():
+            if attr_v:
+                mlflow_tags[attr_k] = str(attr_v)
+                mlflow_tags[attr_k.replace(".", "_")] = str(attr_v)
+        if span_name:
+            mlflow_tags["mlflow.traceName"] = span_name
+
+        tags_dict = getattr(trace_info, "tags", None)
+        if isinstance(tags_dict, dict):
+            tags_dict.update(mlflow_tags)
+
+        for meta_field in ("trace_metadata", "request_metadata"):
+            meta_dict = getattr(trace_info, meta_field, None)
+            if isinstance(meta_dict, dict):
+                for attr_k, attr_v in kfp_attrs.items():
+                    if attr_v:
+                        meta_dict[attr_k] = str(attr_v)
+                        meta_dict[attr_k.replace(".", "_")] = str(attr_v)
+    except Exception:
+        pass
+
+
 def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> None:
     """Enriches an OpenTelemetry Span or ReadableSpan with KFP metadata and parsed token usage."""
     try:
@@ -29,7 +61,7 @@ def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> 
                     current_attrs[attr_k] = attr_v
                     changed = True
 
-            # Also tag the active MLflow Trace (for the MLflow UI -> Traces tab search bar)
+            # Tag the active MLflow Trace if context is active
             if getattr(span, "_end_time", True) is None and hasattr(mlflow, "update_current_trace"):
                 try:
                     mlflow_tags = {}
@@ -63,6 +95,23 @@ def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> 
                         tot_s = int(tot_t)
                         span._name = f"{span._name} (tokens: {tot_s} | in: {in_s}, out: {out_s})"
 
+        # Also update MLflow's InMemoryTraceManager directly by OTel trace_id (works for async no-context spans)
+        if attrs_to_apply:
+            try:
+                from mlflow.tracing.trace_manager import InMemoryTraceManager
+
+                tm = InMemoryTraceManager.get_instance()
+                ctx = getattr(span, "context", None) or getattr(span, "_context", None)
+                otel_tid = getattr(ctx, "trace_id", None) if ctx else None
+                if otel_tid is not None and hasattr(tm, "get_trace_id_from_otel_id"):
+                    mlflow_tid = tm.get_trace_id_from_otel_id(otel_tid)
+                    traces_dict = getattr(tm, "_traces", None)
+                    if mlflow_tid and isinstance(traces_dict, dict) and mlflow_tid in traces_dict:
+                        tr_info = getattr(traces_dict[mlflow_tid], "info", None)
+                        _tag_mlflow_trace_info(tr_info, attrs_to_apply, getattr(span, "_name", None))
+            except Exception:
+                pass
+
         if changed:
             if getattr(span, "_end_time", True) is None and hasattr(span, "set_attribute"):
                 for k, v in current_attrs.items():
@@ -85,8 +134,47 @@ def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> 
 
 
 def _install_otel_span_hooks() -> None:
-    """Patches OpenTelemetry SDK Span.end and SpanProcessor.on_end once so lazy TracerProviders cannot bypass enrichment."""
+    """Patches OpenTelemetry SDK Span.end, SpanProcessor.on_end, and MLflow InMemoryTraceManager once."""
     global _OTEL_SPAN_PATCHED
+    try:
+        from mlflow.tracing.trace_manager import InMemoryTraceManager
+
+        if not getattr(InMemoryTraceManager, "_kfp_register_patched", False):
+            _orig_register_trace = InMemoryTraceManager.register_trace
+
+            def _patched_register_trace(self, otel_trace_id, trace_info):
+                _tag_mlflow_trace_info(trace_info, _CURRENT_KFP_ATTRS)
+                return _orig_register_trace(self, otel_trace_id, trace_info)
+
+            InMemoryTraceManager.register_trace = _patched_register_trace
+
+            if hasattr(InMemoryTraceManager, "pop_trace"):
+                _orig_pop_trace = InMemoryTraceManager.pop_trace
+
+                def _patched_pop_trace(self, otel_trace_id):
+                    trace = _orig_pop_trace(self, otel_trace_id)
+                    if trace is not None:
+                        tr_info = getattr(trace, "info", None)
+                        span_name = None
+                        try:
+                            span_dict = getattr(trace, "span_dict", None) or {}
+                            for live_span in span_dict.values():
+                                if getattr(live_span, "parent_id", None) is None:
+                                    inner = getattr(live_span, "_span", None) or live_span
+                                    _enrich_otel_span(inner, _CURRENT_KFP_ATTRS)
+                                    span_name = getattr(inner, "_name", None) or getattr(live_span, "name", None)
+                                    break
+                        except Exception:
+                            pass
+                        _tag_mlflow_trace_info(tr_info, _CURRENT_KFP_ATTRS, span_name)
+                    return trace
+
+                InMemoryTraceManager.pop_trace = _patched_pop_trace
+
+            setattr(InMemoryTraceManager, "_kfp_register_patched", True)
+    except Exception as e:
+        logging.debug(f"MlFlowCustomTelemetry: failed to patch InMemoryTraceManager: {e}")
+
     if _OTEL_SPAN_PATCHED:
         return
     try:

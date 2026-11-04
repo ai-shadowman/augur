@@ -424,6 +424,29 @@ class TestMlFlowCustomTelemetryKfpRunTagging(unittest.TestCase):
         self.assertEqual(span.attributes["gen_ai.usage.total_tokens"], 1500)
         self.assertEqual(span._name, "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
 
+    def test_tag_mlflow_trace_info_populates_tags_and_metadata(self):
+        """Verify _tag_mlflow_trace_info sets kfp_run_id, kfp.run_id, and mlflow.traceName on TraceInfo."""
+        from telemetry.mlflow_custom_telemetry import _tag_mlflow_trace_info
+
+        class DummyTraceInfo:
+            def __init__(self):
+                self.tags = {"mlflow.traceName": "AsyncCompletions"}
+                self.trace_metadata = {}
+                self.request_metadata = {}
+
+        info = DummyTraceInfo()
+        _tag_mlflow_trace_info(
+            info,
+            {"kfp.run_id": "301ee2d5-951e-4cea-83d5-6a0909218423", "kfp.task_name": "indexing"},
+            span_name="AsyncCompletions (tokens: 1500 | in: 1200, out: 300)",
+        )
+        self.assertEqual(info.tags["kfp_run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+        self.assertEqual(info.tags["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+        self.assertEqual(info.tags["kfp_task_name"], "indexing")
+        self.assertEqual(info.tags["mlflow.traceName"], "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
+        self.assertEqual(info.trace_metadata["kfp_run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+        self.assertEqual(info.request_metadata["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+
 
 if __name__ == "__main__":
     unittest.main()
