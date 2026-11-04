@@ -28,7 +28,6 @@ def _tag_mlflow_trace_info(
         for attr_k, attr_v in kfp_attrs.items():
             if attr_v:
                 mlflow_tags[attr_k] = str(attr_v)
-                mlflow_tags[attr_k.replace(".", "_")] = str(attr_v)
         if span_name:
             mlflow_tags["mlflow.traceName"] = span_name
 
@@ -42,7 +41,6 @@ def _tag_mlflow_trace_info(
                 for attr_k, attr_v in kfp_attrs.items():
                     if attr_v:
                         meta_dict[attr_k] = str(attr_v)
-                        meta_dict[attr_k.replace(".", "_")] = str(attr_v)
     except Exception:
         pass
 
@@ -64,10 +62,7 @@ def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> 
             # Tag the active MLflow Trace if context is active
             if getattr(span, "_end_time", True) is None and hasattr(mlflow, "update_current_trace"):
                 try:
-                    mlflow_tags = {}
-                    for attr_k, attr_v in attrs_to_apply.items():
-                        mlflow_tags[attr_k] = attr_v
-                        mlflow_tags[attr_k.replace(".", "_")] = attr_v
+                    mlflow_tags = {attr_k: attr_v for attr_k, attr_v in attrs_to_apply.items() if attr_v}
                     mlflow.update_current_trace(tags=mlflow_tags, metadata=mlflow_tags)
                 except Exception:
                     pass
