@@ -19,7 +19,7 @@ AUGUR features end-to-end telemetry embedded directly into its execution reports
 - **LLM Token Usage & Cost Governance**: Real-time prompt/completion token tracking and dollar cost estimation via `TokenCostTracker` (`workflows/examples/code_understanding/utils/token_tracker.py`). See 👉 **[README_METRICS.md](README_METRICS.md)**.
 - **Pipeline Step Latency Profiling**: High-precision wall-clock latency profiling via `DurationTracker` (`workflows/examples/code_understanding/utils/duration_tracker.py`). See 👉 **[README_METRICS.md](README_METRICS.md)**.
 - **GuideLLM Concurrency Benchmarking & Auto-Tuning**: Dynamic benchmarking of vLLM / OpenAI-compatible inference endpoints (`make benchmark-llm` standalone OpenShift job and pre-pipeline `benchmark_llm_op`) to automatically tune `SDG_LLM_MAX_CONCURRENCY` and `GRAPHRAG_CONCURRENT_REQUESTS`. See 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**.
-- **Distributed Tracing**: OpenTelemetry SDK integration exporting traces to Red Hat OpenShift distributed tracing (Tempo).
+- **Distributed Tracing**: OpenTelemetry SDK and MLflow dual-export integration (`make deploy-otel`) exporting traces with Kubeflow Pipeline Run IDs (`kfp.run_id`) and token usage to Red Hat OpenShift distributed tracing (**Observe → Traces** / Tempo) and MLflow (**Observability → Traces**). See 👉 **[README_TRACING.md](README_TRACING.md)**.
 
 ## Required Software / Tested with
 
@@ -87,6 +87,7 @@ python -m unittest discover -s workflows/examples/code_understanding/tests
 ```
 
 ## Documentation & Guides
+- 👉 **[README_TRACING.md](README_TRACING.md)**: Distributed tracing setup (required OpenShift operators, `make deploy-otel`, and querying traces by `kfp.run_id` in OpenShift **Observe → Traces** and **MLflow**).
 - 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` standalone OpenShift job and `benchmark_llm_op` pre-pipeline auto-tuning).
 - 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
 - 👉 **[README_METRICS.md](README_METRICS.md)**: Telemetry architecture for LLM token usage, duration latency tracking, and metric extensibility.
