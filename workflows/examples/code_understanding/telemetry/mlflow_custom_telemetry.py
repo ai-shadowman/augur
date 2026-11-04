@@ -29,6 +29,17 @@ def _enrich_otel_span(span: Any, kfp_attrs: Optional[Dict[str, str]] = None) -> 
                     current_attrs[attr_k] = attr_v
                     changed = True
 
+            # Also tag the active MLflow Trace (for the MLflow UI -> Traces tab search bar)
+            if getattr(span, "_end_time", True) is None and hasattr(mlflow, "update_current_trace"):
+                try:
+                    mlflow_tags = {}
+                    for attr_k, attr_v in attrs_to_apply.items():
+                        mlflow_tags[attr_k] = attr_v
+                        mlflow_tags[attr_k.replace(".", "_")] = attr_v
+                    mlflow.update_current_trace(tags=mlflow_tags, metadata=mlflow_tags)
+                except Exception:
+                    pass
+
         raw_usage = current_attrs.get("mlflow.chat.tokenUsage")
         if raw_usage:
             usage = json.loads(raw_usage) if isinstance(raw_usage, str) else raw_usage
@@ -343,6 +354,8 @@ class MlFlowCustomTelemetry(CustomTelemetry):
                 os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = otlp_endpoint
         if otlp_endpoint and not os.environ.get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"):
             os.environ["OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"] = otlp_protocol
+        if otlp_endpoint and os.environ.get("MLFLOW_TRACKING_URI"):
+            os.environ.setdefault("MLFLOW_TRACE_ENABLE_OTLP_DUAL_EXPORT", "true")
 
         # Tag traces with Kubeflow Pipeline run/task metadata and pod name
         self._configure_otel_resource_attributes()
