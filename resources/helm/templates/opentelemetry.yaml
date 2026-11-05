@@ -24,6 +24,76 @@ spec:
       name: tempo-s3-secret
       type: s3
   storageSize: {{ .Values.otel.tempo.storageSize }}
+  retention:
+    global:
+      traces: {{ .Values.otel.tempo.retention | default "2160h" }}
+  tenants:
+    mode: openshift
+    authentication:
+      - tenantName: dev
+        tenantId: "1610b0c3-c509-4592-a256-a1871353dbfa"
+  template:
+    gateway:
+      enabled: true
+    queryFrontend:
+      jaegerQuery:
+        enabled: true
+---
+# Allow the OpenTelemetry Collector ServiceAccount to write traces to the 'dev' tenant
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tempostack-traces-write-{{ .Values.otel.name }}
+rules:
+  - apiGroups:
+      - tempo.grafana.com
+    resources:
+      - dev
+    resourceNames:
+      - traces
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempostack-traces-write-{{ .Values.otel.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempostack-traces-write-{{ .Values.otel.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.otel.name }}-collector
+    namespace: {{ .Values.otel.namespace }}
+---
+# Allow authenticated OpenShift Console users to read traces from the 'dev' tenant in Observe -> Traces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tempostack-traces-reader-{{ .Values.otel.name }}
+rules:
+  - apiGroups:
+      - tempo.grafana.com
+    resources:
+      - dev
+    resourceNames:
+      - traces
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tempostack-traces-reader-{{ .Values.otel.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tempostack-traces-reader-{{ .Values.otel.name }}
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:authenticated
 ---
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
@@ -33,6 +103,9 @@ metadata:
 spec:
   mode: deployment
   config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
     receivers:
       otlp:
         protocols:
@@ -42,10 +115,16 @@ spec:
             endpoint: 0.0.0.0:4318
     exporters:
       otlp:
-        endpoint: tempo-{{ .Values.otel.name }}-distributor:4317
+        endpoint: tempo-{{ .Values.otel.name }}-gateway.{{ .Values.otel.namespace }}.svc.cluster.local:8090
         tls:
-          insecure: true
+          insecure: false
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          X-Scope-OrgID: dev
     service:
+      extensions: [bearertokenauth]
       pipelines:
         traces:
           receivers: [otlp]

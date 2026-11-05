@@ -317,6 +317,13 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
             config_map_name="odh-trusted-ca-bundle",
             mount_path="/etc/pki/ca-trust/extracted/pem/",
         )
+        mock_task.set_env_variable.assert_any_call("KFP_RUN_ID", "{{$.pipeline_job_uuid}}")
+        mock_task.set_env_variable.assert_any_call("KFP_RUN_NAME", "{{$.pipeline_job_name}}")
+        mock_task.set_env_variable.assert_any_call("KFP_TASK_NAME", "{{$.pipeline_task_name}}")
+        mock_task.set_env_variable.assert_any_call(
+            "OTEL_RESOURCE_ATTRIBUTES",
+            "kfp.run_id={{$.pipeline_job_uuid}},kfp.run_name={{$.pipeline_job_name}},kfp.task_name={{$.pipeline_task_name}}",
+        )
 
     def test_inject_secret_as_env_sets_image_pull_policy_from_env(self):
         """Verify inject_secret_as_env reads IMAGE_PULL_POLICY from environment variables."""
@@ -337,6 +344,109 @@ class TestOfflineImageBakedDependencies(unittest.TestCase):
 
                 self.assertIs(result, mock_task)
                 mock_kfp_kubernetes.set_image_pull_policy.assert_called_once_with(mock_task, policy)
+
+
+class TestMlFlowCustomTelemetryKfpRunTagging(unittest.TestCase):
+    """Verify MlFlowCustomTelemetry tags OTEL_RESOURCE_ATTRIBUTES with KFP run/task metadata."""
+
+    def setUp(self):
+        for pkg in ("mlflow", "litellm", "requests"):
+            if pkg not in sys.modules:
+                sys.modules[pkg] = MagicMock()
+        from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+        self.telemetry_cls = MlFlowCustomTelemetry
+        self.telemetry_cls.reset()
+
+    def tearDown(self):
+        self.telemetry_cls.reset()
+
+    def test_track_populates_otel_resource_attributes_from_kfp_env(self):
+        """Verify KFP_RUN_ID, KFP_RUN_NAME, KFP_TASK_NAME, and HOSTNAME are added to OTEL_RESOURCE_ATTRIBUTES."""
+        env = {
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://code-understanding-collector.otel.svc.cluster.local:4318",
+            "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=dev",
+            "KFP_RUN_ID": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+            "KFP_RUN_NAME": "code-understanding-run-42",
+            "KFP_TASK_NAME": "graphrag-indexing-op",
+            "HOSTNAME": "code-understanding-pipeline-xyz-pod",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            t = self.telemetry_cls()
+            t.track()
+            resource_attrs = os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
+            self.assertIn("deployment.environment=dev", resource_attrs)
+            self.assertIn("kfp.run_id=a1b2c3d4-5678-90ab-cdef-1234567890ab", resource_attrs)
+            self.assertIn("kfp.run_name=code-understanding-run-42", resource_attrs)
+            self.assertIn("kfp.task_name=graphrag-indexing-op", resource_attrs)
+            self.assertIn("k8s.pod.name=code-understanding-pipeline-xyz-pod", resource_attrs)
+            self.assertEqual(
+                os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+                "http://code-understanding-collector.otel.svc.cluster.local:4318/v1/traces",
+            )
+
+    def test_unexpanded_kfp_placeholders_are_ignored(self):
+        """Verify unexpanded '{{$.pipeline_job_uuid}}' placeholders are not written to OTEL_RESOURCE_ATTRIBUTES."""
+        env = {
+            "KFP_RUN_ID": "{{$.pipeline_job_uuid}}",
+            "KFP_RUN_NAME": "{{$.pipeline_job_name}}",
+            "KFP_TASK_NAME": "{{$.pipeline_task_name}}",
+            "HOSTNAME": "pod-abc",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            meta = self.telemetry_cls._configure_otel_resource_attributes()
+            self.assertNotIn("kfp.run_id", meta)
+            self.assertNotIn("kfp.run_name", meta)
+            self.assertNotIn("kfp.task_name", meta)
+            self.assertEqual(meta.get("k8s.pod.name"), "pod-abc")
+
+    def test_enrich_otel_span_extracts_tokens_and_updates_readonly_mappingproxy(self):
+        """Verify _enrich_otel_span populates gen_ai.usage.* and human-readable span name on ReadableSpan."""
+        import types
+        from telemetry.mlflow_custom_telemetry import _enrich_otel_span
+
+        class DummyReadableSpan:
+            def __init__(self):
+                self._name = "AsyncCompletions"
+                self._end_time = 123456789
+                self._attributes = types.MappingProxyType(
+                    {"mlflow.chat.tokenUsage": '{"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500}'}
+                )
+
+            @property
+            def attributes(self):
+                return self._attributes
+
+        span = DummyReadableSpan()
+        _enrich_otel_span(span, {"kfp.run_id": "1ab1269b-8530-4fc9-88a5-a73705208c0a"})
+        self.assertEqual(span.attributes["kfp.run_id"], "1ab1269b-8530-4fc9-88a5-a73705208c0a")
+        self.assertEqual(span.attributes["gen_ai.usage.input_tokens"], 1200)
+        self.assertEqual(span.attributes["gen_ai.usage.output_tokens"], 300)
+        self.assertEqual(span.attributes["gen_ai.usage.total_tokens"], 1500)
+        self.assertEqual(span._name, "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
+
+    def test_tag_mlflow_trace_info_populates_tags_and_metadata(self):
+        """Verify _tag_mlflow_trace_info sets kfp.run_id and mlflow.traceName on TraceInfo without underscore duplicates."""
+        from telemetry.mlflow_custom_telemetry import _tag_mlflow_trace_info
+
+        class DummyTraceInfo:
+            def __init__(self):
+                self.tags = {"mlflow.traceName": "AsyncCompletions"}
+                self.trace_metadata = {}
+                self.request_metadata = {}
+
+        info = DummyTraceInfo()
+        _tag_mlflow_trace_info(
+            info,
+            {"kfp.run_id": "301ee2d5-951e-4cea-83d5-6a0909218423", "kfp.task_name": "indexing"},
+            span_name="AsyncCompletions (tokens: 1500 | in: 1200, out: 300)",
+        )
+        self.assertEqual(info.tags["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+        self.assertNotIn("kfp_run_id", info.tags)
+        self.assertEqual(info.tags["kfp.task_name"], "indexing")
+        self.assertEqual(info.tags["mlflow.traceName"], "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
+        self.assertEqual(info.trace_metadata["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+        self.assertNotIn("kfp_run_id", info.trace_metadata)
+        self.assertEqual(info.request_metadata["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
 
 
 if __name__ == "__main__":

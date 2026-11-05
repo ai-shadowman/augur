@@ -309,41 +309,56 @@ benchmark-llm:
 deploy-otel:
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
-	echo "==> Checking for OpenTelemetry and Tempo CRDs..." && \
-	if ! oc get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1 || \
-	   ! oc get crd tempostacks.tempo.grafana.com >/dev/null 2>&1; then \
-		echo "Skipping deploy-otel: OpenTelemetry and/or Tempo operators are not installed."; \
-		exit 0; \
-	fi && \
-	\
 	if [ -z "$$OTEL_SERVICE_NAME" ] || [ -z "$$OTEL_NAMESPACE" ]; then \
 		echo "Skipping deploy-otel: OTEL_SERVICE_NAME or OTEL_NAMESPACE is not set in $(ENV_FILE)."; \
 		exit 0; \
 	fi && \
 	\
-	if oc get tempostack $$OTEL_SERVICE_NAME -n $$OTEL_NAMESPACE >/dev/null 2>&1; then \
-		echo "==> OTel infrastructure already deployed, skipping."; \
-		exit 0; \
+	echo "==> Checking for required OpenShift operators (OpenTelemetry, Tempo, Cluster Observability)..." && \
+	MISSING_OPERATORS=0 && \
+	CSV_LIST="$$(oc get csv -A --no-headers 2>/dev/null || true)" && \
+	if ! oc get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'opentelemetry-operator\..*Succeeded'; then \
+		echo "ERROR: Red Hat build of OpenTelemetry Operator (opentelemetry-product) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if ! oc get crd tempostacks.tempo.grafana.com >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'tempo-operator\..*Succeeded'; then \
+		echo "ERROR: Tempo Operator (tempo-product) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if ! oc get crd uiplugins.observability.openshift.io >/dev/null 2>&1 || \
+	   ! printf '%s\n' "$$CSV_LIST" | grep -qE 'cluster-observability-operator\..*Succeeded'; then \
+		echo "ERROR: Cluster Observability Operator (cluster-observability-operator) is not installed or not ready."; \
+		MISSING_OPERATORS=1; \
+	fi && \
+	if [ "$$MISSING_OPERATORS" -ne 0 ]; then \
+		echo "Error: Please install the missing operator(s) from OpenShift OperatorHub before running deploy-otel."; \
+		exit 1; \
 	fi && \
 	\
-	echo "==> Creating OTel namespace $$OTEL_NAMESPACE..." && \
-	oc create namespace $$OTEL_NAMESPACE --dry-run=client -o yaml | oc apply -f - && \
-	\
-	echo "==> Waiting for MinIO to be ready..." && \
-	oc wait deployment/minio -n $$KFP_NAMESPACE --for=condition=Available --timeout=120s && \
-	\
-	echo "==> Creating Tempo S3 bucket..." && \
-	oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set otel.namespace=$$OTEL_NAMESPACE \
-		--set otel.createBucket=true \
-		--set minio.endpoint=http://minio-service.$$KFP_NAMESPACE.svc.cluster.local:9000 \
-		--set minio.rootUser=$$AWS_ACCESS_KEY_ID \
-		--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
-		--set minio.mcImage="$${MINIO_MC_IMAGE:-docker.io/pgsty/mc:latest}" \
-		-s templates/create-tempo-bucket-job.yaml | oc apply -f - && \
-	oc wait job/create-tempo-bucket -n $$OTEL_NAMESPACE --for=condition=complete --timeout=120s && \
-	oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
+	if ! oc get tempostack $$OTEL_SERVICE_NAME -n $$OTEL_NAMESPACE >/dev/null 2>&1; then \
+		echo "==> Creating OTel namespace $$OTEL_NAMESPACE..." && \
+		oc create namespace $$OTEL_NAMESPACE --dry-run=client -o yaml | oc apply -f - && \
+		\
+		echo "==> Waiting for MinIO to be ready..." && \
+		oc wait deployment/minio -n $$KFP_NAMESPACE --for=condition=Available --timeout=120s && \
+		\
+		echo "==> Creating Tempo S3 bucket..." && \
+		oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true && \
+		helm template agent-mesh-for-sw resources/helm \
+			--set otel.namespace=$$OTEL_NAMESPACE \
+			--set otel.createBucket=true \
+			--set minio.endpoint=http://minio-service.$$KFP_NAMESPACE.svc.cluster.local:9000 \
+			--set minio.rootUser=$$AWS_ACCESS_KEY_ID \
+			--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
+			--set minio.mcImage="$${MINIO_MC_IMAGE:-docker.io/pgsty/mc:latest}" \
+			-s templates/create-tempo-bucket-job.yaml | oc apply -f - && \
+		oc wait job/create-tempo-bucket -n $$OTEL_NAMESPACE --for=condition=complete --timeout=120s && \
+		oc delete job create-tempo-bucket -n $$OTEL_NAMESPACE --ignore-not-found=true; \
+	else \
+		echo "==> TempoStack already exists in $$OTEL_NAMESPACE, skipping S3 bucket job and updating OTel manifests..."; \
+	fi && \
 	\
 	echo "==> Deploying TempoStack and OpenTelemetry Collector..." && \
 	helm template agent-mesh-for-sw resources/helm \
@@ -353,5 +368,7 @@ deploy-otel:
 		--set minio.rootPassword=$$AWS_SECRET_ACCESS_KEY \
 		--set otel.enabled=true \
 		--set otel.name=$$OTEL_SERVICE_NAME \
-		-s templates/opentelemetry.yaml | oc apply -f -
-
+		$${OTEL_TEMPO_RETENTION:+--set otel.tempo.retention=$$OTEL_TEMPO_RETENTION} \
+		-s templates/opentelemetry.yaml | oc apply -f - && \
+	echo "==> Enabling OpenShift Distributed Tracing UIPlugin..." && \
+	oc apply -f resources/distributed-tracing-uiplugin.yaml
