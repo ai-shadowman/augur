@@ -21,8 +21,9 @@ RETRY_COUNT="${RETRY_COUNT:-3}"
 GIT_REPO="${GIT_REPO:-}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 MULTI_REPO="${MULTI_REPO:-false}"
+KFP_RUN_ID="${KFP_RUN_ID:-}"
 
-RESULT=$(CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" QUESTION="$QUESTION" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" GIT_REPO="$GIT_REPO" GIT_BRANCH="$GIT_BRANCH" MULTI_REPO="$MULTI_REPO" \
+RESULT=$(CODE_UNDERSTANDING_DIR="$CODE_UNDERSTANDING_DIR" QUESTION="$QUESTION" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" GIT_REPO="$GIT_REPO" GIT_BRANCH="$GIT_BRANCH" MULTI_REPO="$MULTI_REPO" KFP_RUN_ID="$KFP_RUN_ID" \
   python3 - << 'PYEOF'
 import os, sys
 sys.path.insert(0, os.environ["CODE_UNDERSTANDING_DIR"])
@@ -34,6 +35,7 @@ result = run_adhoc_query_pipeline(
     git_repo=os.environ.get("GIT_REPO", ""),
     git_branch=os.environ.get("GIT_BRANCH", "main"),
     multi_repo=os.environ.get("MULTI_REPO", "false").lower() == "true",
+    kfp_run_id=os.environ.get("KFP_RUN_ID", ""),
 )
 print(result)
 PYEOF

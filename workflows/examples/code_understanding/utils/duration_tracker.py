@@ -574,6 +574,14 @@ class DurationTracker:
             return f"{base_section.rstrip()}{bench_section}"
         return base_section
 
+    @staticmethod
+    def _get_kfp_run_tags() -> Dict[str, str]:
+        try:
+            from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+            return MlFlowCustomTelemetry.resolve_kfp_run_tags()
+        except Exception:
+            return {}
+
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs recorded step durations as metrics to active MLflow run."""
         if not self.records:
@@ -601,6 +609,7 @@ class DurationTracker:
             except Exception:
                 self.mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
+            kfp_tags = self._get_kfp_run_tags()
             active_run = mlflow.active_run()
             active_rid = getattr(active_run.info, "run_id", None) if active_run and hasattr(active_run, "info") else None
             if run_id:
@@ -610,6 +619,8 @@ class DurationTracker:
                     eid = getattr(active_run.info, "experiment_id", None)
                     if isinstance(eid, str):
                         self.mlflow_experiment_id = eid
+                    if kfp_tags:
+                        mlflow.set_tags(kfp_tags)
                     mlflow.log_metrics(metrics)
                 else:
                     with mlflow.start_run(run_id=run_id, nested=bool(active_run)) as r:
@@ -617,6 +628,8 @@ class DurationTracker:
                             eid = getattr(r.info, "experiment_id", None)
                             if isinstance(eid, str):
                                 self.mlflow_experiment_id = eid
+                        if kfp_tags:
+                            mlflow.set_tags(kfp_tags)
                         mlflow.log_metrics(metrics)
             else:
                 if active_run:
@@ -626,6 +639,8 @@ class DurationTracker:
                         eid = getattr(active_run.info, "experiment_id", None)
                         if isinstance(eid, str):
                             self.mlflow_experiment_id = eid
+                    if kfp_tags:
+                        mlflow.set_tags(kfp_tags)
                     mlflow.log_metrics(metrics)
                     mlflow.end_run()
                 else:
@@ -637,6 +652,8 @@ class DurationTracker:
                             eid = getattr(r.info, "experiment_id", None)
                             if isinstance(eid, str):
                                 self.mlflow_experiment_id = eid
+                        if kfp_tags:
+                            mlflow.set_tags(kfp_tags)
                         mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow duration metric logging skipped or failed: {e}")
@@ -677,6 +694,7 @@ class DurationTracker:
                         if isinstance(eid, str):
                             self.mlflow_experiment_id = self.mlflow_experiment_id or eid
                     run_tags = {
+                        **self._get_kfp_run_tags(),
                         "category": "telemetry",
                         "type": "durations",
                         "git_slug": str(git_slug or "multi-repo"),
@@ -703,6 +721,7 @@ class DurationTracker:
                         multi_repo=multi_repo,
                     )
                     tags = {
+                        **self._get_kfp_run_tags(),
                         "git_slug": str(git_slug or "multi-repo"),
                         "category": "telemetry",
                         "type": "durations",

@@ -81,6 +81,7 @@ class TokenCostTracker:
         self.git_repo: Optional[str] = git_repo
         self.run_id: Optional[str] = (
             run_id
+            or self._get_kfp_run_tags().get("kfp.run_id")
             or os.environ.get("AUGUR_RUN_ID")
             or os.environ.get("PIPELINE_RUN_ID")
             or os.environ.get("MLFLOW_RUN_ID")
@@ -833,6 +834,14 @@ class TokenCostTracker:
             pass
         self._openai_tracking_enabled = False
 
+    @staticmethod
+    def _get_kfp_run_tags() -> Dict[str, str]:
+        try:
+            from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+            return MlFlowCustomTelemetry.resolve_kfp_run_tags()
+        except Exception:
+            return {}
+
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs aggregated token counts and costs to active MLflow run."""
         try:
@@ -851,19 +860,28 @@ class TokenCostTracker:
                 metrics[f"llm_{source_clean}_tokens"] = r.get("total_tokens", 0)
                 metrics[f"llm_{source_clean}_cost"] = r.get("cost", 0.0)
 
+            kfp_tags = self._get_kfp_run_tags()
             active_run = mlflow.active_run()
             if run_id:
                 if active_run and active_run.info.run_id == run_id:
+                    if kfp_tags:
+                        mlflow.set_tags(kfp_tags)
                     mlflow.log_metrics(metrics)
                 else:
                     with mlflow.start_run(run_id=run_id, nested=bool(active_run)):
+                        if kfp_tags:
+                            mlflow.set_tags(kfp_tags)
                         mlflow.log_metrics(metrics)
             else:
                 if active_run:
+                    if kfp_tags:
+                        mlflow.set_tags(kfp_tags)
                     mlflow.log_metrics(metrics)
                     mlflow.end_run()
                 else:
                     with mlflow.start_run():
+                        if kfp_tags:
+                            mlflow.set_tags(kfp_tags)
                         mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug(f"MLflow metric logging skipped or failed: {e}")
@@ -898,6 +916,7 @@ class TokenCostTracker:
                 target_run = run_id or (active_run.info.run_id if active_run else None) or os.environ.get("MLFLOW_RUN_ID")
                 if target_run:
                     run_tags = {
+                        **self._get_kfp_run_tags(),
                         "category": "telemetry",
                         "type": "tokens",
                         "git_slug": str(git_slug or "multi-repo"),
@@ -924,6 +943,7 @@ class TokenCostTracker:
                         multi_repo=multi_repo,
                     )
                     tags = {
+                        **self._get_kfp_run_tags(),
                         "git_slug": str(git_slug or "multi-repo"),
                         "category": "telemetry",
                         "type": "tokens",

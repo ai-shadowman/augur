@@ -248,14 +248,14 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         return val
 
     @classmethod
-    def _resolve_kfp_metadata(cls) -> Dict[str, str]:
+    def _resolve_kfp_metadata(cls, include_augur_run_id: bool = True) -> Dict[str, str]:
         """Resolves Kubeflow Pipeline run/task metadata and pod name from env, /proc/1/cmdline, or K8s pod labels."""
         meta: Dict[str, str] = {}
 
         run_id = (
             cls._clean_placeholder(os.environ.get("KFP_RUN_ID"))
             or cls._clean_placeholder(os.environ.get("PIPELINE_RUN_ID"))
-            or cls._clean_placeholder(os.environ.get("AUGUR_RUN_ID"))
+            or (cls._clean_placeholder(os.environ.get("AUGUR_RUN_ID")) if include_augur_run_id else None)
         )
         run_name = cls._clean_placeholder(os.environ.get("KFP_RUN_NAME"))
         task_name = cls._clean_placeholder(os.environ.get("KFP_TASK_NAME"))
@@ -306,6 +306,14 @@ class MlFlowCustomTelemetry(CustomTelemetry):
         if pod_name:
             meta["k8s.pod.name"] = pod_name
 
+        return meta
+
+    @classmethod
+    def resolve_kfp_run_tags(cls) -> Dict[str, str]:
+        """Resolves Kubeflow Pipeline run/task tags for MLflow runs when a KFP run/task context is present."""
+        meta = cls._resolve_kfp_metadata(include_augur_run_id=False)
+        if not any(k in meta for k in ("kfp.run_id", "kfp.run_name", "kfp.task_name")):
+            return {}
         return meta
 
     @classmethod

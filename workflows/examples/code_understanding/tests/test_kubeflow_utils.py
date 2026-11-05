@@ -445,8 +445,88 @@ class TestMlFlowCustomTelemetryKfpRunTagging(unittest.TestCase):
         self.assertEqual(info.tags["kfp.task_name"], "indexing")
         self.assertEqual(info.tags["mlflow.traceName"], "AsyncCompletions (tokens: 1500 | in: 1200, out: 300)")
         self.assertEqual(info.trace_metadata["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
-        self.assertNotIn("kfp_run_id", info.trace_metadata)
+        self.assertNotIn("kfp_run_id", info.tags)
         self.assertEqual(info.request_metadata["kfp.run_id"], "301ee2d5-951e-4cea-83d5-6a0909218423")
+
+    def test_mlflow_asset_loader_log_results_and_lookup_inject_kfp_run_id(self):
+        """Verify MlFlowAssetLoader.log_results and _get_absolute_artifact_uri use kfp.run_id when KFP_RUN_ID is set."""
+        import types
+        from loaders import mlflow_asset_loader as loader_mod
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = None
+        run_ctx = MagicMock()
+        run_ctx.info = types.SimpleNamespace(run_id="mlflow-run-1")
+        run_ctx.__enter__.return_value = run_ctx
+        run_ctx.__exit__.return_value = False
+        mock_mlflow.start_run.return_value = run_ctx
+
+        mock_client = MagicMock()
+        loader = object.__new__(loader_mod.MlFlowAssetLoader)
+        loader.get_or_create_experiment_by_name = MagicMock(
+            return_value=types.SimpleNamespace(experiment_id="99", artifact_location="s3://bucket/exp99")
+        )
+
+        env = {
+            "KFP_RUN_ID": "kfp-uuid-1234",
+            "KFP_RUN_NAME": "single-repo-run",
+            "KFP_TASK_NAME": "analysis-task",
+            "HOSTNAME": "analysis-pod-1",
+            "AUGUR_TIMING_ENABLED": "false",
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             patch.dict(os.environ, env, clear=True), \
+             patch.object(loader_mod, "mlflow", mock_mlflow), \
+             patch.object(loader_mod, "MlflowClient", return_value=mock_client):
+            result_path = os.path.join(tmp_dir, "report.md")
+            loader.log_results(
+                result_path,
+                artifact_path="migration-reports/repo-main",
+                tags={"category": "analysis", "git_slug": "repo-main"},
+                content="# Report",
+            )
+            mock_mlflow.set_tags.assert_called_once_with({
+                "kfp.run_id": "kfp-uuid-1234",
+                "kfp.run_name": "single-repo-run",
+                "kfp.task_name": "analysis-task",
+                "k8s.pod.name": "analysis-pod-1",
+                "category": "analysis",
+                "git_slug": "repo-main",
+            })
+
+            # Verify _get_absolute_artifact_uri scopes by kfp.run_id first and falls back if empty
+            matched_run = types.SimpleNamespace(info=types.SimpleNamespace(artifact_uri="s3://bucket/run-scoped"))
+            mock_client.search_runs.side_effect = [[], [matched_run]]
+            uri = loader._get_absolute_artifact_uri(
+                "repo-datasets/repo-main/output",
+                experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                tags={"category": "indexing", "git_slug": "repo-main"},
+            )
+            self.assertEqual(mock_client.search_runs.call_count, 2)
+            first_filter = mock_client.search_runs.call_args_list[0].kwargs["filter_string"]
+            second_filter = mock_client.search_runs.call_args_list[1].kwargs["filter_string"]
+            self.assertIn('tags."kfp.run_id" = \'kfp-uuid-1234\'', first_filter)
+            self.assertNotIn("kfp.run_id", second_filter)
+            self.assertTrue(uri.startswith("s3://bucket/run-scoped"))
+
+    def test_trackers_upload_to_mlflow_include_kfp_run_id_tag(self):
+        """Verify DurationTracker, TokenCostTracker, and CodeMetricsTracker tag MLflow runs with kfp.run_id."""
+        from utils.duration_tracker import DurationTracker
+        from utils.token_tracker import TokenCostTracker
+        from utils.code_metrics_tracker import CodeMetricsTracker
+
+        env = {"KFP_RUN_ID": "kfp-uuid-5678", "KFP_TASK_NAME": "indexing-task"}
+        with patch.dict(os.environ, env, clear=True):
+            dur = DurationTracker()
+            self.assertEqual(dur._get_kfp_run_tags().get("kfp.run_id"), "kfp-uuid-5678")
+
+            tok = TokenCostTracker()
+            self.assertEqual(tok.run_id, "kfp-uuid-5678")
+            self.assertEqual(tok._get_kfp_run_tags().get("kfp.run_id"), "kfp-uuid-5678")
+
+            cm = CodeMetricsTracker()
+            self.assertEqual(cm.run_id, "kfp-uuid-5678")
+            self.assertEqual(cm._get_kfp_run_tags().get("kfp.run_id"), "kfp-uuid-5678")
 
 
 if __name__ == "__main__":

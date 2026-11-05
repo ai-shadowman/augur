@@ -52,6 +52,16 @@ class MlFlowAssetLoader(AssetLoader):
         if os.environ.get("MLFLOW_TRACKING_TOKEN"):
             _patch_session_forwarded_token()
 
+    @staticmethod
+    def _get_kfp_run_tags() -> dict:
+        """Resolves Kubeflow Pipeline run/task metadata tags for MLflow runs when available."""
+        try:
+            from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+            return MlFlowCustomTelemetry.resolve_kfp_run_tags()
+        except Exception as e:
+            logging.debug(f"Failed to resolve KFP run tags: {e}")
+            return {}
+
     @timed("mlflow.artifact_uri_lookup", "mlflow")
     def _get_absolute_artifact_uri(self,
                                    asset_file_path: str,
@@ -66,19 +76,47 @@ class MlFlowAssetLoader(AssetLoader):
         if experiment_name == self.STATIC_ASSET_EXPERIMENT:
 
             filter_string = f"tags.latest = 'true'"
+            logging.debug(f"Filter string: {filter_string}")
+            latest_runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                filter_string=filter_string,
+                order_by=["attributes.start_time DESC"],
+                max_results=1,
+            )
 
         else:
 
-            filter_string = " AND ".join([f"tags.\"{k}\" = '{v}'" for k, v in (tags or {}).items() if v])
+            base_tags = dict(tags or {})
+            filter_string = " AND ".join([f"tags.\"{k}\" = '{v}'" for k, v in base_tags.items() if v])
+            kfp_run_id = base_tags.get("kfp.run_id") or self._get_kfp_run_tags().get("kfp.run_id")
 
-        logging.debug(f"Filter string: {filter_string}")
-
-        latest_runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string=filter_string,
-            order_by=["attributes.start_time DESC"],
-            max_results=1,
-        )
+            if kfp_run_id and "kfp.run_id" not in base_tags:
+                scoped_tags = dict(base_tags)
+                scoped_tags["kfp.run_id"] = kfp_run_id
+                scoped_filter = " AND ".join([f"tags.\"{k}\" = '{v}'" for k, v in scoped_tags.items() if v])
+                logging.debug(f"Filter string (scoped to kfp.run_id): {scoped_filter}")
+                latest_runs = client.search_runs(
+                    experiment_ids=[experiment.experiment_id],
+                    filter_string=scoped_filter,
+                    order_by=["attributes.start_time DESC"],
+                    max_results=1,
+                )
+                if not latest_runs:
+                    logging.debug(f"No runs matched kfp.run_id='{kfp_run_id}'; falling back to filter: {filter_string}")
+                    latest_runs = client.search_runs(
+                        experiment_ids=[experiment.experiment_id],
+                        filter_string=filter_string,
+                        order_by=["attributes.start_time DESC"],
+                        max_results=1,
+                    )
+            else:
+                logging.debug(f"Filter string: {filter_string}")
+                latest_runs = client.search_runs(
+                    experiment_ids=[experiment.experiment_id],
+                    filter_string=filter_string,
+                    order_by=["attributes.start_time DESC"],
+                    max_results=1,
+                )
 
         asset_base_uri = latest_runs[0].info.artifact_uri if latest_runs else experiment.artifact_location
 
@@ -264,10 +302,14 @@ class MlFlowAssetLoader(AssetLoader):
                             pass
                         lifecycle.update(fields)
 
+                    merged_tags = dict(self._get_kfp_run_tags())
                     if tags:
+                        merged_tags.update(tags)
+
+                    if merged_tags:
 
                         with timing_span("mlflow.run_tags", "mlflow", **fields):
-                            mlflow.set_tags(tags)
+                            mlflow.set_tags(merged_tags)
 
                     with timing_span("mlflow.artifact_upload", "io", **fields):
                         if is_dir:

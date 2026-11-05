@@ -161,8 +161,13 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             if mlflow.active_run():
                 mlflow.end_run()
 
+            from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+            _kfp_tags = MlFlowCustomTelemetry.resolve_kfp_run_tags()
+
             with mlflow.start_run(
-                experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
+                experiment_id=experiment.experiment_id,
+                run_name=self._RUN_NAME,
+                tags=_kfp_tags or None,
             ):
 
                 results = mlflow.evaluate(
@@ -277,7 +282,13 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-        _eval_tags = {"category": "evaluation", "git_slug": slug}
+        from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+
+        _eval_tags = {
+            **MlFlowCustomTelemetry.resolve_kfp_run_tags(),
+            "category": "evaluation",
+            "git_slug": slug,
+        }
 
         if mlflow.active_run():
             mlflow.end_run()

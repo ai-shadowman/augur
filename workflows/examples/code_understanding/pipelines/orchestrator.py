@@ -59,7 +59,15 @@ def single_repo_pipeline(
             multi_repo=multi_repo,
         )
     else:
+        import uuid
         from pipelines.base.data_generation import generate_git_slug
+
+        if not os.environ.get("KFP_RUN_ID"):
+            os.environ["KFP_RUN_ID"] = (
+                os.environ.get("PIPELINE_RUN_ID")
+                or os.environ.get("AUGUR_RUN_ID")
+                or str(uuid.uuid4())
+            )
 
         git_slug = generate_git_slug(git_repo, git_branch)
         source_path = f"{parent_source_path}/{git_slug}"
@@ -104,7 +112,15 @@ def multi_repo_pipeline(
             graphrag_dir=idx.outputs["graphrag_dir"],
         )
     else:
+        import uuid
         from loaders.default_asset_loader import DefaultAssetLoader
+
+        if not os.environ.get("KFP_RUN_ID"):
+            os.environ["KFP_RUN_ID"] = (
+                os.environ.get("PIPELINE_RUN_ID")
+                or os.environ.get("AUGUR_RUN_ID")
+                or str(uuid.uuid4())
+            )
 
         env_repos = os.getenv("GIT_REPO_LIST_CONTENTS")
         git_repos = json.loads(env_repos) if env_repos else (DefaultAssetLoader().download("repos/repo_list.json") or [])

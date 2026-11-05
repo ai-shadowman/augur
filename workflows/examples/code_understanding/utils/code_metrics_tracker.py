@@ -243,7 +243,7 @@ class CodeMetricsTracker:
     def __init__(self, git_slug: Optional[str] = None, git_repo: Optional[str] = None, run_id: Optional[str] = None):
         self.git_slug: Optional[str] = git_slug
         self.git_repo: Optional[str] = git_repo
-        self.run_id: Optional[str] = run_id
+        self.run_id: Optional[str] = run_id or self._get_kfp_run_tags().get("kfp.run_id")
         self.total_repo_files: int = 0
         self.total_repo_lines: int = 0
         self.languages: Dict[str, Dict[str, int]] = {}
@@ -729,6 +729,14 @@ class CodeMetricsTracker:
             elif inventory["locations"] is not None:
                 current["locations"].update(inventory["locations"])
 
+    @staticmethod
+    def _get_kfp_run_tags() -> Dict[str, str]:
+        try:
+            from telemetry.mlflow_custom_telemetry import MlFlowCustomTelemetry
+            return MlFlowCustomTelemetry.resolve_kfp_run_tags()
+        except Exception:
+            return {}
+
     def log_to_mlflow(self, run_id: Optional[str] = None):
         """Logs file counts and line metrics to MLflow."""
         try:
@@ -749,10 +757,15 @@ class CodeMetricsTracker:
                 metrics[f"{prefix}_code_lines"] = float(rec.get("code_lines", 0))
                 metrics[f"{prefix}_total_lines"] = float(rec.get("total_lines", 0))
 
+            kfp_tags = self._get_kfp_run_tags()
             if mlflow.active_run():
+                if kfp_tags:
+                    mlflow.set_tags(kfp_tags)
                 mlflow.log_metrics(metrics)
             elif run_id:
                 with mlflow.start_run(run_id=run_id):
+                    if kfp_tags:
+                        mlflow.set_tags(kfp_tags)
                     mlflow.log_metrics(metrics)
         except Exception as e:
             logging.debug("Failed logging code metrics to MLflow: %s", e)
@@ -767,6 +780,7 @@ class CodeMetricsTracker:
         """Uploads project_metrics.json as an MLflow artifact and via DefaultAssetLoader."""
         slug = git_slug or self.git_slug
         tags = {
+            **self._get_kfp_run_tags(),
             "git_slug": str(slug or "multi-repo"),
             "category": "telemetry",
             "type": "code_metrics",

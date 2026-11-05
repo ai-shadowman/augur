@@ -195,6 +195,7 @@ class AnalysisPipeline:
         git_repo: str = "",
         git_branch: str = "main",
         multi_repo: bool = False,
+        kfp_run_id: str = "",
     ):
         """Queries the GraphRAG index with an LLM and returns the result."""
         import asyncio
@@ -202,6 +203,9 @@ class AnalysisPipeline:
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.graphrag_utils import DependencyAnalyzer
         from pipelines.base.data_generation import generate_git_slug
+
+        if kfp_run_id:
+            os.environ["KFP_RUN_ID"] = kfp_run_id
 
         use_multi_repo = multi_repo or not git_repo
 
