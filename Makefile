@@ -473,7 +473,9 @@ oc-deploy-console-app: apply-console-src
 	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
-		oc new-build --name="$$APP_NAME" --binary --strategy=docker --dockerfile-path=ui/Dockerfile -n "$$KFP_NAMESPACE" && \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
+		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
 	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
 	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
@@ -552,12 +554,14 @@ oc-deploy-console-plugin: apply-plugin-src
 	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
-		oc new-build --name="$$APP_NAME" --binary --strategy=docker --dockerfile-path=ui/Dockerfile -n "$$KFP_NAMESPACE" && \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
+		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
 	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
 	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$PLUGIN_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
-		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker --dockerfile-path=Dockerfile -n "$$KFP_NAMESPACE" && \
+		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
 	echo "==> Building $$PLUGIN_NAME in-cluster from console-plugin/..." && \
 	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
