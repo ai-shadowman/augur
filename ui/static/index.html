@@ -1309,8 +1309,21 @@
       }
     }
 
+    function buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug) {
+      const qs = new URLSearchParams();
+      if (gitRepo) {
+        qs.set("git_repo", gitRepo);
+        if (gitBranch) qs.set("git_branch", gitBranch);
+      } else if (projectSlug) {
+        qs.set("multi_repo", "true");
+        qs.set("project_slug", projectSlug);
+      }
+      const query = qs.toString();
+      return `/api/v2/pipelines/runs/${runId}${query ? `?${query}` : ""}`;
+    }
+
     async function openReport(runId, runName, gitRepo, gitBranch, projectSlug) {
-      const snap = await api(`/api/v2/pipelines/runs/${runId}`);
+      const snap = await api(buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug));
       $("report-viewer-title").textContent = gitRepo
         ? `${shortName(gitRepo).replace(/\.git$/, "")} @ ${gitBranch}`
         : projectSlug
@@ -1823,7 +1836,14 @@
           const btn = this;
           if (!btn.dataset.runId) return;
           try {
-            const snap = await api(`/api/v2/pipelines/runs/${btn.dataset.runId}`);
+            const snap = await api(
+              buildRunDetailUrl(
+                btn.dataset.runId,
+                btn.dataset.gitRepo || "",
+                btn.dataset.gitBranch || "",
+                btn.dataset.projectSlug || "",
+              )
+            );
             const report = snap.analysis_report;
             if (!report) { banner("No analysis report available.", true); return; }
             const blob = new Blob([report], { type: "text/markdown" });

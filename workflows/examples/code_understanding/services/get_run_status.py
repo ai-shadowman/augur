@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from utils.service_utils import create_client
@@ -22,13 +23,22 @@ def get_kfp_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any
         state = "PENDING"
 
     display = getattr(run_obj, "display_name", None) or getattr(run_obj, "name", "") or job_id
+    display_lower = display.lower()
     rc = getattr(run_obj, "runtime_config", None)
     params = (getattr(rc, "parameters", None) if rc else None) or {}
     git_repo = str(params.get("git_repo") or "")
     git_branch = str(params.get("git_branch") or "main") if git_repo else ""
     project_slug = str(params.get("project_slug") or "")
     project_workspace = str(params.get("project_workspace") or "")
-    is_multi = display.startswith("multi_repo") or not git_repo
+    is_single = display_lower.startswith("single_repo") or display_lower.startswith("single-repo")
+    is_multi = (
+        display_lower.startswith("multi_repo")
+        or display_lower.startswith("multi-repo")
+        or (not git_repo and not is_single)
+    )
+    if not is_multi and not git_repo:
+        git_repo = os.getenv("GIT_REPO", "")
+        git_branch = str(params.get("git_branch") or os.getenv("GIT_BRANCH", "main") or "main")
 
     if is_multi and not project_slug:
         raw_repos = params.get("runnable_repos", "")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from utils.service_utils import create_client, get_kfp_experiment_name
 
@@ -57,7 +58,16 @@ def list_kfp_runs(
         elif project_workspace and project_workspace.lower() != "default":
             if not workspace or workspace.strip().lower() == "default":
                 continue
-        is_multi = display.startswith("multi_repo") or not git_repo
+        display_lower = display.lower()
+        is_single = display_lower.startswith("single_repo") or display_lower.startswith("single-repo")
+        is_multi = (
+            display_lower.startswith("multi_repo")
+            or display_lower.startswith("multi-repo")
+            or (not git_repo and not is_single)
+        )
+        if not is_multi and not git_repo:
+            git_repo = os.getenv("GIT_REPO", "")
+            git_branch = str(params.get("git_branch") or os.getenv("GIT_BRANCH", "main") or "main")
 
         repos: list[dict] = []
         if is_multi:

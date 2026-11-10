@@ -28,7 +28,11 @@ class AssetLoader(ABC):
     def __init__(self, namespace: str | None = None, workspace: str | None = None):
         self.namespace = namespace
         self.workspace = workspace
+        self._namespace = namespace
+        self._workspace = workspace
         prefix = resolve_mlflow_prefix(namespace=namespace, workspace=workspace)
+        default_ns_prefix = resolve_mlflow_prefix(namespace=namespace, workspace="default")
+        self.DEFAULT_STATIC_ASSET_EXPERIMENT = f"{default_ns_prefix}/code-refactoring/assets/static"
         self.STATIC_ASSET_EXPERIMENT = f"{prefix}/code-refactoring/assets/static"
         self.RESULT_DIRECTORY_ASSET_EXPERIMENT = f"{prefix}/code-refactoring/assets/result-directories"
         self.RESULT_ASSET_EXPERIMENT = f"{prefix}/code-refactoring/assets/results"

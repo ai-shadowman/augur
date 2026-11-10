@@ -160,12 +160,28 @@ class MlFlowAssetLoader(AssetLoader):
                 static_base_uri = self._get_artifact_base_uri(
                     client, static_experiment, "tags.latest = 'true'"
                 )
+                default_static_name = getattr(self, "DEFAULT_STATIC_ASSET_EXPERIMENT", None)
+                if (
+                    static_base_uri == static_experiment.artifact_location
+                    and default_static_name
+                    and default_static_name != self.STATIC_ASSET_EXPERIMENT
+                ):
+                    default_static_exp = self.get_or_create_experiment_by_name(
+                        client, default_static_name
+                    )
+                    static_base_uri = self._get_artifact_base_uri(
+                        client, default_static_exp, "tags.latest = 'true'"
+                    )
                 enrichment_uris.insert(0, posixpath.join(static_base_uri, asset_file_path))
             return enrichment_uris
 
+        static_exps = {
+            self.STATIC_ASSET_EXPERIMENT,
+            getattr(self, "DEFAULT_STATIC_ASSET_EXPERIMENT", self.STATIC_ASSET_EXPERIMENT),
+        }
         filter_string = (
             "tags.latest = 'true'"
-            if experiment_name == self.STATIC_ASSET_EXPERIMENT and not tags
+            if experiment_name in static_exps and not tags
             else " AND ".join(tag_filter_parts)
         )
 
@@ -231,14 +247,16 @@ class MlFlowAssetLoader(AssetLoader):
             enrichment_tags["git_slug"] = None
         else:
             enrichment_tags["git_slug"] = git_slug
+        default_static_exp = getattr(
+            self, "DEFAULT_STATIC_ASSET_EXPERIMENT", self.STATIC_ASSET_EXPERIMENT
+        )
         return [
             (enrichment_path, self.RESULT_DIRECTORY_ASSET_EXPERIMENT, enrichment_tags),
             (asset_path, target_exp, asset_tags),
             *(
-                [(asset_path, f"{self._namespace}/code-refactoring/assets", asset_tags)]
-                if self._namespace
-                and target_exp == self.STATIC_ASSET_EXPERIMENT
-                and target_exp != f"{self._namespace}/code-refactoring/assets"
+                [(asset_path, default_static_exp, asset_tags)]
+                if target_exp == self.STATIC_ASSET_EXPERIMENT
+                and default_static_exp != self.STATIC_ASSET_EXPERIMENT
                 else []
             ),
         ]
@@ -678,7 +696,10 @@ class MlFlowAssetLoader(AssetLoader):
             return repos
         from .local_asset_loader import LocalAssetLoader
 
-        return LocalAssetLoader(namespace=self._namespace, workspace=self._workspace).load_catalog_repos()
+        return LocalAssetLoader(
+            namespace=getattr(self, "namespace", None),
+            workspace=getattr(self, "workspace", None),
+        ).load_catalog_repos()
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts in the MLflow registry matching the given prefix."""

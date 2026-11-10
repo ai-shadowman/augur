@@ -262,6 +262,33 @@ class TestServicesMultiProjectIsolation(unittest.TestCase):
         self.assertEqual(slug, "my-multi-slug")
         mock_cls.assert_called_once_with(namespace="ns-1", workspace="ws-1")
 
+    def test_mlflow_asset_loader_download_candidates_and_catalog_fallback(self):
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+        loader_ws = MlFlowAssetLoader(namespace="ns-1", workspace="ws-1")
+        self.assertEqual(loader_ws.namespace, "ns-1")
+        self.assertEqual(loader_ws._namespace, "ns-1")
+        self.assertEqual(loader_ws.workspace, "ws-1")
+        self.assertEqual(loader_ws._workspace, "ws-1")
+        self.assertEqual(
+            loader_ws.STATIC_ASSET_EXPERIMENT,
+            "ns-1/ws-1/code-refactoring/assets/static",
+        )
+        self.assertEqual(
+            loader_ws.DEFAULT_STATIC_ASSET_EXPERIMENT,
+            "ns-1/code-refactoring/assets/static",
+        )
+        candidates = loader_ws._get_download_candidate_metadata(
+            "repos/repo_list.json", None, None, None
+        )
+        self.assertEqual(len(candidates), 3)
+        self.assertEqual(candidates[1][1], "ns-1/ws-1/code-refactoring/assets/static")
+        self.assertEqual(candidates[2][1], "ns-1/code-refactoring/assets/static")
+
+        with mock.patch.object(loader_ws, "download", return_value=None):
+            repos = loader_ws.load_catalog_repos()
+            self.assertIsInstance(repos, list)
+
     def test_list_indexed_repos_separates_multi_repo_projects_by_slug(self):
         from ui.indexes import list_indexed_repos, queryable_options
 
@@ -292,7 +319,9 @@ class TestServicesMultiProjectIsolation(unittest.TestCase):
         fake_mlflow_client.get_experiment_by_name.return_value = fake_exp
         fake_mlflow_client.search_runs.return_value = [run1, run2]
 
-        with mock.patch("mlflow.tracking.MlflowClient", return_value=fake_mlflow_client):
+        fake_tracking_mod = sys.modules.get("mlflow.tracking") or mock.MagicMock()
+        sys.modules["mlflow.tracking"] = fake_tracking_mod
+        with mock.patch.object(fake_tracking_mod, "MlflowClient", return_value=fake_mlflow_client):
             with mock.patch("ui.indexes._load_configured_repos", return_value=[]):
                 with mock.patch.dict(os.environ, {"ASSET_LOADER": "mlflow"}, clear=False):
                     indexes = list_indexed_repos(
