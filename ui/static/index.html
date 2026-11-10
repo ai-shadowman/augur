@@ -987,7 +987,7 @@
   </div>
   <script>
     if (typeof mermaid !== "undefined") {
-      mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+      mermaid.initialize({ startOnLoad: false, theme: "neutral", suppressErrorRendering: true });
     }
 
     function runMermaid(container) {
@@ -998,6 +998,8 @@
       // freeze the UI or block other diagrams from rendering.
       (async () => {
         for (const node of nodes) {
+          const originalSrc = node.dataset.mermaidSrc || node.textContent || "";
+          node.dataset.mermaidSrc = originalSrc;
           await new Promise(resolve => setTimeout(resolve, 0));
           try {
             const timeout = new Promise((_, reject) =>
@@ -1010,7 +1012,7 @@
           } catch (e) {
             // Parse error or timeout — replace the block with a small warning badge;
             // hovering over it opens a flyover showing the error and diagram source.
-            const src = node.textContent || "";
+            const src = originalSrc;
             const msg = (e && e.message) ? e.message : String(e);
             const badge = document.createElement("span");
             badge.className = "cu-diagram-err";
@@ -1077,15 +1079,17 @@
     function renderMarkdown(src) {
       const fences = [];
       let text = String(src ?? "").replace(/\r\n/g, "\n");
-      text = text.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      text = text.replace(/```([\w+-]*)[ \t]*\n?([\s\S]*?)```/g, (_, lang, code) => {
         const content = code.replace(/\n$/, "");
-        if (lang.toLowerCase() === "mermaid") {
+        const isMermaid = lang.toLowerCase() === "mermaid" ||
+          (!lang && /^\s*(?:graph|flowchart)\s+(?:TD|TB|BT|RL|LR)\b/m.test(content));
+        if (isMermaid) {
           const sanitized = content
             .split("\n").map(l => {
               if (/^\s*%(?!%)/.test(l)) return l.replace(/^(\s*)%/, "$1%%"); // lone % → %%
               return l.replace(/\s*%%.*$/, "");  // strip ALL %% comments (standalone and inline)
             }).join("\n")
-            .replace(/\[([^\]"]+)\]/g, (m, label) => /[()]/.test(label) ? `["${label}"]` : m);
+            .replace(/\[([^\]"]+)\]/g, (m, label) => /[()/:@]/.test(label) ? `["${label}"]` : m);
           fences.push(`<pre class="mermaid">${esc(sanitized)}</pre>`);
         } else {
           fences.push(`<pre><code>${esc(content)}</code></pre>`);
@@ -1481,8 +1485,8 @@
         tab.onclick = () => showReportTab(tab.dataset.report);
       });
 
-      showReportTab("analysis");
       showTab("analysis");
+      showReportTab("analysis");
     }
 
 
@@ -1581,6 +1585,9 @@
           $("run-view-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
           $("run-download-report").dataset.runId = selected ? cb.dataset.runId : "";
           $("run-download-report").dataset.runName = selected ? cb.dataset.runName : "";
+          $("run-download-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+          $("run-download-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+          $("run-download-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
           $("run-rerun").dataset.runId = selected ? cb.dataset.runId : "";
           $("run-rerun").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
           $("run-rerun").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
