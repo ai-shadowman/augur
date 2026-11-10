@@ -638,6 +638,11 @@
     .cu-md-table th { background: #f0f4f8; font-weight: 600; }
     .cu-md-table tr:nth-child(even) td { background: #f9fbfd; }
     .cu-md pre.mermaid { background: transparent; color: inherit; padding: 0; }
+    .cu-mermaid-diagram { margin: 0.75rem 0; overflow-x: auto; }
+    .cu-diagram-err-box { margin: 0.75rem 0; border: 1px solid var(--cu-gold); border-left: 4px solid var(--cu-gold); border-radius: 4px; background: #fffbe6; padding: 0.75rem 1rem; }
+    .cu-diagram-err-header { color: #8a5d00; font-weight: 700; font-size: 0.88rem; margin-bottom: 0.35rem; }
+    .cu-diagram-err-msg { color: var(--cu-charcoal); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin-bottom: 0.5rem; }
+    .cu-diagram-err-box pre.cu-diagram-err-src { margin: 0; max-height: 260px; overflow: auto; }
     .cu-diagram-err { position: relative; display: inline-flex; align-items: center; gap: 0.3rem; cursor: default; color: var(--cu-gold); font-size: 0.85rem; font-weight: 600; padding: 0.15rem 0.4rem; border: 1px solid var(--cu-gold); border-radius: 3px; background: #fffbe6; }
     .cu-diagram-flyover { position: fixed; z-index: 9999; max-width: 480px; min-width: 220px; background: #fff; border: 1px solid var(--cu-border); border-left: 4px solid var(--cu-gold); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.13); padding: 0.65rem 0.85rem; font-size: 0.82rem; pointer-events: none; }
     .cu-diagram-flyover-title { color: var(--cu-gold); font-weight: 700; margin-bottom: 0.3rem; }
@@ -987,54 +992,77 @@
   </div>
   <script>
     if (typeof mermaid !== "undefined") {
-      mermaid.initialize({ startOnLoad: false, theme: "neutral", suppressErrorRendering: true });
+      try {
+        mermaid.initialize({ startOnLoad: false, theme: "neutral", suppressErrorRendering: true });
+      } catch (e) {
+        console.error("Failed to initialize mermaid:", e);
+      }
+    }
+
+    let _mermaidCounter = 0;
+
+    function renderMermaidError(node, err, src) {
+      const msg = (err && (err.str || err.message)) ? (err.str || err.message) : String(err || "Unknown Mermaid error");
+      const box = document.createElement("div");
+      box.className = "cu-diagram-err-box";
+      box.innerHTML =
+        `<div class="cu-diagram-err-header">\u26a0 Diagram could not be rendered</div>` +
+        `<div class="cu-diagram-err-msg">${esc(msg)}</div>` +
+        (src ? `<pre class="cu-diagram-err-src"><code>${esc(src)}</code></pre>` : "");
+      node.replaceWith(box);
     }
 
     function runMermaid(container) {
-      if (typeof mermaid === "undefined") return;
+      if (!container) return;
       const nodes = Array.from(container.querySelectorAll("pre.mermaid")).filter(n => !n.dataset.processed);
       if (!nodes.length) return;
+      if (typeof mermaid === "undefined") {
+        for (const node of nodes) {
+          node.dataset.processed = "true";
+          renderMermaidError(node, new Error("mermaid.js is not loaded"), node.textContent || "");
+        }
+        return;
+      }
       // Render one diagram per event-loop tick so a slow/broken diagram cannot
       // freeze the UI or block other diagrams from rendering.
       (async () => {
         for (const node of nodes) {
-          const originalSrc = node.dataset.mermaidSrc || node.textContent || "";
+          if (node.dataset.processed) continue;
+          node.dataset.processed = "true";
+          const originalSrc = (node.dataset.mermaidSrc || node.textContent || "").trim();
           node.dataset.mermaidSrc = originalSrc;
-          await new Promise(resolve => setTimeout(resolve, 0));
+          if (!originalSrc) {
+            renderMermaidError(node, new Error("Empty Mermaid diagram"), "");
+            continue;
+          }
+          await new Promise(resolve => setTimeout(resolve, 16));
+          const renderId = `cu-mermaid-${++_mermaidCounter}-${Date.now()}`;
           try {
             const timeout = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("mermaid timeout")), 5000)
+              setTimeout(() => reject(new Error("Mermaid rendering timed out after 5s")), 5000)
             );
-            const result = mermaid.run({ nodes: [node] });
-            if (result && typeof result.then === "function") {
-              await Promise.race([result, timeout]);
+            const rendered = await Promise.race([
+              mermaid.render(renderId, originalSrc),
+              timeout,
+            ]);
+            if (rendered && rendered.svg) {
+              const div = document.createElement("div");
+              div.className = "cu-mermaid-diagram";
+              div.innerHTML = rendered.svg;
+              if (typeof rendered.bindFunctions === "function") {
+                rendered.bindFunctions(div);
+              }
+              node.replaceWith(div);
+            } else {
+              renderMermaidError(node, new Error("Mermaid returned empty diagram output"), originalSrc);
             }
           } catch (e) {
-            // Parse error or timeout — replace the block with a small warning badge;
-            // hovering over it opens a flyover showing the error and diagram source.
-            const src = originalSrc;
-            const msg = (e && e.message) ? e.message : String(e);
-            const badge = document.createElement("span");
-            badge.className = "cu-diagram-err";
-            badge.textContent = "\u26a0 Diagram error";
-            let fly = null;
-            badge.addEventListener("mouseenter", ev => {
-              fly = document.createElement("div");
-              fly.className = "cu-diagram-flyover";
-              fly.innerHTML =
-                `<div class="cu-diagram-flyover-title">\u26a0 Diagram could not be rendered</div>` +
-                `<div class="cu-diagram-flyover-msg">${msg.replace(/</g, "&lt;")}</div>` +
-                `<pre class="cu-diagram-flyover-src">${src.replace(/</g, "&lt;")}</pre>`;
-              document.body.appendChild(fly);
-              const r = badge.getBoundingClientRect();
-              const fw = fly.offsetWidth, fh = fly.offsetHeight;
-              const top = r.bottom + 6 + fh > window.innerHeight ? r.top - fh - 6 : r.bottom + 6;
-              const left = Math.min(r.left, window.innerWidth - fw - 10);
-              fly.style.top = top + "px";
-              fly.style.left = Math.max(6, left) + "px";
-            });
-            badge.addEventListener("mouseleave", () => { if (fly) { fly.remove(); fly = null; } });
-            node.replaceWith(badge);
+            console.error("Mermaid render error:", e);
+            renderMermaidError(node, e, originalSrc);
+          } finally {
+            document.getElementById(renderId)?.remove();
+            document.getElementById(`d${renderId}`)?.remove();
+            document.getElementById(`i${renderId}`)?.remove();
           }
         }
       })();
@@ -1089,7 +1117,7 @@
               if (/^\s*%(?!%)/.test(l)) return l.replace(/^(\s*)%/, "$1%%"); // lone % → %%
               return l.replace(/\s*%%.*$/, "");  // strip ALL %% comments (standalone and inline)
             }).join("\n")
-            .replace(/\[([^\]"]+)\]/g, (m, label) => /[()/:@]/.test(label) ? `["${label}"]` : m);
+            .replace(/\[([^\]"\n]+)\]/g, (m, label) => /[()/:@]/.test(label) ? `["${label}"]` : m);
           fences.push(`<pre class="mermaid">${esc(sanitized)}</pre>`);
         } else {
           fences.push(`<pre><code>${esc(content)}</code></pre>`);
@@ -1100,20 +1128,31 @@
       const html = [];
       let i = 0;
       const isFence = (line) => line.trim().match(/^%%FENCE(\d+)%%$/);
-      const isList = (line) => /^[-*] /.test(line);
-      const isOl = (line) => /^\d+\. /.test(line);
-      const isHeading = (line) => /^#{1,3} /.test(line);
+      const isList = (line) => /^\s*[-*] /.test(line);
+      const isOl = (line) => /^\s*\d+\. /.test(line);
+      const isHeading = (line) => /^#{1,6}\s+/.test(line);
       const isStep = (line) => /^\*\*\d+\.\s+.+\*\*$/.test(line.trim());
       const isTableRow = (line) => /\|/.test(line.trim()) && line.trim().length > 1;
-      const isTableSep = (line) => /^\s*\|?(\s*:?-{2,}:?\s*\|)+(\s*:?-{2,}:?\s*)?\s*$/.test(line.trim());
+      const isTableSep = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed.includes("-") || !trimmed.includes("|")) return false;
+        const cells = trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|");
+        return cells.length > 0 && cells.every(c => /^\s*:?-+[:]?\s*$/.test(c));
+      };
+      const isTableStart = (idx) =>
+        idx < lines.length &&
+        isTableRow(lines[idx]) &&
+        idx + 1 < lines.length &&
+        isTableSep(lines[idx + 1]);
       while (i < lines.length) {
+        const prevI = i;
         const line = lines[i];
         const fence = isFence(line);
         if (fence) { html.push(fences[Number(fence[1])]); i += 1; continue; }
         if (!line.trim()) { i += 1; continue; }
         if (/^---+$/.test(line.trim())) { html.push("<hr/>"); i += 1; continue; }
         if (isHeading(line)) {
-          const level = line.match(/^#+/)[0].length;
+          const level = Math.min(6, line.match(/^#+/)[0].length);
           html.push(`<h${level}>${inlineMd(line.replace(/^#+\s+/, ""))}</h${level}>`);
           i += 1; continue;
         }
@@ -1124,7 +1163,7 @@
         if (isList(line)) {
           html.push("<ul>");
           while (i < lines.length && isList(lines[i])) {
-            html.push(`<li>${inlineMd(lines[i].replace(/^[-*] /, ""))}</li>`);
+            html.push(`<li>${inlineMd(lines[i].replace(/^\s*[-*] /, ""))}</li>`);
             i += 1;
           }
           html.push("</ul>");
@@ -1133,19 +1172,19 @@
         if (isOl(line)) {
           html.push("<ol>");
           while (i < lines.length && isOl(lines[i])) {
-            html.push(`<li>${inlineMd(lines[i].replace(/^\d+\. /, ""))}</li>`);
+            html.push(`<li>${inlineMd(lines[i].replace(/^\s*\d+\. /, ""))}</li>`);
             i += 1;
           }
           html.push("</ol>");
           continue;
         }
-        if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        if (isTableStart(i)) {
           const headers = parseTableRow(line);
           i += 2;
           let tbl = `<table class="cu-md-table"><thead><tr>`;
           headers.forEach(h => { tbl += `<th>${inlineMd(h)}</th>`; });
           tbl += `</tr></thead><tbody>`;
-          while (i < lines.length && isTableRow(lines[i])) {
+          while (i < lines.length && isTableRow(lines[i]) && !isFence(lines[i])) {
             const cells = parseTableRow(lines[i]);
             tbl += `<tr>`;
             cells.forEach(c => { tbl += `<td>${inlineMd(c)}</td>`; });
@@ -1165,9 +1204,13 @@
           !isOl(lines[i]) &&
           !isFence(lines[i]) &&
           !isStep(lines[i]) &&
-          !isTableRow(lines[i]) &&
+          !isTableStart(i) &&
           !/^---+$/.test(lines[i].trim())
         ) {
+          para.push(lines[i]);
+          i += 1;
+        }
+        if (i === prevI) {
           para.push(lines[i]);
           i += 1;
         }
@@ -1473,11 +1516,24 @@
             }
           }
         } else {
-          $("report-viewer-content").innerHTML = content
-            ? renderMarkdown(content)
-            : `<p class="cu-muted">No analysis report available.</p>`;
-          runMermaid($("report-viewer-content"));
-          if (content) appendReportDl(content, `${runName || "report"}_analysis_report.md`);
+          if (!content) {
+            $("report-viewer-content").innerHTML = `<p class="cu-muted">No analysis report available.</p>`;
+          } else {
+            try {
+              $("report-viewer-content").innerHTML = renderMarkdown(content);
+              runMermaid($("report-viewer-content"));
+            } catch (err) {
+              console.error("Failed to render analysis report:", err);
+              const errMsg = (err && err.message) ? err.message : String(err);
+              $("report-viewer-content").innerHTML =
+                `<div class="cu-diagram-err-box">` +
+                `<div class="cu-diagram-err-header">\u26a0 Report rendering error</div>` +
+                `<div class="cu-diagram-err-msg">${esc(errMsg)}</div>` +
+                `</div>` +
+                `<pre><code>${esc(content)}</code></pre>`;
+            }
+            appendReportDl(content, `${runName || "report"}_analysis_report.md`);
+          }
         }
       }
 
