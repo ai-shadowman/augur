@@ -35,6 +35,7 @@ install:
 	\
 	echo "==> Running helm upgrade..." && \
 	helm upgrade --install agent-mesh-for-sw resources/helm \
+		--namespace "$$KFP_NAMESPACE" \
 		--no-hooks \
 		--create-namespace \
 		--set namespace="$$KFP_NAMESPACE" \
