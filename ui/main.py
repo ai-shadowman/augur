@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("LITELLM_TELEMETRY", "False")
+os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
 
 _UI_DIR = str(Path(__file__).resolve().parent)
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)

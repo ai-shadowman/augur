@@ -165,6 +165,24 @@ spec:
               value: "{{ .Values.augurRepoBranch | default .Values.repoRef }}"
             - name: PYTHONUNBUFFERED
               value: "1"
+            - name: TIKTOKEN_CACHE_DIR
+              value: "/opt/app-root/src/tiktoken_cache"
+            - name: LITELLM_LOCAL_MODEL_COST_MAP
+              value: "True"
+            - name: LITELLM_TELEMETRY
+              value: "False"
+            - name: DISABLE_LITELLM_VERSION_CHECK
+              value: "True"
+            - name: UV_OFFLINE
+              value: "1"
+            - name: PIP_NO_INDEX
+              value: "1"
+            {{- if not .Values.tls.enableVerification }}
+            - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
+              value: "true"
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
+            {{- end }}
           envFrom:
             - secretRef:
                 name: code-understanding-env

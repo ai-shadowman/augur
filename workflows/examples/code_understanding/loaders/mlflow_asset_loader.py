@@ -234,6 +234,13 @@ class MlFlowAssetLoader(AssetLoader):
         return [
             (enrichment_path, self.RESULT_DIRECTORY_ASSET_EXPERIMENT, enrichment_tags),
             (asset_path, target_exp, asset_tags),
+            *(
+                [(asset_path, f"{self._namespace}/code-refactoring/assets", asset_tags)]
+                if self._namespace
+                and target_exp == self.STATIC_ASSET_EXPERIMENT
+                and target_exp != f"{self._namespace}/code-refactoring/assets"
+                else []
+            ),
         ]
 
     def _download_and_merge_enrichments(self, uris: list[str], dst_path: str = None):
@@ -666,7 +673,12 @@ class MlFlowAssetLoader(AssetLoader):
 
     def load_catalog_repos(self) -> list:
         """Downloads the full repo catalog from MLflow, trying enrichments first and falling back to static assets."""
-        return self.download("repos/repo_list.json") or []
+        repos = self.download("repos/repo_list.json") or self.download("repos/repo_list1.json")
+        if repos:
+            return repos
+        from .local_asset_loader import LocalAssetLoader
+
+        return LocalAssetLoader(namespace=self._namespace, workspace=self._workspace).load_catalog_repos()
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts in the MLflow registry matching the given prefix."""

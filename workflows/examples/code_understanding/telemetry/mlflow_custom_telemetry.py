@@ -3,6 +3,11 @@ import logging
 import os
 import types
 from typing import Any, Dict, Optional
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("LITELLM_TELEMETRY", "False")
+os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
+
 import mlflow
 import litellm
 import requests

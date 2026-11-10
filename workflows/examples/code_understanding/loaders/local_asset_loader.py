@@ -139,8 +139,10 @@ class LocalAssetLoader(AssetLoader):
 
     def load_catalog_repos(self) -> list:
         """Returns the repo catalog from the local asset store, falling back to GIT_REPO_LIST_CONTENTS."""
-        return self.download("repos/repo_list.json") or json.loads(
-            os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]"
+        return (
+            self.download("repos/repo_list.json")
+            or self.download("repos/repo_list1.json")
+            or json.loads(os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]")
         )
 
     def num_prompts(self, prompt_prefix: str) -> int:

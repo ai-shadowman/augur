@@ -9,6 +9,10 @@ from utils.request_timing import timing_span, response_usage, record_callback_ti
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("LITELLM_TELEMETRY", "False")
+os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
+
 try:
     import litellm
     HAS_LITELLM = True

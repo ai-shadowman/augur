@@ -635,6 +635,12 @@ class DependencyAnalyzer:
         )
 
         template_path = f"{template_dir}/settings.yaml.in"
+        if not os.path.exists(template_path):
+            from loaders.local_asset_loader import LocalAssetLoader
+
+            LocalAssetLoader(namespace=namespace, workspace=workspace).download(
+                "graphrag/settings.yaml.in", download_dir=template_dir
+            )
         output_path = f"{output_dir}/settings.yaml"
 
         try:
@@ -668,6 +674,12 @@ class DependencyAnalyzer:
                 raw_template = raw_template.replace(
                     "default_chat_model:\n",
                     "default_chat_model:\n    max_tokens: 8192\n",
+                    1,
+                )
+            if chat_block_match and "encoding_model:" not in chat_block_match.group(1):
+                raw_template = raw_template.replace(
+                    "default_chat_model:\n",
+                    "default_chat_model:\n    encoding_model: cl100k_base\n",
                     1,
                 )
 
