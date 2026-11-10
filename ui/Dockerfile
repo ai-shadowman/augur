@@ -1,30 +1,23 @@
-FROM registry.access.redhat.com/ubi9/python-312:latest
+FROM registry.access.redhat.com/ubi9/python-311:latest
 
-WORKDIR /app
+USER root
+ARG UV_VERSION=0.12.11
+RUN python3 -m pip install --no-cache-dir "uv==${UV_VERSION}"
 
-USER 0
+WORKDIR /opt/app-root/src
 
-COPY resources/images/data-analysis/requirements.txt /tmp/analysis-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/analysis-requirements.txt \
-    && pip install --no-cache-dir \
-        "fastapi>=0.110" \
-        "uvicorn[standard]>=0.27" \
-        "kfp>=2.7,<3" \
-        "kfp-kubernetes>=1.2" \
-        "kubernetes>=28.1" \
-    && rm -f /tmp/analysis-requirements.txt
+COPY ui/pyproject.toml .
+COPY ui/uv.lock .
+RUN uv sync --frozen --no-install-project --no-dev
 
-COPY --chown=1001:0 workflows/examples/code_understanding /app/workflows/examples/code_understanding
-COPY --chown=1001:0 api /app/api
-COPY --chown=1001:0 ui  /app/ui
+COPY ui/ .
+COPY api/ /opt/app-root/api/
+COPY workflows/examples/code_understanding/ /opt/app-root/workflows/examples/code_understanding/
 
-ENV PYTHONPATH=/app:/app/workflows/examples/code_understanding \
+ENV PYTHONPATH=/opt/app-root:/opt/app-root/src:/opt/app-root/workflows/examples/code_understanding \
     PYTHONUNBUFFERED=1 \
-    PORT=8080 \
     HOME=/tmp
 
 USER 1001
-
 EXPOSE 8080
-
-CMD ["python", "-m", "uvicorn", "ui.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/opt/app-root/src/.venv/bin/python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
