@@ -24,7 +24,10 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, install_kfp_package=False)
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown],
                                   git_repo: str = "", git_branch: str = "",
-                                  multi_repo: bool = False):
+                                  multi_repo: bool = False,
+                                  pipeline_run_id: str = "",
+                                  project_slug: str = "",
+                                  project_workspace: str = ""):
 
     import logging
     import os
@@ -32,12 +35,22 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+
     git_repo = git_repo or os.getenv("GIT_REPO", "")
     git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
-        write_migration_report(tmp_graphrag, report.path, git_repo=git_repo,
-                               git_branch=git_branch, multi_repo=multi_repo)
+        write_migration_report(
+            tmp_graphrag,
+            report.path,
+            git_repo=git_repo,
+            git_branch=git_branch,
+            multi_repo=multi_repo,
+            pipeline_run_id=pipeline_run_id,
+            project_slug=project_slug,
+        )
 
     try:
         from utils.duration_tracker import DurationTracker
@@ -66,7 +79,13 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, install_kfp_package=False)
-def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Markdown]):
+def run_analysis_multi_repo_op(
+    graphrag_dir: Input[Dataset],
+    report: Output[Markdown],
+    pipeline_run_id: str = "",
+    project_slug: str = "",
+    project_workspace: str = "",
+):
     """Runs migration report generation across the combined multi-repo GraphRAG index."""
 
     import logging
@@ -75,8 +94,17 @@ def run_analysis_multi_repo_op(graphrag_dir: Input[Dataset], report: Output[Mark
     from utils.kubeflow_utils import setup_logging, read_from_input_artifact
     setup_logging()
 
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
-        write_migration_report(tmp_graphrag, report.path, multi_repo=True)
+        write_migration_report(
+            tmp_graphrag,
+            report.path,
+            multi_repo=True,
+            pipeline_run_id=pipeline_run_id,
+            project_slug=project_slug,
+        )
 
     try:
         from utils.code_metrics_tracker import CodeMetricsTracker
@@ -97,10 +125,20 @@ def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
+    pipeline_run_id: str = "",
+    project_slug: str = "",
+    project_workspace: str = "",
 ):
 
-    generate_migration_report_op(graphrag_dir=graphrag_dir, git_repo=git_repo,
-                                 git_branch=git_branch, multi_repo=multi_repo)
+    generate_migration_report_op(
+        graphrag_dir=graphrag_dir,
+        git_repo=git_repo,
+        git_branch=git_branch,
+        multi_repo=multi_repo,
+        pipeline_run_id=pipeline_run_id,
+        project_slug=project_slug,
+        project_workspace=project_workspace,
+    )
 
 
 ##############################################################################

@@ -25,8 +25,15 @@ def benchmark_llm_op(
     git_repo: str = "",
     git_branch: str = "main",
     multi_repo: bool = False,
+    pipeline_run_id: str = "",
+    project_workspace: str = "",
 ) -> int:
     """Benchmarks the configured LLM endpoint using GuideLLM to find the best concurrency setting."""
+    import os
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+    if pipeline_run_id:
+        return 0
     from contextlib import nullcontext
     from pipelines.base.data_generation import generate_git_slug
     from utils.kubeflow_utils import setup_logging
@@ -107,13 +114,22 @@ def prepare_environment_op(git_repo: str,
     git_branch: str, 
     git_username: str, 
     git_token: str, 
-    source_dir: Output[Dataset]):
+    source_dir: Output[Dataset],
+    pipeline_run_id: str = "",
+    project_workspace: str = ""):
     """Clones the repository and archives it as a gzip tarball."""
 
     from pipelines.base.data_generation import prepare_environment, generate_git_slug
     from utils.kubeflow_utils import setup_logging, write_to_output_artifact, use_ephemeral_space
     setup_logging()
     import logging, os
+
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+    if pipeline_run_id:
+        with write_to_output_artifact(source_dir):
+            pass
+        return
 
     with write_to_output_artifact(source_dir) as tmp_source, use_ephemeral_space() as tmp_target:
         git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
@@ -180,7 +196,9 @@ def generate_code_and_meta_op(
     source_dir: Input[Dataset], 
     target_dir: Output[Dataset],
     multi_repo: bool = False,
-    max_concurrency: int = 0):
+    max_concurrency: int = 0,
+    pipeline_run_id: str = "",
+    project_workspace: str = ""):
     """Detects languages and generates code metadata for all detected languages."""
 
     from pipelines.base.data_generation import (
@@ -193,6 +211,13 @@ def generate_code_and_meta_op(
 
     import logging, os
     from contextlib import nullcontext
+
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+    if pipeline_run_id:
+        with write_to_output_artifact(target_dir):
+            pass
+        return
 
     if max_concurrency and int(max_concurrency) > 0:
         try:
@@ -388,28 +413,24 @@ def generate_code_and_meta_op(
 
 @inject_secret_as_env(secret_name="code-understanding-env")
 @dsl.component(base_image=DATA_GENERATION_BASE_IMAGE, install_kfp_package=False)
-def get_repo_list_op() -> list:
+def get_repo_list_op(
+    pipeline_run_id: str = "",
+    runnable_repos: str = "[]",
+    project_workspace: str = "",
+) -> list:
     """Downloads and returns the repo list from the asset loader."""
 
-    from loaders.default_asset_loader import DefaultAssetLoader
+    from pipelines.base.data_generation import DataGenerationPipeline
     from utils.kubeflow_utils import setup_logging
-
     import os
-    import json
-    
+
     setup_logging()
-    import logging
-    logging.info(os.getenv("GIT_REPO_LIST_CONTENTS"))
+    if project_workspace:
+        os.environ["PROJECT_WORKSPACE"] = project_workspace
+    if pipeline_run_id:
+        return []
 
-    repos = json.loads(os.getenv("GIT_REPO_LIST_CONTENTS"))
-
-    # Ensure missing optional fields exist in every item before sending to KFP ParallelFor
-    for repo in repos:
-        repo.setdefault("git_branch", "main")
-        repo.setdefault("git_username", "")
-        repo.setdefault("git_token", "")
-
-    return repos
+    return DataGenerationPipeline.get_repo_list(runnable_repos)
 
 
 ##############################################################################
@@ -424,6 +445,8 @@ def _run_pipeline(
     git_token: str = os.getenv("GIT_TOKEN", ""),
     multi_repo: bool = False,
     max_concurrency: int = 0,
+    pipeline_run_id: str = "",
+    project_workspace: str = "",
 ) -> Dataset:
 
     bench = benchmark_llm_op(
@@ -431,13 +454,17 @@ def _run_pipeline(
         git_repo=git_repo,
         git_branch=git_branch,
         multi_repo=multi_repo,
+        pipeline_run_id=pipeline_run_id,
+        project_workspace=project_workspace,
     )
 
     prep = prepare_environment_op(
         git_repo=git_repo,
         git_branch=git_branch,
         git_username=git_username,
-        git_token=git_token
+        git_token=git_token,
+        pipeline_run_id=pipeline_run_id,
+        project_workspace=project_workspace,
     )
     prep.after(bench)
 
@@ -447,16 +474,30 @@ def _run_pipeline(
         source_dir=prep.outputs["source_dir"],
         multi_repo=multi_repo,
         max_concurrency=bench.output,
+        pipeline_run_id=pipeline_run_id,
+        project_workspace=project_workspace,
     )
 
     return gen.outputs["target_dir"]
 
 @dsl.pipeline(name="data-generation-multi-repo-pipeline")
-def _run_pipeline_multi_repo():
+def _run_pipeline_multi_repo(
+    pipeline_run_id: str = "",
+    runnable_repos: str = "[]",
+    project_workspace: str = "",
+):
     """Generates code metadata for all repositories in the asset-loader repo list."""
 
-    bench = benchmark_llm_op(multi_repo=True)
-    repo_list_task = get_repo_list_op()
+    bench = benchmark_llm_op(
+        multi_repo=True,
+        pipeline_run_id=pipeline_run_id,
+        project_workspace=project_workspace,
+    )
+    repo_list_task = get_repo_list_op(
+        pipeline_run_id=pipeline_run_id,
+        runnable_repos=runnable_repos,
+        project_workspace=project_workspace,
+    )
     repo_list_task.after(bench)
 
     with dsl.ParallelFor(items=repo_list_task.output,
@@ -469,6 +510,8 @@ def _run_pipeline_multi_repo():
             git_token=repo.git_token,
             multi_repo=True,
             max_concurrency=bench.output,
+            pipeline_run_id=pipeline_run_id,
+            project_workspace=project_workspace,
         )
 
 

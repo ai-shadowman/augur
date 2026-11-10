@@ -3,7 +3,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: run-pipelines
+  name: run-pipelines{{- if .Values.runPipelines.jobId }}-{{ .Values.runPipelines.jobId }}{{- end }}
   namespace: {{ .Values.namespace }}
 spec:
   backoffLimit: 0

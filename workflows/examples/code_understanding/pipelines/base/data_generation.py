@@ -929,10 +929,46 @@ class DataGenerationPipeline:
 
         return result
 
+    @staticmethod
+    def get_repo_list(runnable_repos: str = "[]") -> list:
+        """Resolves and logs the repository list for a multi-repo pipeline run."""
+        import json
+        import logging
+        import os
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        repos = json.loads(runnable_repos or "[]") if runnable_repos else []
+        if not repos:
+            env_contents = os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]"
+            repos = json.loads(env_contents)
+        if not repos:
+            try:
+                repos = DefaultAssetLoader().load_catalog_repos() or []
+            except Exception:
+                repos = []
+
+        for repo in repos:
+            repo.setdefault("git_branch", "main")
+            repo.setdefault("git_username", "")
+            repo.setdefault("git_token", "")
+
+        try:
+            DefaultAssetLoader().log_repos(repos)
+        except Exception as e:
+            logging.debug(f"Failed to log repos in get_repo_list: {e}")
+
+        return repos
+
     def run_multi_repo(self, git_repos: list):
         """Runs run for each repository in git_repos and returns a list of status dicts."""
+        from loaders.default_asset_loader import DefaultAssetLoader
         from utils import code_utils
         import os
+
+        try:
+            DefaultAssetLoader().log_repos(git_repos)
+        except Exception as e:
+            logging.debug(f"Failed to log repos in run_multi_repo: {e}")
 
         parent_source_path = os.getenv("PARENT_SOURCE_PATH", "source")
         parent_target_path = os.getenv("PARENT_TARGET_PATH", "target")

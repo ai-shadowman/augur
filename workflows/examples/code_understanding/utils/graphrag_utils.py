@@ -532,7 +532,16 @@ class DependencyAnalyzer:
         return result
 
     @staticmethod
-    def download_graphrag_directory(download_dir: str, git_slug: str, multi_repo: bool, git_repo: str = ""):
+    def download_graphrag_directory(
+        download_dir: str,
+        git_slug: str,
+        multi_repo: bool,
+        git_repo: str = "",
+        namespace: str | None = None,
+        workspace: str | None = None,
+        pipeline_run_id: str = "",
+        project_slug: str = "",
+    ):
         """Downloads GraphRAG index artifacts and prepares settings.
 
         Args:
@@ -541,6 +550,10 @@ class DependencyAnalyzer:
             git_slug: Repository slug used to scope the artifact lookup.
             multi_repo: Whether the index spans multiple repositories.
             git_repo: Repository URL, used in error messages.
+            namespace: Optional Kubernetes namespace override.
+            workspace: Optional Project Workspace override.
+            pipeline_run_id: Optional pipeline run ID to scope the index lookup.
+            project_slug: Optional multi-repo project slug override.
 
         Raises:
             Exception: If the index artifacts cannot be downloaded.
@@ -549,35 +562,77 @@ class DependencyAnalyzer:
         import traceback
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_result_directory
+        from utils.pipeline_utils import sanitize_slug
 
         output_dir = os.path.join(download_dir, "output")
+        effective_slug = (
+            sanitize_slug(project_slug) or git_slug or None
+            if multi_repo
+            else git_slug
+        )
 
-        try:
-            download_result_directory(
-                git_slug=git_slug,
-                download_dir=output_dir,
-                results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
-                multi_repo=multi_repo,
-                asset_tags={"git_slug": git_slug, "multi_repo": multi_repo, "category": "indexing"},
-            )
-        except Exception:
-            logging.debug(traceback.format_exc())
-            raise
+        candidate_calls = []
+        base_tags = {"multi_repo": multi_repo, "category": "indexing"}
+        if effective_slug:
+            slug_tags = {**base_tags, "git_slug": effective_slug}
+            if pipeline_run_id:
+                candidate_calls.append((effective_slug, {**slug_tags, "pipeline_run_id": pipeline_run_id}))
+            candidate_calls.append((effective_slug, slug_tags))
+        if multi_repo:
+            if pipeline_run_id:
+                candidate_calls.append((effective_slug, {**base_tags, "pipeline_run_id": pipeline_run_id}))
+                candidate_calls.append((None, {**base_tags, "pipeline_run_id": pipeline_run_id}))
+            candidate_calls.append((None, base_tags))
 
-        DependencyAnalyzer.prepare_settings(template_dir=output_dir, output_dir=download_dir)
+        last_exc = None
+        for cand_slug, cand_tags in candidate_calls:
+            try:
+                download_result_directory(
+                    git_slug=cand_slug,
+                    download_dir=output_dir,
+                    results_prefix=DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS,
+                    multi_repo=multi_repo,
+                    asset_tags=cand_tags,
+                    namespace=namespace,
+                    workspace=workspace,
+                )
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                logging.debug(traceback.format_exc())
+
+        if last_exc is not None:
+            raise last_exc
+
+        DependencyAnalyzer.prepare_settings(
+            template_dir=output_dir,
+            output_dir=download_dir,
+            namespace=namespace,
+            workspace=workspace,
+        )
 
     @staticmethod
-    def prepare_settings(template_dir: str, output_dir: str):
+    def prepare_settings(
+        template_dir: str,
+        output_dir: str,
+        namespace: str | None = None,
+        workspace: str | None = None,
+    ):
         """Downloads and processes the GraphRAG settings template, writing the result to output_dir.
 
         Args:
             template_dir: Directory to download settings.yaml.in into.
             output_dir: Directory to write the processed settings.yaml into.
+            namespace: Optional Kubernetes namespace override.
+            workspace: Optional Project Workspace override.
         """
         import string
         from loaders.default_asset_loader import DefaultAssetLoader
 
-        DefaultAssetLoader().download("graphrag/settings.yaml.in", download_dir=template_dir)
+        DefaultAssetLoader(namespace=namespace, workspace=workspace).download(
+            "graphrag/settings.yaml.in", download_dir=template_dir
+        )
 
         template_path = f"{template_dir}/settings.yaml.in"
         output_path = f"{output_dir}/settings.yaml"

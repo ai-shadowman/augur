@@ -1,0 +1,2282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Code Understanding</title>
+  <style>
+    :root {
+      --cu-red: #ee0000;
+      --cu-red-dark: #c9190b;
+      --cu-blue: #0066cc;
+      --cu-charcoal: #151515;
+      --cu-gray: #6a6e73;
+      --cu-border: #d2d2d2;
+      --cu-bg: #f0f0f0;
+      --cu-green: #3d7317;
+      --cu-gold: #f0ab00;
+      --cu-font: "RedHatText", "Red Hat Text", Helvetica, Arial, sans-serif;
+    }
+    body.dark {
+      --cu-charcoal: #e0e0e0;
+      --cu-red: #ff6b6b;
+      --cu-red-dark: #ff5252;
+      --cu-bg: #1a1a1a;
+      --cu-border: #3a3a3a;
+      --cu-gray: #bdbdbd;
+      background: #121212;
+      color: #e0e0e0;
+    }
+    body.dark .cu-card { background: #292929; color: #e0e0e0; }
+    body.dark .cu-field,
+    body.dark input,
+    body.dark select,
+    body.dark textarea,
+    body.dark .cu-modal,
+    body.dark .cu-slider,
+    body.dark .cu-help-popover,
+    body.dark .cu-report-viewer-body { background: #1e1e1e; color: #e0e0e0; }
+    body.dark .cu-field,
+    body.dark input,
+    body.dark select,
+    body.dark textarea { border-color: #555; }
+    body.dark .cu-chip { background: #2a2a2a; color: #ccc; }
+    body.dark .cu-chip.indexed { background: #1a3a1a; color: #6fbf6f; }
+    body.dark .cu-chip.uploaded { background: #3a3010; color: #d4a843; }
+    body.dark .cu-chip.default { background: #3a1a1a; color: #e06060; }
+    body.dark .cu-chip.failed { background: #3a1a1a; color: #ff6b6b; }
+    body.dark .cu-toggle-group label { background: #2a2a2a; color: #ccc; border-color: #555; }
+    body.dark .cu-toggle-group { border-color: #555; }
+    body.dark .cu-rail { background: #161616; border-right-color: #3a3a3a; }
+    body.dark .cu-nav-item:hover { background: #252525; }
+    body.dark .cu-nav-item.active { background: #1e1e1e; }
+    body.dark .cu-status { background: #1e1e1e; }
+    body.dark .cu-run-table { background: #292929; }
+    body.dark .cu-run-table th { background: #252525; }
+    body.dark .cu-run-table td { border-bottom-color: #2a2a2a; }
+    body.dark .cu-run-table tbody tr:hover td { background: #252525; }
+    body.dark .cu-repo-list { background: #292929; }
+    body.dark .cu-repo:hover { background: #252525; }
+    body.dark .cu-repo { border-bottom-color: #2a2a2a; }
+    body.dark .cu-job-card { background: #1e1e1e; }
+    body.dark .cu-thinking { background: #1e1e1e; }
+    body.dark .cu-chat { background: #161616; }
+    body.dark .cu-bubble.assistant { background: #1e1e1e; }
+    body.dark .cu-bubble.user { background: #e0e0e0; color: #151515; }
+    body.dark .cu-btn-secondary { background: #2a2a2a; color: #e0e0e0; border-color: #888; }
+    body.dark .cu-btn-secondary:hover:not(:disabled) { background: #353535; }
+    body.dark .cu-modal-close:hover { background: #353535; }
+    body.dark .cu-md code { background: #2a2a2a; }
+    body.dark .cu-md-table th { background: #252525; }
+    body.dark .cu-md-table tr:nth-child(even) td { background: #1a1a1a; }
+    body.dark .cu-note { background: #3a1a1a; }
+    body.dark .cu-alert-warning { background: #2a2510; }
+    body.dark .cu-check { background: #2a2a2a; border-color: #888; }
+    body.dark .cu-check:checked { background: #fff; border-color: #fff; }
+    body.dark .cu-radio { background: #2a2a2a; border-color: #888; }
+    body.dark .cu-brand { border-bottom-color: #3a3a3a; }
+    body.dark .cu-breadcrumb li + li::before { border-color: #a0a0a0; }
+    body.dark .cu-breadcrumb a { color: var(--cu-red); }
+    body.dark .cu-breadcrumb a:hover { color: var(--cu-red-dark); }
+    body.dark .cu-repo-toggle { color: var(--cu-red); }
+    body.dark .cu-repo-toggle:hover { color: var(--cu-red-dark); }
+    body.dark .cu-diagram-flyover { background: #1e1e1e; }
+    body.dark .cu-bubble-dl-btn:hover { background: #2a2a2a; }
+    body.dark .cu-btn-icon { border-color: #555; }
+    body.dark .cu-btn-icon:hover { border-color: #ccc; color: #e0e0e0; }
+    body.dark .cu-run-list-actions button { border-color: #555; }
+    body.dark .cu-run-list-actions button:hover { border-color: #ccc; color: #e0e0e0; }
+    body.dark .cu-paginator { border-top-color: #3a3a3a; }
+    body.dark .cu-modal-header { border-bottom-color: #3a3a3a; }
+    body.dark .cu-modal-footer { border-top-color: #3a3a3a; }
+    body.dark .cu-slider-header { border-bottom-color: #3a3a3a; }
+    body.dark .cu-progress { background: #2a2a2a; }
+
+    body.dark .cu-row-fail td.gridjs-td { background-color: #3a1a1a !important; color: #fff !important; }
+    body.dark tr.cu-row-fail { background-color: #3a1a1a !important; color: #fff !important; }
+    body.dark tr.cu-row-fail td { background-color: #3a1a1a !important; color: #fff !important; }
+    body.dark .cu-eval-chip { background: #3a3a3a; color: #e0e0e0; }
+    body.dark .cu-eval-chip--overall { background: #e0e0e0; color: #1a1a1a; }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--cu-font);
+      font-size: 16px;
+      line-height: 1.5;
+      color: var(--cu-charcoal);
+      background: #fff;
+    }
+    button, input, textarea, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    h1, h2, h3 { margin: 0; font-weight: 500; }
+
+
+    .cu-shell {
+      display: grid;
+      grid-template-columns: 20.5rem minmax(0, 1fr);
+      min-height: 100vh;
+      background: var(--cu-bg);
+    }
+    .cu-rail {
+      background: #fafafa;
+      padding: 1.25rem 1rem;
+      border-right: 1px solid var(--cu-border);
+    }
+    .cu-main { padding: 1rem 1.25rem 2rem; min-width: 0; }
+
+    .cu-status {
+      background: #fff;
+      padding: 0.85rem 1rem;
+      border: 1px solid var(--cu-border);
+      border-left: 4px solid var(--cu-green);
+      margin-bottom: 1.25rem;
+    }
+    .cu-status.warn { border-left-color: var(--cu-gold); }
+    .cu-status.checking { animation: cu-blink 1.2s ease-in-out infinite; }
+    .cu-muted { color: var(--cu-gray); font-size: 0.875rem; }
+    .cu-rail h2 {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--cu-gray);
+      margin: 1.15rem 0 0.55rem;
+    }
+    .cu-rail-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .cu-nav { display: flex; flex-direction: column; gap: 0; margin: 1rem 0 0.75rem; }
+    .cu-nav-item {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.6rem 0.85rem;
+      font-size: 0.9rem; font-weight: 400;
+      color: var(--cu-charcoal);
+      background: none; border: none; border-left: 3px solid transparent;
+      cursor: pointer; text-align: left; width: 100%;
+    }
+    .cu-nav-item:hover { background: #f0f0f0; color: var(--cu-red); }
+    .cu-nav-item.active { border-left-color: var(--cu-red); color: var(--cu-red); background: #fff; }
+    .cu-nav-item svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+    .cu-brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 1.1rem 0.5rem 1.25rem;
+      border-bottom: 1px solid var(--cu-border);
+      margin-bottom: 0.5rem;
+      gap: 0.35rem;
+    }
+    .cu-brand-icon { margin-bottom: 0.35rem; flex-shrink: 0; }
+    .cu-brand-eyebrow { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cu-gray); line-height: 1.3; }
+    .cu-brand-title { font-size: 1.05rem; font-weight: 700; color: var(--cu-text); line-height: 1.2; }
+    .cu-brand-sub { font-size: 0.75rem; color: var(--cu-gray); line-height: 1.4; }
+
+    .cu-index-title {
+      font-weight: 600;
+      font-size: 0.88rem;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .cu-index-owner { color: var(--cu-gray); font-size: 0.75rem; }
+    .cu-repo-toggle { color: #d44; }
+    .cu-repo-toggle:hover { color: #b33; }
+
+    .cu-job-card {
+      display: grid;
+      grid-template-columns: 0.55rem minmax(0, 1fr) auto;
+      gap: 0.55rem;
+      align-items: center;
+      background: #fff;
+      border: 1px solid var(--cu-border);
+      border-radius: 4px;
+      padding: 0.55rem 0.7rem;
+    }
+    .cu-job-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--cu-gray); }
+    .cu-job-dot.Succeeded { background: var(--cu-green); }
+    .cu-job-dot.Failed { background: var(--cu-red); }
+    .cu-job-dot.Running, .cu-job-dot.Pending { background: var(--cu-gold); animation: cu-blink 1.2s ease-in-out infinite; }
+    .cu-job-dot.Skipped { background: var(--cu-green); }
+    .cu-job-dot.Cancelled { background: var(--cu-red); }
+    .cu-run-table .cu-job-dot { width: 1rem; height: 1rem; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; border-radius: 0; animation: none; }
+    .cu-run-table .cu-job-dot::after { display: inline-block; font-size: 0.85rem; line-height: 1; }
+    .cu-run-table .cu-job-dot.Succeeded::after, .cu-run-table .cu-job-dot.Skipped::after { content: "✓"; color: var(--cu-green); font-weight: 700; }
+    .cu-run-table .cu-job-dot.Failed::after,    .cu-run-table .cu-job-dot.Cancelled::after { content: "✕"; color: var(--cu-red); font-weight: 700; }
+    .cu-run-table .cu-job-dot.Running, .cu-run-table .cu-job-dot.Pending { width: 0.85rem; height: 0.85rem; border: 2px solid #d2d2d2; border-top-color: var(--cu-gold); border-radius: 50%; animation: cu-spin 0.7s linear infinite; }
+    .cu-run-table .cu-job-dot.Running::after, .cu-run-table .cu-job-dot.Pending::after { content: none; }
+    .cu-job-kind { font-size: 0.78rem; font-weight: 600; }
+    .cu-job-name { font-size: 0.7rem; color: var(--cu-gray); word-break: break-all; }
+
+    .cu-help { position: relative; display: inline-flex; align-items: center; vertical-align: middle; margin-left: 0.3rem; }
+    .cu-help-btn { background: none; border: none; cursor: pointer; color: var(--cu-gray); padding: 0; line-height: 1; display: inline-flex; }
+    .cu-help-btn:hover { color: var(--cu-text); }
+    .cu-help-popover { display: none; position: absolute; left: 1.4rem; top: 50%; transform: translateY(-50%); z-index: 100; background: #fff; border: 1px solid var(--cu-border); border-radius: 6px; padding: 0.75rem 1rem; width: 22rem; font-size: 0.82rem; line-height: 1.5; color: var(--cu-text); box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+    .cu-help:hover .cu-help-popover,
+    .cu-help:focus-within .cu-help-popover,
+    .cu-help.open .cu-help-popover { display: inline-block; }
+    .cu-run-table { width: 100%; border-collapse: collapse; background: #fff; }
+    .cu-run-table th {
+      padding: 0.4rem 0.9rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--cu-gray);
+      border-bottom: 1px solid var(--cu-border);
+      background: #fafafa;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .cu-run-table td {
+      padding: 0.7rem 0.9rem;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+    .cu-run-table tbody tr:last-child td { border-bottom: 0; }
+    .cu-run-table tbody tr:hover td { background: #f5f5f5; }
+    .cu-run-list-actions { display: flex; gap: 0.4rem; }
+    .cu-paginator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.65rem;
+      border-top: 1px solid var(--cu-border);
+    }
+    .cu-run-list-actions button { display: inline-flex; align-items: center; gap: 0.3rem; background: none; border: 1px solid var(--cu-border); border-radius: 4px; padding: 0.2rem 0.6rem; cursor: pointer; color: var(--cu-gray); font-size: 0.85rem; }
+    .cu-run-list-actions button:hover { color: var(--cu-charcoal); border-color: var(--cu-charcoal); }
+    .cu-report-viewer { margin-top: 1.5rem; border-top: 1px solid var(--cu-border); padding-top: 1rem; }
+    .cu-report-viewer h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.15rem; }
+    #report-viewer-subtitle { font-size: 0.8rem; color: var(--cu-gray); margin-bottom: 0.6rem; }
+    .cu-report-viewer-body { background: #fff; border: 1px solid var(--cu-border); border-radius: 0.75rem; box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05); padding: 1.5rem; }
+    .cu-report-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--cu-border); margin-bottom: 0.75rem; }
+    .cu-bubble-footer { display: flex; justify-content: flex-end; margin-top: 0.5rem; padding-top: 0.35rem; border-top: 1px solid #f0f0f0; }
+    .cu-bubble-dl-btn { background: none; border: none; padding: 0.15rem 0.2rem; color: #c8cacc; display: inline-flex; align-items: center; border-radius: 3px; line-height: 0; cursor: pointer; }
+    .cu-bubble-dl-btn:hover { color: var(--cu-gray); background: #f0f0f0; }
+    .cu-report-tab { background: none; border: 0; border-bottom: 3px solid transparent; padding: 0.4rem 0.85rem; font-size: 0.85rem; font-weight: 600; color: var(--cu-charcoal); cursor: pointer; }
+    .cu-report-tab:hover { color: var(--cu-red); }
+    .cu-report-tab.active { border-bottom-color: var(--cu-red); color: var(--cu-red); }
+
+
+    .cu-breadcrumb-row { display: flex; align-items: center; justify-content: space-between; }
+    .cu-breadcrumb {
+      display: flex;
+      align-items: center;
+      list-style: none;
+      margin: 0 0 0.35rem;
+      padding: 0;
+      font-size: 0.82rem;
+    }
+    .cu-breadcrumb li { display: flex; align-items: center; }
+    .cu-breadcrumb li + li::before {
+      content: "";
+      display: inline-block;
+      width: 0.4em;
+      height: 0.4em;
+      border-right: 1px solid #6a6e73;
+      border-top: 1px solid #6a6e73;
+      transform: rotate(45deg);
+      margin: 0 0.5rem;
+    }
+    .cu-breadcrumb a { color: #c9190b; text-decoration: none; }
+    .cu-breadcrumb a:hover { color: var(--cu-red-dark); text-decoration: underline; }
+    .cu-breadcrumb li:last-child { color: var(--cu-charcoal); font-weight: 600; }
+
+    .cu-card {
+      background: #fff;
+      border: 1px solid var(--cu-border);
+      border-radius: 0.75rem;
+      padding: 1rem 1.15rem 1.25rem;
+    }
+
+    .cu-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2.25rem;
+      padding: 0 1rem;
+      border-radius: 999px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      border: 1px solid transparent;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .cu-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .cu-btn svg.cu-icon { width: 0.95rem; height: 0.95rem; flex-shrink: 0; }
+    .cu-btn { gap: 0.35rem; }
+    .cu-btn-primary { background: var(--cu-red); color: #fff; }
+    .cu-btn-primary:hover:not(:disabled) { background: var(--cu-red-dark); }
+    .cu-btn-secondary { background: #fff; color: var(--cu-charcoal); border-color: var(--cu-charcoal); }
+    .cu-btn-secondary:hover:not(:disabled) { background: #f0f0f0; }
+    .cu-btn-link {
+      background: none;
+      color: var(--cu-blue);
+      border: 0;
+      min-height: 2.25rem;
+      padding: 0 0.65rem;
+    }
+    .cu-btn-link:hover:not(:disabled) { color: #004080; text-decoration: underline; }
+    .cu-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.85rem 0; }
+
+    .cu-field, .cu-select, textarea {
+      width: 100%;
+      min-height: 2.25rem;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid #8a8d90;
+      border-radius: 0;
+      background: #fff;
+    }
+    .cu-field:focus, .cu-select:focus, textarea:focus {
+      outline: 2px solid var(--cu-blue);
+      outline-offset: -1px;
+      border-color: var(--cu-blue);
+    }
+    textarea { min-height: 4.5rem; resize: vertical; }
+
+    .cu-repo-list { border: 1px solid var(--cu-border); background: #fff; max-height: 21rem; overflow-y: auto; border-radius: 0.5rem; }
+    .cu-repo {
+      display: grid;
+      grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+      column-gap: 0.75rem;
+      align-items: center;
+      width: 100%;
+      margin: 0;
+      padding: 0.7rem 0.9rem;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+    }
+    .cu-repo:last-child { border-bottom: 0; }
+    .cu-repo:hover { background: #f5f5f5; }
+    .cu-check {
+      appearance: none;
+      width: 1rem;
+      height: 1rem;
+      min-width: 1rem;
+      margin: 0;
+      padding: 0;
+      border: 1px solid #6a6e73;
+      border-radius: 2px;
+      background: #fff;
+      justify-self: center;
+      cursor: pointer;
+    }
+    .cu-check:checked {
+      background: #8a8d90;
+      border-color: #8a8d90;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+    .cu-check.cu-radio { border-radius: 50%; }
+    .cu-check.cu-radio:checked {
+      background: #fff;
+      border-color: #8a8d90;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Ccircle cx='4' cy='4' r='4' fill='%238a8d90'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+    .cu-radio {
+      appearance: none;
+      width: 1rem;
+      height: 1rem;
+      min-width: 1rem;
+      margin: 0;
+      padding: 0;
+      border: 1px solid #6a6e73;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+    }
+    .cu-radio:checked {
+      border-color: #8a8d90;
+      background: radial-gradient(circle, #8a8d90 40%, #fff 45%);
+    }
+    .cu-toggle-group { display: inline-flex; border-radius: 999px; overflow: hidden; border: 1px solid #d0d0d0; }
+    .cu-toggle-group input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+    .cu-toggle-group label {
+      display: inline-flex; align-items: center; gap: .35rem;
+      padding: .45rem 1rem; font-size: .9rem; font-weight: 500;
+      cursor: pointer; background: #fff; color: var(--cu-charcoal);
+      border-right: 1px solid #d0d0d0; transition: background .15s, color .15s;
+      user-select: none;
+    }
+    .cu-toggle-group label:last-of-type { border-right: none; }
+    .cu-toggle-group label:has(input:checked) {
+      background: #e06060; color: #fff;
+    }
+    .cu-toggle-group label:hover:not(:has(input:checked)) { background: #f0f0f0; }
+    .cu-toggle-group--sm label { padding: .3rem .7rem; font-size: .8rem; }
+    .cu-toggle-group--sm label:has(input:checked) { background: #e06060; color: #fff; }
+    body.dark .cu-toggle-group--sm label:has(input:checked) { background: #ff6b6b; color: #fff; }
+    .cu-repo-body { min-width: 0; }
+    .cu-repo-title {
+      display: block;
+      font-weight: 600;
+      font-size: 0.88rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cu-repo-url-row { display: flex; align-items: center; gap: 0.3rem; min-width: 0; }
+    .cu-repo-url {
+      min-width: 0;
+      color: var(--cu-gray);
+      font-size: 0.8rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cu-repo-link { flex-shrink: 0; display: inline-flex; color: var(--cu-gray); text-decoration: none; line-height: 0; }
+    .cu-repo-link:hover { color: #0066cc; }
+    .cu-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+    .cu-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 0.45rem;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      line-height: 1.4rem;
+      background: #f0f0f0;
+      color: #363636;
+    }
+    .cu-chip.indexed { background: #e9f7e9; color: var(--cu-green); }
+    .cu-chip.uploaded { background: #fff3cd; color: #795600; }
+    .cu-chip.default { background: #fce8e8; color: var(--cu-red-dark); }
+    .cu-chip.failed { background: #fce8e8; color: #d44; }
+
+    .cu-custom {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 8rem auto;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      align-items: center;
+    }
+    .cu-composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      align-items: start;
+    }
+    .cu-note {
+      background: #fce8e8;
+      border-left: 3px solid var(--cu-red);
+      padding: 0.65rem 0.85rem;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+    #selection-note, #run-selection-note {
+      background: none;
+      border-left-color: var(--cu-red);
+      margin-top: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      position: relative;
+    }
+    #selection-note .cu-note-detail, #run-selection-note .cu-note-detail { color: #888; }
+    #selection-note.cu-note-expanded, #run-selection-note.cu-note-expanded {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+    #selection-note::after, #run-selection-note::after {
+      content: "Click to expand";
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 0;
+      background: #333;
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: normal;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+    #selection-note.cu-note-expanded::after, #run-selection-note.cu-note-expanded::after { content: "Click to collapse"; }
+    #selection-note.cu-note-overflowing:hover::after, #run-selection-note.cu-note-overflowing:hover::after,
+    #selection-note.cu-note-expanded:hover::after, #run-selection-note.cu-note-expanded:hover::after { display: inline-block; }
+    .cu-alert-warning {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      background: #fff8e6;
+      border: 1px solid var(--cu-gold);
+      border-left: 4px solid var(--cu-gold);
+      border-radius: 4px;
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    .cu-alert-warning svg { flex-shrink: 0; color: var(--cu-gold); margin-top: 0.15rem; }
+
+    .cu-thinking {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      background: #fff;
+      border: 1px solid var(--cu-border);
+      border-left: 4px solid var(--cu-red);
+      padding: 0.75rem 1rem 0.85rem;
+      margin-bottom: 1rem;
+    }
+    .cu-thinking-row { display: flex; align-items: center; gap: 0.7rem; }
+    .cu-thinking-copy { min-width: 0; }
+    .cu-thinking-label { font-weight: 600; }
+    .cu-thinking-status { color: var(--cu-gray); font-size: 0.85rem; }
+    .cu-spinner {
+      width: 1.1rem;
+      height: 1.1rem;
+      border: 2px solid #d2d2d2;
+      border-top-color: var(--cu-red);
+      border-radius: 50%;
+      animation: cu-spin 0.7s linear infinite;
+      flex: none;
+    }
+    .cu-progress {
+      height: 3px;
+      background: #f0f0f0;
+      overflow: hidden;
+      border-radius: 2px;
+    }
+    .cu-progress > span {
+      display: block;
+      height: 100%;
+      width: 35%;
+      background: var(--cu-red);
+      animation: cu-indet 1.15s ease-in-out infinite;
+    }
+    @keyframes cu-spin { to { transform: rotate(360deg); } }
+    @keyframes cu-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    @keyframes cu-indet {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    @keyframes cu-fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .cu-animate-in { animation: cu-fade-in 0.8s ease-in-out; }
+
+    .cu-chat {
+      min-height: 16rem;
+      background: #fafafa;
+      border: 1px solid var(--cu-border);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .cu-bubble { max-width: 100%; }
+    .cu-bubble.user {
+      width: fit-content;
+      max-width: min(36rem, 85%);
+      margin-left: auto;
+      background: var(--cu-charcoal);
+      color: #fff;
+      padding: 0.65rem 0.9rem;
+      border-radius: 14px 14px 4px 14px;
+      white-space: pre-wrap;
+    }
+    .cu-bubble.assistant {
+      background: #fff;
+      border: 1px solid var(--cu-border);
+      border-left: 3px solid var(--cu-red);
+      padding: 0.9rem 1.1rem 1rem;
+      border-radius: 2px;
+    }
+    .cu-bubble.thinking-msg {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      color: var(--cu-gray);
+      font-weight: 600;
+    }
+    .cu-md { line-height: 1.55; overflow-wrap: anywhere; }
+    .cu-md > *:first-child { margin-top: 0; }
+    .cu-md > *:last-child { margin-bottom: 0; }
+    .cu-md h1, .cu-md h2, .cu-md h3 {
+      font-weight: 600;
+      line-height: 1.3;
+      margin: 1.1rem 0 0.4rem;
+    }
+    .cu-md h1 { font-size: 1.25rem; }
+    .cu-md h2 { font-size: 1.1rem; }
+    .cu-md h3 { font-size: 1rem; }
+    .cu-md p { margin: 0.55rem 0; }
+    .cu-md ul, .cu-md ol { margin: 0.4rem 0 0.7rem; padding-left: 1.35rem; }
+    .cu-md li { margin: 0.28rem 0; }
+    .cu-md a { color: var(--cu-blue); }
+    .cu-md hr { border: 0; border-top: 1px solid var(--cu-border); margin: 1rem 0; }
+    .cu-md code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.84em;
+      background: #f0f0f0;
+      padding: 0.12em 0.38em;
+      border-radius: 3px;
+    }
+    .cu-md pre {
+      background: #151515;
+      color: #f5f5f5;
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      margin: 0.75rem 0;
+    }
+    .cu-md pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+      font-size: inherit;
+    }
+    .cu-md-table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.9em; }
+    .cu-md-table th, .cu-md-table td { border: 1px solid var(--cu-border); padding: 0.4rem 0.75rem; text-align: left; }
+    .cu-md-table th { background: #f0f4f8; font-weight: 600; }
+    .cu-md-table tr:nth-child(even) td { background: #f9fbfd; }
+    .cu-md pre.mermaid { background: transparent; color: inherit; padding: 0; }
+    .cu-diagram-err { position: relative; display: inline-flex; align-items: center; gap: 0.3rem; cursor: default; color: var(--cu-gold); font-size: 0.85rem; font-weight: 600; padding: 0.15rem 0.4rem; border: 1px solid var(--cu-gold); border-radius: 3px; background: #fffbe6; }
+    .cu-diagram-flyover { position: fixed; z-index: 9999; max-width: 480px; min-width: 220px; background: #fff; border: 1px solid var(--cu-border); border-left: 4px solid var(--cu-gold); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.13); padding: 0.65rem 0.85rem; font-size: 0.82rem; pointer-events: none; }
+    .cu-diagram-flyover-title { color: var(--cu-gold); font-weight: 700; margin-bottom: 0.3rem; }
+    .cu-diagram-flyover-msg { color: var(--cu-gray); margin-bottom: 0.5rem; word-break: break-word; }
+    .cu-diagram-flyover-src { margin: 0; white-space: pre-wrap; color: var(--cu-charcoal); font-size: 0.78rem; max-height: 260px; overflow-y: auto; }
+    .gridjs-td { vertical-align: top; }
+    .cu-row-fail td.gridjs-td { background-color: #fce0e0 !important; }
+    tr.cu-row-fail { background-color: #fce0e0 !important; }
+    tr.cu-row-fail td { background-color: #fce0e0 !important; }
+    .cu-cell-toggle { white-space: nowrap; margin-left: 0.25rem; color: var(--cu-blue); font-size: 0.8em; cursor: pointer; }
+    .cu-eval-summary { margin-bottom: 1.25rem; display: flex; flex-wrap: wrap; gap: 1.25rem; }
+    .cu-eval-summary-section h4 { margin: 0 0 0.35rem; font-size: 0.85rem; color: var(--cu-gray); }
+    .cu-eval-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .cu-eval-chip { display: inline-flex; gap: 0.35rem; align-items: center; padding: 0.25rem 0.6rem; border-radius: 0.75rem; font-size: 0.8rem; background: #f0f0f0; color: var(--cu-charcoal); }
+    .cu-eval-chip--overall { background: var(--cu-charcoal); color: #fff; }
+    .cu-pipeline-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.5rem; margin-bottom: 0.75rem; }
+    .cu-pipeline-row .cu-note { margin: 0; flex: 1; min-width: 0; }
+    .cu-pipeline-row .cu-btn { flex-shrink: 0; }
+    .hidden { display: none !important; }
+    .cu-btn-icon {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 1px solid var(--cu-border);
+      border-radius: 4px;
+      padding: 0.25rem;
+      color: var(--cu-gray);
+      cursor: pointer;
+      line-height: 0;
+    }
+    .cu-btn-icon:hover { color: var(--cu-charcoal); border-color: var(--cu-charcoal); }
+    .cu-btn-icon svg { pointer-events: none; }
+    .cu-btn-icon[data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: normal;
+      white-space: nowrap;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .cu-btn-icon[data-tooltip]:hover::after { opacity: 1; }
+    .cu-slider-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 1000;
+    }
+    .cu-slider {
+      position: fixed;
+      right: 0;
+      top: 0;
+      height: 100vh;
+      width: min(36rem, 85vw);
+      background: #fff;
+      box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+      display: flex;
+      flex-direction: column;
+      z-index: 1001;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+    .cu-slider.open { transform: translateX(0); }
+    .cu-slider-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--cu-border);
+    }
+    .cu-slider-header h3 { font-size: 1rem; }
+    .cu-slider-body {
+      padding: 1.25rem;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .cu-slider-body .cu-chat { flex: 1; min-height: 12rem; overflow-y: auto; }
+    .cu-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .cu-modal {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+      width: min(26rem, 90vw);
+    }
+    .cu-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--cu-border);
+    }
+    .cu-modal-header h3 { font-size: 1rem; }
+    .cu-modal-close {
+      background: none;
+      border: none;
+      font-size: 1.1rem;
+      line-height: 1;
+      color: var(--cu-gray);
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+    }
+    .cu-modal-close:hover { color: var(--cu-charcoal); background: #f0f0f0; }
+    .cu-modal-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+    .cu-modal-body .cu-note { margin-top: 0; }
+    .cu-form-group { display: flex; flex-direction: column; gap: 0.3rem; }
+    .cu-required { color: var(--cu-red); }
+    .cu-modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding: 0.85rem 1.25rem;
+      border-top: 1px solid var(--cu-border);
+    }
+    .cu-form-label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+
+    .cu-ns-row { margin-bottom: 0; }
+    .cu-ns-combo { display: block; }
+    .cu-ns-combo input { border-radius: 1rem; width: 100%; box-sizing: border-box; }
+    .cu-toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; justify-content: flex-end; }
+    .cu-toolbar .cu-ns-row { flex: 0 0 auto; min-width: 12rem; }
+    .cu-toolbar .cu-status { margin-bottom: 0; padding: 0.45rem 0.75rem; font-size: 0.85rem; white-space: nowrap; }
+    .cu-ns-combo input::-webkit-calendar-picker-indicator { opacity: 1; cursor: pointer; }
+
+    @media (max-width: 900px) {
+      .cu-shell, .cu-custom, .cu-composer { grid-template-columns: 1fr; }
+      .cu-repo { grid-template-columns: 1.25rem minmax(0, 1fr); }
+      .cu-chips { grid-column: 2; justify-content: flex-start; margin-top: 0.25rem; }
+    }
+  </style>
+  <link rel="stylesheet" href="/static/vendor/gridjs.min.css"/>
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/vendor/gridjs.umd.js"></script>
+</head>
+<body>
+  <div class="cu-shell">
+    <aside class="cu-rail">
+      <div class="cu-brand">
+        <svg class="cu-brand-icon" width="42" height="42" viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="3" y="27" width="7" height="12" rx="1.5" fill="#ee0000" opacity="0.7"/>
+          <rect x="13" y="20" width="7" height="19" rx="1.5" fill="#ee0000" opacity="0.85"/>
+          <rect x="23" y="13" width="7" height="26" rx="1.5" fill="#ee0000"/>
+          <rect x="33" y="18" width="6" height="21" rx="1.5" fill="#ee0000" opacity="0.6"/>
+          <polyline points="6.5,25 16.5,17 26.5,11 36,16" stroke="#ee0000" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="6.5" cy="25" r="2.5" fill="#ee0000"/>
+          <circle cx="16.5" cy="17" r="2.5" fill="#ee0000"/>
+          <circle cx="26.5" cy="11" r="2.5" fill="#ee0000"/>
+          <circle cx="36" cy="16" r="2.5" fill="#ee0000"/>
+        </svg>
+        <span class="cu-brand-eyebrow">Agent Mesh for Software Modernization</span>
+        <span class="cu-brand-title">Code Understanding</span>
+        <span class="cu-brand-sub">Knowledge graph-based analysis for legacy codebases</span>
+      </div>
+      <nav class="cu-nav">
+        <button type="button" class="cu-nav-item active" data-tab="repos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Repositories
+        </button>
+        <button type="button" class="cu-nav-item" data-tab="runs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Runs
+        </button>
+      </nav>
+    </aside>
+    <main class="cu-main">
+      <div id="thinking-bar" class="cu-thinking hidden" role="status" aria-live="polite">
+        <div class="cu-thinking-row">
+          <span class="cu-spinner" aria-hidden="true"></span>
+          <div class="cu-thinking-copy">
+            <div class="cu-thinking-label" id="thinking-label">Thinking</div>
+            <div class="cu-thinking-status" id="thinking-status">Working on your request…</div>
+          </div>
+        </div>
+        <div class="cu-progress"><span></span></div>
+      </div>
+      <div id="banner" role="status" aria-live="polite"></div>
+      <div class="cu-toolbar">
+        <div class="cu-toggle-group cu-toggle-group--sm" id="theme-toggle">
+          <label><input type="radio" name="theme-mode" value="light" checked /><span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span></label>
+          <label><input type="radio" name="theme-mode" value="dark" /><span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span></label>
+        </div>
+        <div id="ns-row" class="cu-ns-row hidden">
+          <div class="cu-ns-combo">
+            <input class="cu-field" id="ns-select" list="ns-list" autocomplete="off"
+                   placeholder="Namespace" style="font-size:0.875rem;min-height:2rem;">
+            <datalist id="ns-list"></datalist>
+          </div>
+        </div>
+        <div id="ws-row" class="cu-ns-row">
+          <div class="cu-ns-combo">
+            <input class="cu-field" id="ws-select" list="ws-list" autocomplete="off"
+                   placeholder="Workspace (default)" title="Project Workspace" style="font-size:0.875rem;min-height:2rem;">
+            <datalist id="ws-list"></datalist>
+          </div>
+        </div>
+        <div id="status" class="cu-status warn checking">Loading…</div>
+      </div>
+      <section id="tab-repos" class="cu-card">
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Repositories</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <h2>Repositories</h2>
+          <p class="cu-muted">
+              Analyze your code using knowledge graphs.<br/>
+              Select <strong>1</strong> code repository
+              for focused analysis, or <strong>multiple</strong> for cross-repository comparative analysis.<br/>
+            </p>
+        <div class="cu-pipeline-row">
+          <div class="cu-note hidden" id="selection-note"></div>
+          <button type="button" class="cu-btn cu-btn-secondary" id="open-analyze" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>Analyze</button>
+          <button type="button" class="cu-btn cu-btn-secondary" id="open-add-repo"><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add new repository</button>
+          <span style="display:inline-flex;gap:0;align-items:center"><button type="button" class="cu-btn cu-btn-link" id="select-all" style="padding-right:0.3rem">Select all</button><button type="button" class="cu-btn cu-btn-link" id="clear" style="padding-left:0.3rem">Clear</button></span>
+        </div>
+        <div id="repo-list" class="cu-repo-list"></div>
+      </section>
+      <section id="tab-runs" class="cu-card hidden">
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Runs</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <h2>Runs</h2>
+        <div class="cu-pipeline-row">
+          <p class="cu-muted" style="margin:0;flex:1">Select a run to view, download, query or re-run analysis reports.</p>
+        </div>
+        <div class="cu-pipeline-row">
+          <div class="cu-note hidden" id="run-selection-note"></div>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-view-report" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="11" y1="9" x2="8" y2="9"/></svg>View Report</button>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download Report</button>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-rerun" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Re-run</button>
+        </div>
+        <div class="cu-repo-list" style="max-height:none;overflow:hidden">
+          <table class="cu-run-table">
+            <tbody id="run-list"></tbody>
+          </table>
+        </div>
+        <div id="run-paginator" class="cu-paginator"></div>
+      </section>
+      <section id="tab-analysis" class="cu-card hidden">
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li><a href="#" data-tab="runs">Runs</a></li><li>Analysis</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <div style="margin-bottom:0.75rem"><button type="button" class="cu-btn cu-btn-secondary" id="back-to-runs" style="min-height:1.125rem;padding-top:0;padding-bottom:0;font-size:0.8rem"><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Back to list</button></div>
+        <h3 id="report-viewer-title"></h3>
+        <div id="report-viewer-subtitle"></div>
+        <div class="cu-report-tabs">
+          <button type="button" class="cu-report-tab active" data-report="analysis">Analysis</button>
+          <button type="button" class="cu-report-tab" data-report="evaluation">Analysis Evaluation</button>
+        </div>
+        <div class="cu-report-viewer-body">
+          <div id="report-viewer-content" class="cu-md"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="analyze-modal" class="cu-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="analyze-modal-title">
+    <div class="cu-modal">
+      <div class="cu-modal-header">
+        <h3 id="analyze-modal-title">Confirm Run Analysis</h3>
+        <button type="button" class="cu-modal-close" id="analyze-modal-close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="cu-modal-body">
+        <div id="analyze-selection" style="font-size:0.9rem"></div>
+        <div id="project-slug-group" class="cu-form-group hidden" style="margin-top:0.75rem">
+          <label class="cu-form-label" for="project-slug-input">Project Slug (Multi-Repository)</label>
+          <input class="cu-field" id="project-slug-input" placeholder="e.g. billing-modernization (optional)" />
+        </div>
+        <div class="cu-alert-warning">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div><strong>Before You Run</strong><br/>Analysis is an intensive process and can take <b>30+ minutes</b>.<br/></div>
+        </div>
+      </div>
+      <div class="cu-modal-footer">
+        <button type="button" class="cu-btn cu-btn-link" id="analyze-modal-cancel">Cancel</button>
+        <button type="button" class="cu-btn cu-btn-secondary" id="start-analysis">Start Analysis</button>
+      </div>
+    </div>
+  </div>
+  <div id="add-repo-modal" class="cu-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="add-repo-title">
+    <div class="cu-modal">
+      <div class="cu-modal-header">
+        <h3 id="add-repo-title">Add Repository</h3>
+        <button type="button" class="cu-modal-close" id="add-repo-close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="cu-modal-body">
+        <div id="add-repo-error" class="cu-note hidden"></div>
+        <div class="cu-form-group">
+          <label class="cu-form-label" for="custom-url">Repository URL <span class="cu-required">*</span></label>
+          <input class="cu-field" id="custom-url" placeholder="https://github.com/org/repo" />
+        </div>
+        <div class="cu-form-group">
+          <label class="cu-form-label" for="custom-branch">Branch</label>
+          <input class="cu-field" id="custom-branch" value="main" />
+        </div>
+      </div>
+      <div class="cu-modal-footer">
+        <button type="button" class="cu-btn cu-btn-link" id="add-repo-cancel">Cancel</button>
+        <button type="button" class="cu-btn cu-btn-secondary" id="add-custom">Add repository</button>
+      </div>
+    </div>
+  </div>
+  <div id="rerun-modal" class="cu-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="rerun-title">
+    <div class="cu-modal">
+      <div class="cu-modal-header">
+        <h3 id="rerun-title">Re-run Analysis</h3>
+        <button type="button" class="cu-modal-close" id="rerun-close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="cu-modal-body">
+        <div class="cu-toggle-group">
+          <label><input type="radio" name="rerun-mode" value="scratch" checked /><span>Re-run from scratch</span></label>
+          <label><input type="radio" name="rerun-mode" value="report" /><span>Re-run report only</span></label>
+        </div>
+        <p id="rerun-description" style="margin-top:.75rem;color:#6a6e73;font-size:.85rem">Regenerates the knowledge graph from scratch.</p>
+      </div>
+      <div class="cu-modal-footer">
+        <button type="button" class="cu-btn cu-btn-link" id="rerun-cancel">Cancel</button>
+        <button type="button" class="cu-btn cu-btn-secondary" id="rerun-confirm">Re-run</button>
+      </div>
+    </div>
+  </div>
+  <div id="chat-slider-overlay" class="cu-slider-overlay hidden"></div>
+  <div id="chat-slider" class="cu-slider">
+    <div class="cu-slider-header">
+      <h3>Query the code knowledge graph</h3>
+      <button type="button" class="cu-modal-close" id="chat-slider-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="cu-slider-body">
+      <select class="hidden" id="slider-chat-repo"></select>
+      <p id="slider-chat-repo-label" class="hidden" style="margin:0 0 0.75rem;font-size:0.9rem"><strong>Repository:</strong> <span id="slider-chat-repo-name"></span></p>
+      <div class="cu-chat" id="slider-chat-log"></div>
+      <div class="cu-composer">
+        <textarea id="slider-question" placeholder="Ask about the selected code…"></textarea>
+        <button type="button" class="cu-btn cu-btn-primary" id="slider-send"><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"/></svg>Send</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    if (typeof mermaid !== "undefined") {
+      mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+    }
+
+    function runMermaid(container) {
+      if (typeof mermaid === "undefined") return;
+      const nodes = Array.from(container.querySelectorAll("pre.mermaid")).filter(n => !n.dataset.processed);
+      if (!nodes.length) return;
+      // Render one diagram per event-loop tick so a slow/broken diagram cannot
+      // freeze the UI or block other diagrams from rendering.
+      (async () => {
+        for (const node of nodes) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          try {
+            const timeout = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("mermaid timeout")), 5000)
+            );
+            const result = mermaid.run({ nodes: [node] });
+            if (result && typeof result.then === "function") {
+              await Promise.race([result, timeout]);
+            }
+          } catch (e) {
+            // Parse error or timeout — replace the block with a small warning badge;
+            // hovering over it opens a flyover showing the error and diagram source.
+            const src = node.textContent || "";
+            const msg = (e && e.message) ? e.message : String(e);
+            const badge = document.createElement("span");
+            badge.className = "cu-diagram-err";
+            badge.textContent = "\u26a0 Diagram error";
+            let fly = null;
+            badge.addEventListener("mouseenter", ev => {
+              fly = document.createElement("div");
+              fly.className = "cu-diagram-flyover";
+              fly.innerHTML =
+                `<div class="cu-diagram-flyover-title">\u26a0 Diagram could not be rendered</div>` +
+                `<div class="cu-diagram-flyover-msg">${msg.replace(/</g, "&lt;")}</div>` +
+                `<pre class="cu-diagram-flyover-src">${src.replace(/</g, "&lt;")}</pre>`;
+              document.body.appendChild(fly);
+              const r = badge.getBoundingClientRect();
+              const fw = fly.offsetWidth, fh = fly.offsetHeight;
+              const top = r.bottom + 6 + fh > window.innerHeight ? r.top - fh - 6 : r.bottom + 6;
+              const left = Math.min(r.left, window.innerWidth - fw - 10);
+              fly.style.top = top + "px";
+              fly.style.left = Math.max(6, left) + "px";
+            });
+            badge.addEventListener("mouseleave", () => { if (fly) { fly.remove(); fly = null; } });
+            node.replaceWith(badge);
+          }
+        }
+      })();
+    }
+
+    const state = {
+      repos: [], selected: new Set(), indexes: [], queryable: [],
+      defaultKey: null, poll: null, chat: [], thinking: null,
+      animateLatest: false,
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[ch]));
+
+    function inlineMd(raw) {
+      const codes = [];
+      let text = String(raw ?? "").replace(/`([^`]+)`/g, (_, code) => {
+        codes.push(`<code>${esc(code)}</code>`);
+        return `%%C${codes.length - 1}%%`;
+      });
+      text = esc(text);
+      text = text.replace(
+        /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+      text = text.replace(
+        /(^|[^"'>=])(https?:\/\/[^\s<]+)/g,
+        '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>'
+      );
+      text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      text = text.replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, "$1<em>$2</em>");
+      return text.replace(/%%C(\d+)%%/g, (_, i) => codes[Number(i)]);
+    }
+
+    function parseTableRow(line) {
+      const inner = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+      return inner.split("|").map(c => c.trim());
+    }
+
+    function renderMarkdown(src) {
+      const fences = [];
+      let text = String(src ?? "").replace(/\r\n/g, "\n");
+      text = text.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+        const content = code.replace(/\n$/, "");
+        if (lang.toLowerCase() === "mermaid") {
+          const sanitized = content
+            .split("\n").map(l => {
+              if (/^\s*%(?!%)/.test(l)) return l.replace(/^(\s*)%/, "$1%%"); // lone % → %%
+              return l.replace(/\s*%%.*$/, "");  // strip ALL %% comments (standalone and inline)
+            }).join("\n")
+            .replace(/\[([^\]"]+)\]/g, (m, label) => /[()]/.test(label) ? `["${label}"]` : m);
+          fences.push(`<pre class="mermaid">${esc(sanitized)}</pre>`);
+        } else {
+          fences.push(`<pre><code>${esc(content)}</code></pre>`);
+        }
+        return `\n\n%%FENCE${fences.length - 1}%%\n\n`;
+      });
+      const lines = text.split("\n");
+      const html = [];
+      let i = 0;
+      const isFence = (line) => line.trim().match(/^%%FENCE(\d+)%%$/);
+      const isList = (line) => /^[-*] /.test(line);
+      const isOl = (line) => /^\d+\. /.test(line);
+      const isHeading = (line) => /^#{1,3} /.test(line);
+      const isStep = (line) => /^\*\*\d+\.\s+.+\*\*$/.test(line.trim());
+      const isTableRow = (line) => /\|/.test(line.trim()) && line.trim().length > 1;
+      const isTableSep = (line) => /^\s*\|?(\s*:?-{2,}:?\s*\|)+(\s*:?-{2,}:?\s*)?\s*$/.test(line.trim());
+      while (i < lines.length) {
+        const line = lines[i];
+        const fence = isFence(line);
+        if (fence) { html.push(fences[Number(fence[1])]); i += 1; continue; }
+        if (!line.trim()) { i += 1; continue; }
+        if (/^---+$/.test(line.trim())) { html.push("<hr/>"); i += 1; continue; }
+        if (isHeading(line)) {
+          const level = line.match(/^#+/)[0].length;
+          html.push(`<h${level}>${inlineMd(line.replace(/^#+\s+/, ""))}</h${level}>`);
+          i += 1; continue;
+        }
+        if (isStep(line)) {
+          html.push(`<h3>${inlineMd(line.trim())}</h3>`);
+          i += 1; continue;
+        }
+        if (isList(line)) {
+          html.push("<ul>");
+          while (i < lines.length && isList(lines[i])) {
+            html.push(`<li>${inlineMd(lines[i].replace(/^[-*] /, ""))}</li>`);
+            i += 1;
+          }
+          html.push("</ul>");
+          continue;
+        }
+        if (isOl(line)) {
+          html.push("<ol>");
+          while (i < lines.length && isOl(lines[i])) {
+            html.push(`<li>${inlineMd(lines[i].replace(/^\d+\. /, ""))}</li>`);
+            i += 1;
+          }
+          html.push("</ol>");
+          continue;
+        }
+        if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+          const headers = parseTableRow(line);
+          i += 2;
+          let tbl = `<table class="cu-md-table"><thead><tr>`;
+          headers.forEach(h => { tbl += `<th>${inlineMd(h)}</th>`; });
+          tbl += `</tr></thead><tbody>`;
+          while (i < lines.length && isTableRow(lines[i])) {
+            const cells = parseTableRow(lines[i]);
+            tbl += `<tr>`;
+            cells.forEach(c => { tbl += `<td>${inlineMd(c)}</td>`; });
+            tbl += `</tr>`;
+            i += 1;
+          }
+          tbl += `</tbody></table>`;
+          html.push(tbl);
+          continue;
+        }
+        const para = [];
+        while (
+          i < lines.length &&
+          lines[i].trim() &&
+          !isHeading(lines[i]) &&
+          !isList(lines[i]) &&
+          !isOl(lines[i]) &&
+          !isFence(lines[i]) &&
+          !isStep(lines[i]) &&
+          !isTableRow(lines[i]) &&
+          !/^---+$/.test(lines[i].trim())
+        ) {
+          para.push(lines[i]);
+          i += 1;
+        }
+        html.push(`<p>${inlineMd(para.join(" "))}</p>`);
+      }
+      return `<div class="cu-md">${html.join("")}</div>`;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [], field = "", inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+          else if (ch === '"') { inQuotes = false; }
+          else { field += ch; }
+        } else {
+          if (ch === '"') {
+            inQuotes = true;
+          } else if (ch === ',') {
+            row.push(field.trim()); field = "";
+          } else if (ch === '\r' && text[i + 1] === '\n') {
+            row.push(field.trim()); field = "";
+            if (row.some(f => f !== "")) rows.push(row);
+            row = []; i++;
+          } else if (ch === '\n') {
+            row.push(field.trim()); field = "";
+            if (row.some(f => f !== "")) rows.push(row);
+            row = [];
+          } else {
+            field += ch;
+          }
+        }
+      }
+      row.push(field.trim());
+      if (row.some(f => f !== "")) rows.push(row);
+      return rows;
+    }
+
+    let _typewriterTimer = null;
+
+    function typewriter(el, fullText, onDone) {
+      if (_typewriterTimer) { clearInterval(_typewriterTimer); _typewriterTimer = null; }
+      const tokens = fullText.split(/(\s+)/);
+      const chunkSize = Math.max(1, Math.ceil(tokens.length / 80));
+      let idx = 0;
+      _typewriterTimer = setInterval(() => {
+        idx = Math.min(idx + chunkSize, tokens.length);
+        el.innerHTML = renderMarkdown(tokens.slice(0, idx).join(""));
+        $("slider-chat-log").scrollTop = $("slider-chat-log").scrollHeight;
+        if (idx >= tokens.length) {
+          clearInterval(_typewriterTimer);
+          _typewriterTimer = null;
+          runMermaid(el);
+          if (onDone) onDone();
+        }
+      }, 30);
+    }
+
+    const banner = (msg, danger) => {
+      const target = $("banner");
+      target.setAttribute("role", danger ? "alert" : "status");
+      target.setAttribute("aria-live", danger ? "assertive" : "polite");
+      target.innerHTML = msg
+        ? `<div class="cu-note" style="${danger ? "" : "background:#e7f1fa;border-left-color:#0066cc"}">${esc(msg)}</div>`
+        : "";
+    };
+
+    function setThinking(info) {
+      state.thinking = info;
+      const bar = $("thinking-bar");
+      if (!info) {
+        bar.classList.add("hidden");
+        $("slider-send").disabled = false;
+        $("start-analysis").disabled = false;
+        return;
+      }
+      bar.classList.remove("hidden");
+      $("thinking-label").textContent = info.label || "Thinking";
+      $("thinking-status").textContent = info.status || "Working on your request…";
+      $("slider-send").disabled = true;
+      $("start-analysis").disabled = true;
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      return text ? JSON.parse(text) : {};
+    }
+    function shortName(url) { return url.replace(/\/$/, "").split("/").pop(); }
+    function repoKey(r) { return `${r.git_repo}|${r.git_branch}`; }
+    function selectedRepos() { return state.repos.filter((r) => state.selected.has(repoKey(r))); }
+    function gitSlug(url, branch) {
+      try {
+        const path = new URL(url).pathname.replace(/^\//, "").replace(/\.git$/, "");
+        const parts = path.split("/").filter(Boolean);
+        const name = parts.pop() || "repo";
+        const owner = parts.pop() || "";
+        return `${owner}-${name}-${branch}`.slice(0, 255);
+      } catch {
+        return `${url}-${branch}`;
+      }
+    }
+    function prettyRelativeDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+      const now = new Date();
+      const isToday = d.getFullYear() === now.getFullYear()
+        && d.getMonth() === now.getMonth()
+        && d.getDate() === now.getDate();
+      if (isToday) {
+        const diffMs = now - d;
+        const hours = Math.floor(diffMs / 3600000);
+        const mins = Math.floor(diffMs / 60000);
+        if (hours >= 1) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+        if (mins >= 1) return `${mins} min${mins === 1 ? "" : "s"} ago`;
+        return "just now";
+      }
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    }
+    function prettyDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    }
+    function showTab(name) {
+      const highlightTab = name === "analysis" ? "runs" : name;
+      document.querySelectorAll(".cu-nav-item").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === highlightTab);
+      });
+      ["repos", "runs", "analysis"].forEach((tab) => {
+        $("tab-" + tab).classList.toggle("hidden", tab !== name);
+      });
+      if (name === "analysis") {
+        const el = $("tab-analysis");
+        el.classList.remove("cu-animate-in");
+        void el.offsetWidth;
+        el.classList.add("cu-animate-in");
+      }
+    }
+
+    async function openReport(runId, runName, gitRepo, gitBranch, projectSlug) {
+      const snap = await api(`/api/v2/pipelines/runs/${runId}`);
+      $("report-viewer-title").textContent = gitRepo
+        ? `${shortName(gitRepo).replace(/\.git$/, "")} @ ${gitBranch}`
+        : projectSlug
+          ? `Combined repos (${projectSlug})`
+          : "Combined repos";
+      $("report-viewer-subtitle").textContent = runName;
+
+      const reports = { analysis: snap.analysis_report, evaluation: snap.evaluation_report };
+
+      function appendReportDl(rawContent, filename) {
+        const mime = filename.endsWith(".csv") ? "text/csv" : "text/markdown";
+        const footer = document.createElement("div");
+        footer.className = "cu-bubble-footer";
+        footer.innerHTML = `<button class="cu-bubble-dl-btn" title="Download report" aria-label="Download report">${iconDownload}</button>`;
+        footer.querySelector("button").onclick = () => {
+          const blob = new Blob([rawContent], { type: mime });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+        $("report-viewer-content").appendChild(footer);
+      }
+
+      function showReportTab(type) {
+        $("tab-analysis").querySelectorAll(".cu-report-tab").forEach((t) => {
+          t.classList.toggle("active", t.dataset.report === type);
+        });
+        const content = reports[type];
+        if (type === "evaluation") {
+          $("report-viewer-content").innerHTML = "";
+          if (!content) {
+            $("report-viewer-content").innerHTML = `<p class="cu-muted">No evaluation report available.</p>`;
+          } else {
+            const csvRows = parseCsv(content);
+            if (csvRows.length < 2) {
+              $("report-viewer-content").innerHTML = `<p class="cu-muted">No evaluation data.</p>`;
+            } else {
+              const ANALYSIS_EVALUATION_THRESHOLD = 3;
+              const headers = csvRows[0];
+              const scoreColIndices = headers.reduce((acc, h, i) => {
+                if (h.includes("/v1/score")) acc.push(i);
+                return acc;
+              }, []);
+              const failColIndices = headers.reduce((acc, h, i) => {
+                if (h.includes("/v1/score") && !h.includes("answer_similarity")) acc.push(i);
+                return acc;
+              }, []);
+              /* ── Aggregate score summary (server-provided) ── */
+              const scores = snap.evaluation_scores;
+              if (scores && scores.metrics && scores.metrics.length > 0) {
+                const heading = document.createElement("h3");
+                heading.style.cssText = "margin:0 0 0.75rem";
+                heading.textContent = "Summary";
+                $("report-viewer-content").appendChild(heading);
+                const summary = document.createElement("div");
+                summary.className = "cu-eval-summary";
+                summary.innerHTML =
+                  `<div class="cu-eval-summary-section">` +
+                    `<h4>Per-Metric Averages (1-5)</h4>` +
+                    `<div class="cu-eval-chips">` +
+                      scores.metrics.map(m =>
+                        `<span class="cu-eval-chip"><strong>${esc(m.name)}</strong> ${m.average.toFixed(2)}</span>`
+                      ).join("") +
+                    `</div>` +
+                  `</div>` +
+                  `<div class="cu-eval-summary-section">` +
+                    `<h4>Pass Rate (≥ 3)</h4>` +
+                    `<div class="cu-eval-chips">` +
+                      scores.metrics.filter(m => m.pass_rate_3 != null).map(m =>
+                        `<span class="cu-eval-chip"><strong>${esc(m.name)}</strong> ${m.pass_rate_3.toFixed(1)}%</span>`
+                      ).join("") +
+                      `<span class="cu-eval-chip cu-eval-chip--overall"><strong>Mean</strong> ${scores.average_pass_rate_3.toFixed(1)}%</span>` +
+                    `</div>` +
+                  `</div>` +
+                  `<div class="cu-eval-summary-section">` +
+                    `<h4>Pass Rate (≥ 4)</h4>` +
+                    `<div class="cu-eval-chips">` +
+                      scores.metrics.filter(m => m.pass_rate_4 != null).map(m =>
+                        `<span class="cu-eval-chip"><strong>${esc(m.name)}</strong> ${m.pass_rate_4.toFixed(1)}%</span>`
+                      ).join("") +
+                      `<span class="cu-eval-chip cu-eval-chip--overall"><strong>Mean</strong> ${scores.average_pass_rate_4.toFixed(1)}%</span>` +
+                    `</div>` +
+                  `</div>`;
+                $("report-viewer-content").appendChild(summary);
+              }
+
+              const gridContainer = document.createElement("div");
+              $("report-viewer-content").appendChild(gridContainer);
+              new gridjs.Grid({
+                columns: headers.map((h, colIdx) => {
+                  const maxLen = csvRows.reduce((max, row) => Math.max(max, (row[colIdx] || "").length), 0);
+                  return {
+                    name: h,
+                    resizable: true,
+                    width: `${Math.max(80, Math.min(800, maxLen * 8))}px`,
+                    formatter: (cell) => {
+                      const str = cell == null ? "" : String(cell);
+                      if (str.length <= 1200) return str;
+                      return gridjs.html(
+                        `<span>` +
+                        `${esc(str.slice(0, 1200))}` +
+                        `<span class="cu-cell-rest" style="display:none">${esc(str.slice(1200))}</span>` +
+                        `<a href="#" class="cu-cell-toggle" onclick="` +
+                          `var r=this.previousElementSibling;` +
+                          `if(r.style.display==='none'){r.style.display='inline';this.textContent='Less';}` +
+                          `else{r.style.display='none';this.textContent='More';}` +
+                          `return false">More</a>` +
+                        `</span>`
+                      );
+                    },
+                  };
+                }),
+                data: csvRows.slice(1).map(row => {
+                  const r = row.slice(0, headers.length);
+                  while (r.length < headers.length) r.push("");
+                  return r;
+                }),
+                sort: true,
+                search: false,
+                pagination: { limit: 20 },
+                style: { table: { fontSize: "0.875rem" } },
+              }).render(gridContainer);
+
+              /* ── Highlight rows where any score (except answer_similarity) < threshold ── */
+              function highlightFailRows() {
+                gridContainer.querySelectorAll("tbody tr").forEach(tr => {
+                  const tds = tr.querySelectorAll("td");
+                  const fail = failColIndices.some(i => {
+                    const td = tds[i];
+                    if (!td) return false;
+                    return parseFloat(td.textContent) < ANALYSIS_EVALUATION_THRESHOLD;
+                  });
+                  tr.classList.toggle("cu-row-fail", fail);
+                });
+              }
+              const obs = new MutationObserver(highlightFailRows);
+              obs.observe(gridContainer, { childList: true, subtree: true });
+              setTimeout(highlightFailRows, 200);
+              appendReportDl(content, `${runName || "report"}_evaluation_report.csv`);
+            }
+          }
+        } else {
+          $("report-viewer-content").innerHTML = content
+            ? renderMarkdown(content)
+            : `<p class="cu-muted">No analysis report available.</p>`;
+          runMermaid($("report-viewer-content"));
+          if (content) appendReportDl(content, `${runName || "report"}_analysis_report.md`);
+        }
+      }
+
+      $("tab-analysis").querySelectorAll(".cu-report-tab").forEach((tab) => {
+        tab.onclick = () => showReportTab(tab.dataset.report);
+      });
+
+      showReportTab("analysis");
+      showTab("analysis");
+    }
+
+
+    const iconExpand = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="11" y1="9" x2="8" y2="9"/></svg>`;
+    const iconDownload = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+
+    function runListCard(run) {
+      const succeeded = run.status === "Succeeded" || run.status === "Skipped";
+      const isMulti = Boolean(run.multi_repo) || (run.name || "").startsWith("multi_repo");
+      const projectSlug = run.project_slug || "";
+      const title = isMulti
+        ? (projectSlug ? `Combined repos (${projectSlug})` : "Combined repos")
+        : run.git_repo ? shortName(run.git_repo).replace(/\.git$/, "") : (run.git_slug || run.name);
+      const started = run.start_time ? esc(prettyRelativeDate(run.start_time)) : "—";
+      const storedRepos = run.repos || null;
+      const repoSummary = storedRepos && storedRepos.length
+        ? `${storedRepos.map((r) => `${esc(shortName(r.git_repo))} @ ${esc(r.git_branch)}`).join(", ")}`
+        : isMulti
+          ? `<i>Combined repos</i>`
+          : run.git_repo
+            ? `${esc(shortName(run.git_repo))} @ ${esc(run.git_branch || "")}`
+            : "";
+      const helpIcon = repoSummary
+        ? `<span class="cu-help" style="flex-shrink:0"><button type="button" class="cu-help-btn" aria-label="Repositories"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></button><span class="cu-help-popover" role="tooltip">${repoSummary}</span></span>`
+        : "";
+      const actions = succeeded
+        ? `<div class="cu-run-list-actions">
+            <button type="button" class="cu-run-expand" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-project-slug="${esc(projectSlug)}" title="View analysis report">${iconExpand}</button>
+            <button type="button" class="cu-run-download" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" title="Download analysis report">${iconDownload}</button>
+          </div>`
+        : "";
+      const repoList = storedRepos && storedRepos.length
+        ? storedRepos.map((r) => esc(r.git_repo))
+        : isMulti
+          ? []
+          : run.git_repo
+            ? [esc(run.git_repo)]
+            : [];
+      const visibleCount = isMulti ? 1 : 2;
+      const visibleRepos = repoList.slice(0, visibleCount).join("<br/>");
+      const hiddenRepos = repoList.length > visibleCount
+        ? `<span class="cu-repo-overflow" style="display:none">${repoList.slice(visibleCount).map((r) => "<br/>" + r).join("")}</span>`
+          + `<br/><a href="#" class="cu-repo-toggle" data-total="${repoList.length}" style="font-size:0.8rem">${isMulti ? `Show all (${repoList.length})` : `More (${repoList.length - visibleCount})`}</a>`
+        : "";
+      const repoCell = repoList.length
+        ? visibleRepos + hiddenRepos
+        : isMulti ? "<i>Combined repos</i>" : "";
+      return `<tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:0.75rem">
+            <input type="checkbox" class="cu-check cu-radio cu-run-select" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-title="${esc(title)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-project-slug="${esc(projectSlug)}" data-succeeded="${succeeded}"/>
+            <div>
+              <span class="cu-index-title">${esc(title)}</span>
+              <div class="cu-index-owner" style="font-size:0.8rem">${esc(run.name || "")}</div>
+            </div>
+          </div>
+        </td>
+        <td><div style="display:flex;align-items:center;gap:0.4rem"><span class="cu-job-dot ${esc(run.status)}"></span><span class="cu-muted" style="font-size:0.85rem">${repoCell}</span></div></td>
+        <td><span class="cu-chip ${succeeded ? "indexed" : (run.status === "Failed" || run.status === "Cancelled") ? "failed" : ""}">${esc(run.status)}</span></td>
+        <td><span class="cu-muted" style="font-size:0.8rem">${started}</span></td>
+        <td style="text-align:center">${succeeded ? `<button type="button" class="cu-btn-icon cu-run-chat" data-git-repo="${esc(run.git_repo || '')}" data-git-branch="${esc(run.git_branch || '')}" data-multi-repo="${isMulti}" data-project-slug="${esc(projectSlug)}" data-run-title="${esc(title)}" data-run-name="${esc(run.name || '')}" data-tooltip="Explore code"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>` : ""}</td>
+      </tr>`;
+    }
+
+    function updateRunSelectionNote(cb) {
+      const note = $("run-selection-note");
+      if (cb) {
+        const owner = cb.dataset.runName || "";
+        const title = cb.dataset.title || "";
+        const label = owner ? `${esc(owner)} @ ${esc(title)}` : esc(title);
+        note.innerHTML = `<span class="cu-note-detail">${label}</span>`;
+        note.classList.remove("hidden");
+      } else {
+        note.innerHTML = `<span class="cu-note-detail"><i>None selected</i></span>`;
+      }
+      note.classList.remove("cu-note-expanded");
+      note.classList.toggle("cu-note-overflowing", note.scrollWidth > note.clientWidth);
+    }
+
+    function bindRunCards(container) {
+      const root = container || document;
+      root.querySelectorAll(".cu-run-select").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          document.querySelectorAll(".cu-run-select").forEach((other) => {
+            if (other !== cb) other.checked = false;
+          });
+          const selected = cb.checked;
+          const succeeded = cb.dataset.succeeded === "true";
+          $("run-view-report").disabled = !(selected && succeeded);
+          $("run-download-report").disabled = !(selected && succeeded);
+          $("run-rerun").disabled = !(selected && succeeded);
+          $("run-view-report").dataset.runId = selected ? cb.dataset.runId : "";
+          $("run-view-report").dataset.runName = selected ? cb.dataset.runName : "";
+          $("run-view-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+          $("run-view-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+          $("run-view-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+          $("run-download-report").dataset.runId = selected ? cb.dataset.runId : "";
+          $("run-download-report").dataset.runName = selected ? cb.dataset.runName : "";
+          $("run-rerun").dataset.runId = selected ? cb.dataset.runId : "";
+          $("run-rerun").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+          $("run-rerun").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+          $("run-rerun").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+          updateRunSelectionNote(selected ? cb : null);
+        });
+      });
+      root.querySelectorAll(".cu-repo-toggle").forEach((link) => {
+        const totalCount = parseInt(link.dataset.total || "0", 10);
+        const collapsedLabel = link.textContent;
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          const overflow = link.parentElement.querySelector(".cu-repo-overflow");
+          const visible = overflow.style.display !== "none";
+          overflow.style.display = visible ? "none" : "inline";
+          link.textContent = visible ? collapsedLabel : "Show less";
+        });
+      });
+      root.querySelectorAll(".cu-run-expand").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const origContent = btn.innerHTML;
+          btn.disabled = true;
+          btn.setAttribute("aria-busy", "true");
+          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+          try {
+            await openReport(btn.dataset.runId, btn.dataset.runName, btn.dataset.gitRepo, btn.dataset.gitBranch, btn.dataset.projectSlug || "");
+          } catch (e) {
+            banner(String(e.message || e), true);
+          } finally {
+            btn.disabled = false;
+            btn.removeAttribute("aria-busy");
+            btn.innerHTML = origContent;
+          }
+        });
+      });
+      root.querySelectorAll(".cu-run-download").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            const snap = await api(`/api/v2/pipelines/runs/${btn.dataset.runId}`);
+            const report = snap.analysis_report;
+            if (!report) { banner("No analysis report available.", true); return; }
+            const blob = new Blob([report], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${btn.dataset.runName || btn.dataset.runId}_analysis_report.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            banner(String(e.message || e), true);
+          }
+        });
+      });
+      root.querySelectorAll(".cu-run-chat").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          openChatSlider(
+            btn.dataset.gitRepo || "",
+            btn.dataset.gitBranch || "",
+            btn.dataset.multiRepo === "true",
+            btn.dataset.runTitle || "",
+            btn.dataset.runName || "",
+            btn.dataset.projectSlug || ""
+          );
+        });
+      });
+    }
+
+    function jobCard(job) {
+      const kind = (job.name || "").startsWith("cu-query-") ? "Query" : "Pipeline";
+      return `<article class="cu-job-card">
+        <span class="cu-job-dot ${esc(job.status)}"></span>
+        <div>
+          <div class="cu-job-kind">${esc(kind)}</div>
+          <div class="cu-job-name">${esc(job.name)}</div>
+        </div>
+        <span class="cu-chip ${job.status === "Succeeded" || job.status === "Skipped" ? "indexed" : ""}">${esc(job.status)}</span>
+      </article>`;
+    }
+
+    function renderRepos() {
+      $("repo-list").innerHTML = state.repos.map((r) => {
+        const key = repoKey(r);
+        const slug = (shortName(r.git_repo) || "").replace(/\.git$/, "");
+        const indexed = state.indexes.some((i) => !i.multi_repo && (i.git_slug || "").includes(slug));
+        const chips = [
+          `<span class="cu-chip">${esc(r.git_branch)}</span>`,
+          indexed ? '<span class="cu-chip indexed">indexed</span>' : "",
+        ].join("");
+        return `<label class="cu-repo">
+          <input class="cu-check" type="checkbox" data-key="${esc(key)}" ${state.selected.has(key) ? "checked" : ""}/>
+          <span class="cu-repo-body">
+            <span class="cu-repo-title">${esc(slug || r.git_repo)}</span>
+            <span class="cu-repo-url-row">
+              <span class="cu-repo-url">${esc(r.git_repo)}</span>
+              <a class="cu-repo-link" href="${esc(r.git_repo)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Open repository"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></a>
+            </span>
+          </span>
+          <span class="cu-chips">${chips}</span>
+        </label>`;
+      }).join("");
+      $("repo-list").querySelectorAll("input").forEach((el) => {
+        el.addEventListener("change", () => {
+          if (el.checked) state.selected.add(el.dataset.key); else state.selected.delete(el.dataset.key);
+          renderSelection();
+        });
+      });
+      renderSelection();
+    }
+    function renderSelection() {
+      const n = selectedRepos().length;
+      const mode = n > 1 ? "multi-repo" : "single-repo";
+      if (n > 0 && $("banner").dataset.reason === "no-selection") {
+        banner("");
+        delete $("banner").dataset.reason;
+      }
+      const repoSummary = n
+        ? `<span class="cu-note-detail">${selectedRepos().map((r) => `${esc(shortName(r.git_repo))} @ ${esc(r.git_branch)}`).join(", ")}</span>`
+        : "<span class=\"cu-note-detail\"><i>None selected</i></span>";
+      const note = $("selection-note");
+      note.classList.remove("cu-note-expanded");
+      note.innerHTML = repoSummary;
+      note.classList.toggle("cu-note-overflowing", note.scrollWidth > note.clientWidth);
+      $("open-analyze").disabled = n === 0;
+    }
+    function renderChatSelect() {
+      $("slider-chat-repo").innerHTML = state.queryable.map((o) =>
+        `<option value="${esc(o.key)}">${esc(o.label)}</option>`
+      ).join("");
+    }
+    function renderChat() {
+      if (!state.chat.length && !state.thinking) {
+        $("slider-chat-log").innerHTML = `<p class="cu-muted" style="margin-bottom:0.25rem">What would you like to know?</p>
+          <p class="cu-muted" style="margin-bottom:0;margin-top:0">Sample queries:</p>
+          <div class="cu-actions" style="margin-top:0.25rem">
+            <button type="button" class="cu-btn cu-btn-secondary" data-q="Migration order for refactoring">What migration order would be recommended when refactoring to reduce breaking changes?</button>
+            <button type="button" class="cu-btn cu-btn-secondary" data-q="Riskiest modules to refactor">Which modules or components would be riskiest to refactor first?</button>
+            <button type="button" class="cu-btn cu-btn-secondary" data-q="Data stores in this codebase">What are the data stores in this codebase?</button>
+          </div>`;
+        $("slider-chat-log").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => sendQuestion(b.dataset.q)));
+        return;
+      }
+      const animate = state.animateLatest;
+      state.animateLatest = false;
+      let lastAssistantIdx = -1;
+      if (animate) {
+        for (let i = state.chat.length - 1; i >= 0; i--) {
+          if (state.chat[i].role === "assistant") { lastAssistantIdx = i; break; }
+        }
+      }
+      const dlFooter = (idx) =>
+        `<div class="cu-bubble-footer"><button class="cu-bubble-dl-btn" data-chat-dl="${idx}" title="Download response" aria-label="Download response">${iconDownload}</button></div>`;
+      const messages = state.chat.map((m, idx) => {
+        if (idx === lastAssistantIdx) {
+          return `<div class="cu-bubble assistant" id="cu-animating-bubble"></div>`;
+        }
+        return m.role === "assistant"
+          ? `<div class="cu-bubble assistant">${renderMarkdown(m.content)}${dlFooter(idx)}</div>`
+          : `<div class="cu-bubble user">${esc(m.content)}</div>`;
+      });
+      if (state.thinking && state.thinking.kind === "query") {
+        messages.push(`<div class="cu-bubble assistant thinking-msg">
+          <span class="cu-spinner" aria-hidden="true"></span>
+          Running query${state.thinking.status ? " · " + esc(state.thinking.status) : ""}
+        </div>`);
+      }
+      $("slider-chat-log").innerHTML = messages.join("");
+      runMermaid($("slider-chat-log"));
+      $("slider-chat-log").scrollTop = $("slider-chat-log").scrollHeight;
+      if (lastAssistantIdx >= 0) {
+        const el = document.getElementById("cu-animating-bubble");
+        if (el) typewriter(el, state.chat[lastAssistantIdx].content, () => {
+          el.removeAttribute("id");
+          const footer = document.createElement("div");
+          footer.className = "cu-bubble-footer";
+          footer.innerHTML = `<button class="cu-bubble-dl-btn" data-chat-dl="${lastAssistantIdx}" title="Download response" aria-label="Download response">${iconDownload}</button>`;
+          el.appendChild(footer);
+        });
+      }
+    }
+
+    async function load() {
+      try {
+        const [status, catalog, indexes, v2runs, nsData, wsData] = await Promise.all([
+          api("/api/status"), api("/api/v2/repositories/catalog-repos").catch(() => ({ repos: [] })), api("/api/indexes"),
+          api("/api/v2/pipelines/runs").catch(() => ({ runs: [] })),
+          api("/api/namespaces").catch(() => ({ namespaces: [], current: "" })),
+          api("/api/workspaces").catch(() => ({ workspaces: ["default"], current: "default" })),
+        ]);
+        $("status").className = "cu-status" + (status.ok ? " hidden" : " warn");
+        $("status").innerHTML = `<div style="font-size:0.75rem">${status.ok ? "Connected" : "Not connected"}</div><div></div>
+          <div>${status.ok ? "" : esc(status.message || "")}</div>`;
+        const nsList = nsData.namespaces || [];
+        const nsCurrent = nsData.current || status.namespace || "";
+        if (nsList.length > 0) {
+          $("ns-list").innerHTML = nsList.map((ns) => `<option value="${esc(ns)}"></option>`).join("");
+          $("ns-select").value = nsCurrent;
+          $("ns-row").classList.remove("hidden");
+        } else {
+          $("ns-row").classList.add("hidden");
+        }
+        const wsList = wsData.workspaces || ["default"];
+        const wsCurrent = wsData.current || status.workspace || "default";
+        $("ws-list").innerHTML = wsList.map((ws) => `<option value="${esc(ws)}"></option>`).join("");
+        $("ws-select").value = wsCurrent;
+
+        state.repos = catalog.repos || [];
+        state.defaultKey = catalog.default_key;
+        state.indexes = indexes.indexes || [];
+        state.queryable = indexes.queryable || [];
+        const allRuns = [...(v2runs.runs || [])];
+        const chevronDown = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        const chevronUp = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 10l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        const PAGE_SIZE = 5;
+        let runPage = 0;
+        const renderRunPage = (page) => {
+          runPage = page;
+          const totalPages = Math.max(1, Math.ceil(allRuns.length / PAGE_SIZE));
+          const pageRuns = allRuns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+          $("run-list").innerHTML = pageRuns.length
+            ? pageRuns.map(runListCard).join("")
+            : `<tr><td colspan="6" class="cu-muted" style="padding:0.75rem 0.9rem">No runs yet.</td></tr>`;
+          const paginator = $("run-paginator");
+          if (totalPages <= 1) {
+            paginator.innerHTML = "";
+          } else {
+            paginator.innerHTML =
+              `<button type="button" class="cu-btn cu-btn-secondary" id="run-prev"${page === 0 ? " disabled" : ""}>&#x2039; Prev</button>` +
+              `<span class="cu-muted" style="font-size:0.85rem">Page ${page + 1} of ${totalPages}</span>` +
+              `<button type="button" class="cu-btn cu-btn-secondary" id="run-next"${page >= totalPages - 1 ? " disabled" : ""}>Next &#x203a;</button>`;
+            if (page > 0) $("run-prev").onclick = () => renderRunPage(page - 1);
+            if (page < totalPages - 1) $("run-next").onclick = () => renderRunPage(page + 1);
+          }
+          bindRunCards($("run-list"));
+          updateRunSelectionNote(null);
+        };
+        renderRunPage(0);
+        $("run-view-report").onclick = async function() {
+          const btn = this;
+          if (!btn.dataset.runId) return;
+          const origContent = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> View Report`;
+          try {
+            await openReport(btn.dataset.runId, btn.dataset.runName, btn.dataset.gitRepo, btn.dataset.gitBranch, btn.dataset.projectSlug || "");
+          } catch (e) {
+            banner(String(e.message || e), true);
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = origContent;
+          }
+        };
+        $("run-download-report").onclick = async function() {
+          const btn = this;
+          if (!btn.dataset.runId) return;
+          try {
+            const snap = await api(`/api/v2/pipelines/runs/${btn.dataset.runId}`);
+            const report = snap.analysis_report;
+            if (!report) { banner("No analysis report available.", true); return; }
+            const blob = new Blob([report], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${btn.dataset.runName || btn.dataset.runId}_analysis_report.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            banner(String(e.message || e), true);
+          }
+        };
+        $("selection-note").classList.remove("hidden");
+        $("selection-note").onclick = () => $("selection-note").classList.toggle("cu-note-expanded");
+        $("run-selection-note").classList.remove("hidden");
+        $("run-selection-note").onclick = () => $("run-selection-note").classList.toggle("cu-note-expanded");
+
+        renderRepos();
+        renderChatSelect();
+        renderChat();
+        if (!state.thinking) banner("");
+      } catch (e) {
+        banner(String(e.message || e), true);
+      }
+    }
+
+    async function poll(job, kind) {
+      if (state.poll) clearInterval(state.poll);
+      const tick = async () => {
+        try {
+          const snap = await api(`/api/jobs/${job}`);
+          if (state.thinking) {
+            setThinking({
+              ...state.thinking,
+              status: `${snap.status} · ${job}`,
+            });
+            if (kind === "query") renderChat();
+          }
+          if (snap.done) {
+            clearInterval(state.poll);
+            state.poll = null;
+            setThinking(null);
+            if (snap.answer) state.chat.push({ role: "assistant", content: snap.answer });
+            renderChat();
+            load();
+          }
+        } catch (e) {
+          clearInterval(state.poll);
+          state.poll = null;
+          setThinking(null);
+          renderChat();
+          banner(String(e.message || e), true);
+        }
+      };
+      tick();
+      state.poll = setInterval(tick, 4000);
+    }
+
+    function pollQuery(queryId) {
+      const POLL_INTERVAL_MS = 3000;
+      const MAX_POLLS = 200; // 10 minutes
+      let polls = 0;
+      const interval = setInterval(async () => {
+        polls += 1;
+        if (polls > MAX_POLLS) {
+          clearInterval(interval);
+          setThinking(null);
+          renderChat();
+          banner("Query timed out. The analysis is taking longer than expected.", true);
+          return;
+        }
+        try {
+          const snap = await api(`/api/v2/queries/${queryId}`);
+          if (snap.status === "succeeded") {
+            clearInterval(interval);
+            state.chat.push({ role: "assistant", content: snap.result || "" });
+            setThinking(null);
+            state.animateLatest = true;
+            renderChat();
+          } else if (snap.status === "failed") {
+            clearInterval(interval);
+            setThinking(null);
+            renderChat();
+            banner(snap.error || "Query failed.", true);
+          }
+        } catch (e) {
+          clearInterval(interval);
+          setThinking(null);
+          renderChat();
+          banner(String(e.message || e), true);
+        }
+      }, POLL_INTERVAL_MS);
+    }
+
+    async function pollV2(runId) {
+      if (state.poll) clearInterval(state.poll);
+      let tickInFlight = false;
+      const tick = async () => {
+        if (tickInFlight) return;
+        tickInFlight = true;
+        try {
+          const snap = await api(`/api/v2/pipelines/runs/${runId}`);
+          if (state.thinking) {
+            setThinking({
+              ...state.thinking,
+              status: `${snap.status} · ${runId}`,
+            });
+          }
+          load();
+          if (["succeeded", "skipped", "failed", "cancelled", "running"].includes(snap.status)) {
+            clearInterval(state.poll);
+            state.poll = null;
+            setThinking(null);
+            if (snap.status === "succeeded" || snap.status === "skipped") {
+              banner("Pipeline completed successfully.");
+            } else if (snap.status === "running") {
+              banner(`Pipeline running.`);
+              setTimeout(() => { if ($("banner").textContent === "Pipeline running.") banner(""); }, 3000);
+            } else {
+              banner(`Pipeline ${snap.status}`, true);
+            }
+          }
+        } catch (e) {
+          clearInterval(state.poll);
+          state.poll = null;
+          setThinking(null);
+          banner(String(e.message || e), true);
+        } finally {
+          tickInFlight = false;
+        }
+      };
+      tick();
+      state.poll = setInterval(tick, 4000);
+    }
+
+    function openChatSlider(gitRepo, gitBranch, isMulti, runTitle, runName, projectSlug) {
+      renderChatSelect();
+      if (gitRepo || isMulti) {
+        const sel = $("slider-chat-repo");
+        const match = state.queryable.find((o) => {
+          if (isMulti) {
+            if (!o.multi_repo) return false;
+            if (projectSlug) return (o.project_slug || "") === projectSlug;
+            return true;
+          }
+          return o.git_repo === gitRepo && (!gitBranch || o.git_branch === gitBranch);
+        });
+        if (match) sel.value = match.key;
+      }
+      if (runTitle) {
+        const label = runName ? `${runTitle}@${runName}` : runTitle;
+        $("slider-chat-repo-name").textContent = label;
+        $("slider-chat-repo-label").classList.remove("hidden");
+      }
+      $("chat-slider-overlay").classList.remove("hidden");
+      $("chat-slider").classList.add("open");
+      renderChat();
+    }
+    function closeChatSlider() {
+      $("chat-slider").classList.remove("open");
+      $("chat-slider-overlay").classList.add("hidden");
+      if (state.thinking && state.thinking.kind === "query") {
+        $("thinking-status").textContent = "Query cancelled.";
+      }
+    }
+    $("chat-slider-close").onclick = closeChatSlider;
+    $("chat-slider-overlay").onclick = closeChatSlider;
+
+    async function sendQuestion(text) {
+      const question = (text || "").trim();
+      if (!question || state.thinking) return;
+      if (!$("slider-chat-repo").value) {
+        banner("Select a repository before sending.", true);
+        $("banner").dataset.reason = "no-chat-repo";
+        return;
+      }
+      banner("");
+      const option = state.queryable.find((o) => o.key === $("slider-chat-repo").value) || {};
+      state.chat.push({ role: "user", content: question });
+      $("slider-question").value = "";
+      openChatSlider();
+      setThinking({ kind: "query", label: "Thinking", status: "Analyzing knowledge graph…" });
+      renderChat();
+      try {
+        const result = await api("/api/v2/queries", {
+          method: "POST",
+          body: JSON.stringify({
+            question,
+            git_repo: option.git_repo || "",
+            git_branch: option.git_branch || "main",
+            use_global: option.use_global || false,
+            multi_repo: option.multi_repo || false,
+            project_slug: option.project_slug || "",
+          }),
+        });
+        pollQuery(result.query_id);
+      } catch (e) {
+        setThinking(null);
+        renderChat();
+        banner(String(e.message || e), true);
+      }
+    }
+
+    document.querySelectorAll(".cu-nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => showTab(btn.dataset.tab));
+    });
+    document.querySelectorAll(".cu-breadcrumb a[data-tab]").forEach((a) => {
+      a.addEventListener("click", (e) => { e.preventDefault(); showTab(a.dataset.tab); });
+    });
+    $("back-to-runs").onclick = () => showTab("runs");
+    $("run-rerun").onclick = () => {
+      if (state.thinking) return;
+      const btn = $("run-rerun");
+      if (!btn.dataset.runId) return;
+      // Reset radio to default
+      const scratchRadio = document.querySelector('input[name="rerun-mode"][value="scratch"]');
+      if (scratchRadio) { scratchRadio.checked = true; scratchRadio.dispatchEvent(new Event("change")); }
+      $("rerun-modal").classList.remove("hidden");
+    };
+    // Radio change handler
+    document.querySelectorAll('input[name="rerun-mode"]').forEach((radio) => {
+      radio.addEventListener("change", () => {
+        const mode = document.querySelector('input[name="rerun-mode"]:checked').value;
+        $("rerun-description").textContent = mode === "scratch"
+          ? "Regenerates the knowledge graph from scratch."
+          : "Regenerates the analysis report only.";
+      });
+    });
+    // Rerun modal close
+    function closeRerunModal() { $("rerun-modal").classList.add("hidden"); }
+    $("rerun-close").onclick = closeRerunModal;
+    $("rerun-cancel").onclick = closeRerunModal;
+    $("rerun-modal").addEventListener("click", (e) => { if (e.target === $("rerun-modal")) closeRerunModal(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("rerun-modal").classList.contains("hidden")) closeRerunModal();
+    });
+    // Rerun confirm handler
+    $("rerun-confirm").onclick = async () => {
+      const mode = document.querySelector('input[name="rerun-mode"]:checked').value;
+      closeRerunModal();
+      const btn = $("run-rerun");
+      const runId = btn.dataset.runId;
+      const gitRepo = btn.dataset.gitRepo;
+      const gitBranch = btn.dataset.gitBranch;
+      const projectSlug = btn.dataset.projectSlug || "";
+      if (!runId) return;
+      const origContent = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Re-run`;
+      const label = mode === "scratch" ? "Re-running from scratch" : "Re-running analysis";
+      const statusMsg = mode === "scratch" ? "Submitting full re-run job…" : "Submitting analysis-only job…";
+      setThinking({ kind: "pipeline", label, status: statusMsg });
+      try {
+        const body = { repos: gitRepo ? [{ git_repo: gitRepo, git_branch: gitBranch }] : [] };
+        if (projectSlug) body.project_slug = projectSlug;
+        if (mode === "report") body.pipeline_run_id = runId;
+        const result = await api("/api/v2/pipelines", { method: "POST", body: JSON.stringify(body) });
+        setThinking({ kind: "pipeline", label, status: `KFP run ${result.job_id} started` });
+        pollV2(result.job_id);
+      } catch (e) {
+        setThinking(null);
+        banner(String(e.message || e), true);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origContent;
+      }
+    };
+    $("select-all").onclick = () => { state.repos.forEach((r) => state.selected.add(repoKey(r))); renderRepos(); };
+    $("clear").onclick = () => { state.selected.clear(); renderRepos(); };
+    function closeAddRepo() {
+      $("add-repo-modal").classList.add("hidden");
+      $("custom-url").value = "";
+      $("custom-branch").value = "main";
+      $("add-repo-error").classList.add("hidden");
+      $("add-repo-error").textContent = "";
+    }
+    $("open-add-repo").onclick = () => {
+      $("add-repo-modal").classList.remove("hidden");
+      $("custom-url").focus();
+    };
+    $("add-repo-close").onclick = closeAddRepo;
+    $("add-repo-cancel").onclick = closeAddRepo;
+    $("add-repo-modal").addEventListener("click", (e) => { if (e.target === $("add-repo-modal")) closeAddRepo(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("add-repo-modal").classList.contains("hidden")) closeAddRepo();
+    });
+    $("add-custom").onclick = async () => {
+      const git_repo = $("custom-url").value.trim();
+      const git_branch = $("custom-branch").value.trim() || "main";
+      if (!git_repo) {
+        $("add-repo-error").textContent = "Repository URL is required.";
+        $("add-repo-error").classList.remove("hidden");
+        return;
+      }
+      if (!/^https?:\/\//i.test(git_repo)) {
+        $("add-repo-error").textContent = "Repository URL must start with http:// or https://";
+        $("add-repo-error").classList.remove("hidden");
+        return;
+      }
+      $("add-repo-error").classList.add("hidden");
+      const key = `${git_repo}|${git_branch}`;
+      if (!state.repos.some((r) => repoKey(r) === key)) state.repos.push({ git_repo, git_branch });
+      state.selected.add(key);
+      closeAddRepo();
+      renderRepos();
+      api("/api/v2/repositories", {
+        method: "POST",
+        body: JSON.stringify({ repos: [{ git_repo, git_branch }] }),
+      }).catch(() => {});
+    };
+    function closeAnalyzeModal() {
+      $("analyze-modal").classList.add("hidden");
+    }
+    $("open-analyze").onclick = () => {
+      if (state.thinking) return;
+      const selected = selectedRepos();
+      if (!selected.length) {
+        banner("Select at least one repository before running.", true);
+        $("banner").dataset.reason = "no-selection";
+        return;
+      }
+      $("analyze-selection").innerHTML = `<strong>Selected:</strong> ${selected.map((r) => `${esc(shortName(r.git_repo))} @ ${esc(r.git_branch)}`).join(", ")}`;
+      if (selected.length > 1) {
+        $("project-slug-group").classList.remove("hidden");
+        const defaultSlug = selected
+          .slice(0, 3)
+          .map((r) => shortName(r.git_repo).replace(/\.git$/, "").toLowerCase().replace(/[^a-z0-9_-]/g, "-"))
+          .join("-");
+        $("project-slug-input").value = defaultSlug;
+      } else {
+        $("project-slug-group").classList.add("hidden");
+        $("project-slug-input").value = "";
+      }
+      $("analyze-modal").classList.remove("hidden");
+    };
+    $("analyze-modal-close").onclick = closeAnalyzeModal;
+    $("analyze-modal-cancel").onclick = closeAnalyzeModal;
+    $("analyze-modal").addEventListener("click", (e) => { if (e.target === $("analyze-modal")) closeAnalyzeModal(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("analyze-modal").classList.contains("hidden")) closeAnalyzeModal();
+      if (e.key === "Escape" && $("chat-slider").classList.contains("open")) closeChatSlider();
+    });
+    $("start-analysis").onclick = async () => {
+      const projectSlug = $("project-slug-input").value.trim();
+      closeAnalyzeModal();
+      $("report-viewer-title").textContent = "";
+      $("report-viewer-subtitle").textContent = "";
+      $("report-viewer-content").innerHTML = "";
+      setThinking({ kind: "pipeline", label: "Running pipeline", status: "Submitting indexing job…" });
+      try {
+        const submittedRepos = selectedRepos();
+        const payload = { repos: submittedRepos };
+        if (submittedRepos.length > 1 && projectSlug) payload.project_slug = projectSlug;
+        const result = await api("/api/v2/pipelines", { method: "POST", body: JSON.stringify(payload) });
+        setThinking({ kind: "pipeline", label: "Running pipeline", status: `KFP run ${result.job_id} started` });
+        pollV2(result.job_id);
+        showTab("runs");
+      } catch (e) {
+        setThinking(null);
+        banner(String(e.message || e), true);
+      }
+    };
+    $("slider-chat-repo").addEventListener("change", () => {
+      if ($("banner").dataset.reason === "no-chat-repo") {
+        banner("");
+        delete $("banner").dataset.reason;
+      }
+    });
+    async function commitNamespace() {
+      const ns = $("ns-select").value.trim();
+      if (!ns) return;
+      try {
+        await api("/api/namespace", { method: "POST", body: JSON.stringify({ namespace: ns }) });
+        load();
+      } catch (e) {
+        banner(String(e.message || e), true);
+        load(); // revert displayed value to server state
+      }
+    }
+    $("ns-select").addEventListener("change", commitNamespace);
+    $("ns-select").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitNamespace(); } });
+    async function commitWorkspace() {
+      const ws = $("ws-select").value.trim() || "default";
+      try {
+        await api("/api/workspace", { method: "POST", body: JSON.stringify({ workspace: ws }) });
+        load();
+      } catch (e) {
+        banner(String(e.message || e), true);
+        load();
+      }
+    }
+    $("ws-select").addEventListener("change", commitWorkspace);
+    $("ws-select").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitWorkspace(); } });
+    $("slider-chat-log").addEventListener("click", (e) => {
+      const btn = e.target.closest(".cu-bubble-dl-btn");
+      if (!btn || btn.dataset.chatDl === undefined) return;
+      const msg = state.chat[Number(btn.dataset.chatDl)];
+      if (!msg) return;
+      const blob = new Blob([msg.content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat_response_${Number(btn.dataset.chatDl) + 1}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    $("slider-send").onclick = () => sendQuestion($("slider-question").value);
+    $("slider-question").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        sendQuestion($("slider-question").value);
+      }
+    });
+    // Help popovers: show on hover or click, close on mouse-leave or outside click
+    document.querySelectorAll(".cu-help").forEach((wrap) => {
+      let leaveTimer;
+      wrap.addEventListener("mouseenter", () => {
+        clearTimeout(leaveTimer);
+        wrap.classList.add("open");
+      });
+      wrap.addEventListener("mouseleave", () => {
+        leaveTimer = setTimeout(() => wrap.classList.remove("open"), 120);
+      });
+      wrap.querySelector(".cu-help-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isOpen = wrap.classList.contains("open");
+        document.querySelectorAll(".cu-help.open").forEach((el) => el.classList.remove("open"));
+        if (!isOpen) wrap.classList.add("open");
+      });
+    });
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".cu-help.open").forEach((el) => el.classList.remove("open"));
+    });
+
+    // Theme toggle
+    (function initTheme() {
+      const saved = localStorage.getItem("theme");
+      if (saved === "dark") {
+        document.body.classList.add("dark");
+        const dark = document.querySelector('input[name="theme-mode"][value="dark"]');
+        if (dark) dark.checked = true;
+      }
+    })();
+    document.querySelectorAll('input[name="theme-mode"]').forEach((radio) => {
+      radio.addEventListener("change", () => {
+        const mode = document.querySelector('input[name="theme-mode"]:checked').value;
+        document.body.classList.toggle("dark", mode === "dark");
+        localStorage.setItem("theme", mode);
+      });
+    });
+
+    load();
+  </script>
+</body>
+</html>

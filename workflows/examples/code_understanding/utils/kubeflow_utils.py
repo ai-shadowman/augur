@@ -174,6 +174,43 @@ def inject_secret_as_env(secret_name: str):
 
 
 ##############################################################################
+# Pipeline run ID helpers
+##############################################################################
+
+def get_kfp_run_id() -> str | None:
+    """Return the KFP run ID for the current pod.
+
+    Checks ``KFP_RUN_ID`` first (injected by ``inject_secret_as_env`` via KFP
+    placeholder ``{{$.pipeline_job_uuid}}``), then falls back to reading the
+    ``pipeline/runid`` label on the current pod via the Kubernetes API.
+    """
+    kfp_run_id_env = os.environ.get("KFP_RUN_ID", "").strip()
+    if kfp_run_id_env and not kfp_run_id_env.startswith("{{"):
+        return kfp_run_id_env
+
+    try:
+        from kubernetes import client as k8s_client, config as k8s_config
+
+        k8s_config.load_incluster_config()
+
+        pod_name = (os.environ.get("KFP_POD_NAME") or os.environ.get("HOSTNAME", "")).strip()
+        ns = (
+            os.environ.get("KFP_NAMESPACE")
+            or os.environ.get("MLFLOW_NAMESPACE")
+            or os.environ.get("MLFLOW_WORKSPACE", "")
+        ).strip()
+
+        if pod_name and ns:
+            pod = k8s_client.CoreV1Api().read_namespaced_pod(pod_name, ns)
+            kfp_run_id = (pod.metadata.labels or {}).get("pipeline/runid", "").strip()
+            return kfp_run_id or None
+    except Exception:
+        pass
+
+    return None
+
+
+##############################################################################
 # Pipeline compilation helper
 ##############################################################################
 

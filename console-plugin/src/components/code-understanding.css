@@ -1,0 +1,14 @@
+.cu-console-frame {
+  width: 100%;
+  height: calc(100vh - 7.5rem);
+  min-height: 32rem;
+  border: none;
+  display: block;
+}
+
+.cu-console-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}

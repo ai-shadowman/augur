@@ -39,27 +39,38 @@ def single_repo_pipeline(
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
     multi_repo: bool = False,
+    pipeline_run_id: str = "",
+    project_workspace: str = "",
 ):
     if uses_kfp():
         dg = DataGenerationPipeline.run(
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_run_id=pipeline_run_id,
+            project_workspace=project_workspace,
         )
         idx = IndexingPipeline.run(
             codebase_dir=dg.output,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_run_id=pipeline_run_id,
+            project_workspace=project_workspace,
         )
         AnalysisPipeline.run(
             graphrag_dir=idx.output,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_run_id=pipeline_run_id,
+            project_workspace=project_workspace,
         )
     else:
         from pipelines.base.data_generation import generate_git_slug
+
+        if project_workspace:
+            os.environ["PROJECT_WORKSPACE"] = project_workspace
 
         git_slug = generate_git_slug(git_repo, git_branch)
         source_path = f"{parent_source_path}/{git_slug}"
@@ -68,25 +79,27 @@ def single_repo_pipeline(
             os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), git_slug
         )
 
-        DataGenerationPipeline().run(
-            git_repo=git_repo,
-            git_branch=git_branch,
-            source_path=source_path,
-            target_path=target_path,
-            multi_repo=multi_repo,
-        )
-        IndexingPipeline().run(
-            codebase_path=target_path,
-            graphrag_source_path=graphrag_source_path,
-            git_repo=git_repo,
-            git_branch=git_branch,
-            multi_repo=multi_repo,
-        )
+        if not pipeline_run_id:
+            DataGenerationPipeline().run(
+                git_repo=git_repo,
+                git_branch=git_branch,
+                source_path=source_path,
+                target_path=target_path,
+                multi_repo=multi_repo,
+            )
+            IndexingPipeline().run(
+                codebase_path=target_path,
+                graphrag_source_path=graphrag_source_path,
+                git_repo=git_repo,
+                git_branch=git_branch,
+                multi_repo=multi_repo,
+            )
         AnalysisPipeline().run(
             graphrag_source_path=graphrag_source_path,
             git_repo=git_repo,
             git_branch=git_branch,
             multi_repo=multi_repo,
+            pipeline_run_id=pipeline_run_id,
         )
 
 
@@ -94,24 +107,44 @@ def single_repo_pipeline(
 def multi_repo_pipeline(
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
+    pipeline_run_id: str = "",
+    runnable_repos: str = "[]",
+    project_slug: str = "",
+    project_workspace: str = "",
 ):
     if uses_kfp():
-        dg = DataGenerationPipeline.run_multi_repo()
+        dg = DataGenerationPipeline.run_multi_repo(
+            pipeline_run_id=pipeline_run_id,
+            runnable_repos=runnable_repos,
+            project_workspace=project_workspace,
+        )
         idx = IndexingPipeline.run_multi_repo(
             parent_target_path=parent_target_path,
+            pipeline_run_id=pipeline_run_id,
+            project_slug=project_slug,
+            project_workspace=project_workspace,
         ).after(dg)
         AnalysisPipeline.run_multi_repo(
             graphrag_dir=idx.outputs["graphrag_dir"],
+            pipeline_run_id=pipeline_run_id,
+            project_slug=project_slug,
+            project_workspace=project_workspace,
         )
     else:
-        from loaders.default_asset_loader import DefaultAssetLoader
+        if project_workspace:
+            os.environ["PROJECT_WORKSPACE"] = project_workspace
 
-        env_repos = os.getenv("GIT_REPO_LIST_CONTENTS")
-        git_repos = json.loads(env_repos) if env_repos else (DefaultAssetLoader().download("repos/repo_list.json") or [])
-
-        DataGenerationPipeline().run_multi_repo(git_repos)
-        IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path)
-        AnalysisPipeline().run_multi_repo()
+        if not pipeline_run_id:
+            git_repos = DataGenerationPipeline.get_repo_list(runnable_repos)
+            DataGenerationPipeline().run_multi_repo(git_repos)
+            IndexingPipeline().run_multi_repo(
+                parent_target_path=parent_target_path,
+                project_slug=project_slug,
+            )
+        AnalysisPipeline().run_multi_repo(
+            pipeline_run_id=pipeline_run_id,
+            project_slug=project_slug,
+        )
 
 
 ##############################################################################

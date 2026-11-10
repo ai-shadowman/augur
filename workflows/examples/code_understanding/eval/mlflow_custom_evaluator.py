@@ -11,6 +11,7 @@ from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similari
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
+from utils.pipeline_utils import resolve_mlflow_prefix
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
@@ -42,11 +43,12 @@ class MlFlowCustomEvaluator(CustomEvaluator):
     and answer_similarity metrics.
     """
 
-    _EXPERIMENT_NAME = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/evaluations"
+    _EXPERIMENT_NAME = f"{resolve_mlflow_prefix()}/code-refactoring/evaluations"
     _RUN_NAME = "code-understanding-eval"
     _SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
-    def __init__(self):
+    def __init__(self, namespace: str | None = None, workspace: str | None = None):
+        self._EXPERIMENT_NAME = f"{resolve_mlflow_prefix(namespace=namespace, workspace=workspace)}/code-refactoring/evaluations"
         if not os.environ.get("MLFLOW_TRACKING_TOKEN") and os.path.exists(self._SA_TOKEN_PATH):
             try:
                 with open(self._SA_TOKEN_PATH) as f:
@@ -277,7 +279,7 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-        _eval_tags = {"category": "evaluation", "git_slug": slug}
+        _eval_tags = {"category": "evaluation", "git_slug": slug, "multi_repo": str(multi_repo)}
 
         if mlflow.active_run():
             mlflow.end_run()

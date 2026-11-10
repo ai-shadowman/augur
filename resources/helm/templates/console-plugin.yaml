@@ -1,0 +1,297 @@
+{{- if .Values.consolePlugin.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: code-understanding-console-plugin-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console-plugin
+data:
+  config.json: |
+    {
+      "appUrl": "https://{{ include "codeUnderstanding.pluginApiRouteHost" . }}"
+    }
+  nginx.conf: |
+    worker_processes auto;
+    error_log /dev/stderr notice;
+    pid /tmp/nginx.pid;
+
+    events {
+      worker_connections 1024;
+    }
+
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      access_log /dev/stdout;
+      sendfile on;
+      keepalive_timeout 65;
+
+      server {
+        listen 9443 ssl;
+        server_name _;
+        root /usr/share/nginx/html;
+
+        ssl_certificate /var/serving-cert/tls.crt;
+        ssl_certificate_key /var/serving-cert/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        location / {
+          try_files $uri $uri/ /index.html;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-understanding-console-plugin
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console-plugin
+spec:
+  replicas: {{ .Values.consolePlugin.replicas }}
+  selector:
+    matchLabels:
+      app: code-understanding-console-plugin
+  template:
+    metadata:
+      labels:
+        app: code-understanding-console-plugin
+    spec:
+      containers:
+        - name: plugin
+          image: {{ required "consolePlugin.image is required when consolePlugin.enabled=true" .Values.consolePlugin.image | quote }}
+          imagePullPolicy: {{ .Values.consolePlugin.imagePullPolicy }}
+          ports:
+            - name: https
+              containerPort: 9443
+          volumeMounts:
+            - name: plugin-config
+              mountPath: /usr/share/nginx/html/config.json
+              subPath: config.json
+            - name: serving-cert
+              mountPath: /var/serving-cert
+              readOnly: true
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            httpGet:
+              path: /plugin-manifest.json
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /plugin-manifest.json
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: plugin-config
+          configMap:
+            name: code-understanding-console-plugin-config
+        - name: nginx-config
+          configMap:
+            name: code-understanding-console-plugin-config
+        - name: serving-cert
+          secret:
+            secretName: code-understanding-console-plugin-cert
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-understanding-plugin-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-plugin-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-understanding-plugin-api
+  template:
+    metadata:
+      labels:
+        app: code-understanding-plugin-api
+    spec:
+      serviceAccountName: pipeline-upload-job
+      containers:
+        - name: api
+          image: {{ required "consolePlugin.apiImage is required when consolePlugin.enabled=true" .Values.consolePlugin.apiImage | quote }}
+          imagePullPolicy: {{ .Values.consolePlugin.imagePullPolicy }}
+          command:
+            - /opt/app-root/src/.venv/bin/python
+          args:
+            - -m
+            - uvicorn
+            - main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8443"
+            - --ssl-certfile
+            - /var/serving-cert/tls.crt
+            - --ssl-keyfile
+            - /var/serving-cert/tls.key
+          ports:
+            - name: https
+              containerPort: 8443
+          env:
+            - name: KFP_NAMESPACE
+              value: "{{ .Values.namespace }}"
+            - name: MLFLOW_WORKSPACE
+              value: "{{ .Values.namespace }}"
+            - name: AGENTMESH_REPO_URL
+              value: "{{ .Values.repoUrl | default .Values.augurRepoUrl }}"
+            - name: AGENTMESH_REPO_REF
+              value: "{{ .Values.repoRef | default .Values.augurRepoBranch }}"
+            - name: AGENTMESH_JOB_REPO_REF
+              value: "{{ .Values.repoRef | default .Values.augurRepoBranch }}"
+            - name: AUGUR_GIT_REPO_URL
+              value: "{{ .Values.augurRepoUrl | default .Values.repoUrl }}"
+            - name: AUGUR_GIT_REPO_BRANCH
+              value: "{{ .Values.augurRepoBranch | default .Values.repoRef }}"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+                optional: true
+          volumeMounts:
+            - name: serving-cert
+              mountPath: /var/serving-cert
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: serving-cert
+          secret:
+            secretName: code-understanding-plugin-api-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-understanding-plugin-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-plugin-api
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: code-understanding-plugin-api-cert
+spec:
+  selector:
+    app: code-understanding-plugin-api
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: code-understanding-plugin-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-plugin-api
+  annotations:
+    haproxy.router.openshift.io/timeout: 30m
+spec:
+  to:
+    kind: Service
+    name: code-understanding-plugin-api
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-understanding-console-plugin
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console-plugin
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: code-understanding-console-plugin-cert
+spec:
+  selector:
+    app: code-understanding-console-plugin
+  ports:
+    - name: https
+      port: 9443
+      targetPort: https
+---
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: code-understanding-console
+  labels:
+    app: code-understanding-console-plugin
+spec:
+  displayName: Code Understanding
+  backend:
+    type: Service
+    service:
+      name: code-understanding-console-plugin
+      namespace: {{ .Values.namespace }}
+      port: 9443
+      basePath: /
+  proxy:
+    - alias: backend
+      authorization: None
+      endpoint:
+        type: Service
+        service:
+          name: code-understanding-plugin-api
+          namespace: {{ .Values.namespace }}
+          port: 8443
+  i18n:
+    loadType: Preload
+---
+apiVersion: console.openshift.io/v1
+kind: ConsoleLink
+metadata:
+  name: code-understanding-console
+  labels:
+    app: code-understanding-console-plugin
+spec:
+  location: ApplicationMenu
+  text: Code Understanding
+  href: {{ include "codeUnderstanding.consolePluginHref" . }}
+  applicationMenu:
+    section: {{ .Values.consolePlugin.applicationMenuSection }}
+    imageURL: {{ .Values.consolePlugin.iconDataUri }}
+{{- end }}
