@@ -22,8 +22,8 @@ PIPELINE_GIT_REPO_LIST	?=
 PIPELINE_RUN_ID     	?=
 PROJECT_SLUG        	?=
 PROJECT_WORKSPACE   	?=
-CONSOLE_APP_IMAGE_NAME    ?= agent-mesh-for-sw-modernization-console-app
-CONSOLE_PLUGIN_IMAGE_NAME ?= agent-mesh-for-sw-modernization-console-plugin
+CONSOLE_APP_IMAGE_NAME    ?= console-app
+CONSOLE_PLUGIN_IMAGE_NAME ?= console-plugin
 CONSOLE_IMAGE_TAG         ?= latest
 CONSOLE_ROUTE_HOST        ?=
 
@@ -467,6 +467,35 @@ port-forward-console-app:
 	echo "==> Forwarding http://localhost:8080 -> code-understanding-console:8080" && \
 	oc port-forward svc/code-understanding-console 8080:8080 -n $$KFP_NAMESPACE
 
+oc-deploy-console-app: apply-console-src
+	@set -a && . $(ENV_FILE) && set +a && \
+	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
+	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker --dockerfile-path=ui/Dockerfile -n "$$KFP_NAMESPACE" && \
+	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
+	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
+	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
+	echo "==> Deploying Code Understanding console ($$CONSOLE_IMG)..." && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set requester="$$(oc whoami)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set console.enabled=true \
+		--set-string console.image="$$CONSOLE_IMG" \
+		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
+		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
+	ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
+	echo "" && \
+	echo "==> Open the console in your browser:" && \
+	echo "    https://$$ROUTE_HOST" && \
+	echo ""
+
 # ============================================================================
 # OpenShift console plugin
 # ============================================================================
@@ -481,6 +510,61 @@ deploy-console-plugin: apply-plugin-src
 	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
 	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
 	echo "==> Deploying OpenShift console plugin and FastAPI backend..." && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set clusterDomain="$$CLUSTER_DOMAIN" \
+		--set consolePlugin.enabled=true \
+		--set-string consolePlugin.image="$$PLUGIN_IMG" \
+		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
+		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
+		-s templates/console-plugin.yaml | oc apply -f - && \
+	echo "==> Waiting for plugin-api Route hostname to be assigned..." && \
+	oc wait route/code-understanding-plugin-api -n "$$KFP_NAMESPACE" \
+		--for=jsonpath='{.spec.host}' --timeout=300s && \
+	API_HOST="$$(oc get route code-understanding-plugin-api -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set clusterDomain="$$CLUSTER_DOMAIN" \
+		--set consolePlugin.enabled=true \
+		--set-string consolePlugin.image="$$PLUGIN_IMG" \
+		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
+		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
+		--set consolePlugin.apiRouteHost="$$API_HOST" \
+		-s templates/console-plugin.yaml | oc apply -f - && \
+	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
+	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \
+	oc rollout status deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE --timeout=300s && \
+	oc rollout status deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE --timeout=300s && \
+	$(MAKE) enable-console-plugin
+
+oc-deploy-console-plugin: apply-plugin-src
+	@set -a && . $(ENV_FILE) && set +a && \
+	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
+	PLUGIN_NAME="$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}" && \
+	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker --dockerfile-path=ui/Dockerfile -n "$$KFP_NAMESPACE" && \
+	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
+	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$PLUGIN_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker --dockerfile-path=Dockerfile -n "$$KFP_NAMESPACE" && \
+	echo "==> Building $$PLUGIN_NAME in-cluster from console-plugin/..." && \
+	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
+	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
+	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$APP_TAG" && \
+	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
+	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
+	echo "==> Deploying OpenShift console plugin ($$PLUGIN_IMG) and FastAPI backend ($$CONSOLE_IMG)..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
