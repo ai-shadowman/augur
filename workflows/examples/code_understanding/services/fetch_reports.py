@@ -6,7 +6,7 @@ import logging
 import os
 
 from loaders.default_asset_loader import DefaultAssetLoader
-from pipelines.base.data_generation import generate_git_slug
+from utils.code_utils import generate_slug_from_repo as generate_git_slug
 from utils.pipeline_utils import resolve_mlflow_prefix, sanitize_slug
 
 logger = logging.getLogger(__name__)
