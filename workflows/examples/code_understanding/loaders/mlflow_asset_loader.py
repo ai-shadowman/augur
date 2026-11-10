@@ -2,11 +2,41 @@ import json
 import logging
 import os
 import posixpath
+import sys
+import threading
 import traceback
 
-import mlflow
+_MLFLOW_IMPORT_LOCK = threading.RLock()
+
+
+def _ensure_mlflow_imported():
+    """Import mlflow under a re-entrant lock and heal orphaned sys.modules state."""
+    with _MLFLOW_IMPORT_LOCK:
+        try:
+            import mlflow as _mlflow
+            import mlflow.version as _mlflow_version
+            if not hasattr(_mlflow, "version"):
+                _mlflow.version = _mlflow_version
+            from mlflow.tracking import MlflowClient as _MlflowClient
+            return _mlflow, _MlflowClient
+        except AttributeError:
+            # If an earlier concurrent import failed mid-way, sys.modules may retain
+            # submodules like 'mlflow.version' without 'mlflow', causing subsequent
+            # imports to fail with "partially initialized module 'mlflow' has no
+            # attribute 'version'". Purge half-initialized mlflow modules and retry
+            # synchronously under the lock.
+            for mod_name in [k for k in list(sys.modules.keys()) if k == "mlflow" or k.startswith("mlflow.")]:
+                sys.modules.pop(mod_name, None)
+            import mlflow as _mlflow
+            import mlflow.version as _mlflow_version
+            if not hasattr(_mlflow, "version"):
+                _mlflow.version = _mlflow_version
+            from mlflow.tracking import MlflowClient as _MlflowClient
+            return _mlflow, _MlflowClient
+
+
+mlflow, MlflowClient = _ensure_mlflow_imported()
 import requests
-from mlflow.tracking import MlflowClient
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 

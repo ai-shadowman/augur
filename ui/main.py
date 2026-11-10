@@ -13,9 +13,24 @@ os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
 
 _UI_DIR = str(Path(__file__).resolve().parent)
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-for _p in (_PROJECT_ROOT, _UI_DIR):
+_CODE_UNDERSTANDING_DIR = str(
+    Path(__file__).resolve().parent.parent / "workflows" / "examples" / "code_understanding"
+)
+for _p in (_CODE_UNDERSTANDING_DIR, _PROJECT_ROOT, _UI_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+# Pre-import mlflow on the main thread before FastAPI worker threads start.
+# mlflow/__init__.py has an internal circular import chain (mlflow -> mlflow.genai ->
+# mlflow.tracking -> mlflow.models -> mlflow.version) that can deadlock or leave a
+# partially-initialized module in sys.modules if first imported concurrently by
+# multiple request threads.
+try:
+    import mlflow  # noqa: E402,F401
+    import mlflow.tracking  # noqa: E402,F401
+    import mlflow.version  # noqa: E402,F401
+except Exception:
+    pass
 
 from fastapi import FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402

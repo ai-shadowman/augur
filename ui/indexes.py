@@ -56,7 +56,9 @@ def _query_mlflow_indexed_runs(
 ) -> dict[tuple[str, bool], dict[str, Any]]:
     """Return a map of ``(git_slug, multi_repo) -> run_info`` from MLflow."""
     from loaders.default_asset_loader import DefaultAssetLoader
-    from loaders.mlflow_asset_loader import MlFlowAssetLoader
+    from loaders.mlflow_asset_loader import MlFlowAssetLoader, _ensure_mlflow_imported
+
+    _ensure_mlflow_imported()
     from mlflow.tracking import MlflowClient
 
     loader = DefaultAssetLoader(namespace=namespace, workspace=workspace)

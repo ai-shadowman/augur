@@ -352,6 +352,17 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertIn("/api/workspaces", content)
         self.assertIn("/api/workspace", content)
         self.assertIn("project_slug", content)
+        self.assertIn("!isTableStart(i)", content)
+        self.assertIn("renderMermaidError", content)
+        self.assertIn("mermaid.render(", content)
+
+    def test_ensure_mlflow_imported_binds_version(self):
+        from loaders.mlflow_asset_loader import _ensure_mlflow_imported
+
+        mlflow_mod, client_cls = _ensure_mlflow_imported()
+        self.assertIsNotNone(mlflow_mod)
+        self.assertTrue(hasattr(mlflow_mod, "version"))
+        self.assertIsNotNone(client_cls)
 
     def test_console_plugin_and_helm_templates_exist(self):
         self.assertTrue((_REPO_ROOT / "console-plugin" / "Dockerfile").is_file())
