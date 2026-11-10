@@ -15,7 +15,10 @@ from api.pipeline_service import (
     list_runs,
     submit_pipeline_run,
 )
-from ui.cluster import get_active_namespace, get_active_workspace
+try:
+    from ui.cluster import get_active_namespace, get_active_workspace
+except ImportError:
+    from cluster import get_active_namespace, get_active_workspace
 
 logger = logging.getLogger(__name__)
 

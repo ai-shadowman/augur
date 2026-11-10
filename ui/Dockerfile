@@ -11,6 +11,7 @@ COPY ui/uv.lock .
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY ui/ .
+COPY ui/ /opt/app-root/ui/
 COPY api/ /opt/app-root/api/
 COPY workflows/examples/code_understanding/ /opt/app-root/workflows/examples/code_understanding/
 

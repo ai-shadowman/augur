@@ -106,7 +106,7 @@ consolePlugin:
   enabled: false
   replicas: 1
   image: ""
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
   apiImage: ""
   apiRouteHost: ""
   applicationMenuSection: OpenShift Self Managed Services

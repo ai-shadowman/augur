@@ -453,6 +453,7 @@ deploy-console-app: apply-console-src
 		--set-string console.image="$$CONSOLE_IMG" \
 		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
 		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
 	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
 	ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
 	echo "" && \
@@ -491,6 +492,7 @@ oc-deploy-console-app: apply-console-src
 		--set-string console.image="$$CONSOLE_IMG" \
 		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
 		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
 	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
 	ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
 	echo "" && \

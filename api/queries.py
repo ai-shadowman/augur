@@ -10,7 +10,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.query_service import run_adhoc_query
-from ui.cluster import get_active_namespace, get_active_workspace
+try:
+    from ui.cluster import get_active_namespace, get_active_workspace
+except ImportError:
+    from cluster import get_active_namespace, get_active_workspace
 
 logger = logging.getLogger(__name__)
 

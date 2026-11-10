@@ -10,7 +10,10 @@ from pydantic import BaseModel, Field
 
 from api.repositories_service import fetch_catalog_repos
 from api.repositories_service import log_repos as _log_repos
-from ui.cluster import get_active_namespace, get_active_workspace
+try:
+    from ui.cluster import get_active_namespace, get_active_workspace
+except ImportError:
+    from cluster import get_active_namespace, get_active_workspace
 
 logger = logging.getLogger(__name__)
 

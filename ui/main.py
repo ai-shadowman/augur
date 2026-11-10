@@ -3,36 +3,77 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+_UI_DIR = str(Path(__file__).resolve().parent)
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+for _p in (_PROJECT_ROOT, _UI_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from api.pipelines import router as pipelines_router
-from api.queries import router as queries_router
-from api.repositories import router as repositories_router
-from ui.cluster import (
-    NAMESPACE_COOKIE,
-    WORKSPACE_COOKIE,
-    default_namespace,
-    default_workspace,
-    get_active_namespace,
-    get_active_workspace,
-    get_cluster_info,
-    list_namespaces,
-    list_workspaces,
-    sanitize_workspace,
-)
-from ui.indexes import list_indexed_repos, queryable_options
+from fastapi import FastAPI, HTTPException, Request, Response  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+from api.pipelines import router as pipelines_router  # noqa: E402
+from api.queries import router as queries_router  # noqa: E402
+from api.repositories import router as repositories_router  # noqa: E402
+
+try:
+    from ui.cluster import (
+        NAMESPACE_COOKIE,
+        WORKSPACE_COOKIE,
+        default_namespace,
+        default_workspace,
+        get_active_namespace,
+        get_active_workspace,
+        get_cluster_info,
+        list_namespaces,
+        list_workspaces,
+        sanitize_workspace,
+    )
+    from ui.indexes import list_indexed_repos, queryable_options
+except ImportError:
+    from cluster import (  # type: ignore[no-redef]
+        NAMESPACE_COOKIE,
+        WORKSPACE_COOKIE,
+        default_namespace,
+        default_workspace,
+        get_active_namespace,
+        get_active_workspace,
+        get_cluster_info,
+        list_namespaces,
+        list_workspaces,
+        sanitize_workspace,
+    )
+    from indexes import list_indexed_repos, queryable_options  # type: ignore[no-redef]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+
+class FrameAncestorsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = "frame-ancestors *"
+        response.headers["X-Frame-Options"] = "ALLOWALL"
+        return response
+
+
 app = FastAPI(title="Code Understanding Console", version="0.1.0")
+app.add_middleware(FrameAncestorsMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(pipelines_router)
 app.include_router(queries_router)
 app.include_router(repositories_router)
@@ -55,6 +96,15 @@ def index() -> FileResponse:
 @app.get("/healthz", tags=["meta"])
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/health", tags=["meta"])
+def api_health(request: Request) -> dict[str, str]:
+    return {
+        "status": "ok",
+        "namespace": get_active_namespace(request),
+        "workspace": get_active_workspace(request),
+    }
 
 
 @app.get("/api/status", tags=["cluster"])
