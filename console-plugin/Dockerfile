@@ -2,7 +2,7 @@ FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS build
 USER root
 WORKDIR /usr/src/app
 COPY package.json package-lock.json* ./
-RUN npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund --loglevel=error
 COPY . .
 RUN npm run build
 

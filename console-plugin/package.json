@@ -33,6 +33,12 @@
     "webpack-cli": "^6.0.1",
     "webpack-dev-server": "^5.2.3"
   },
+  "overrides": {
+    "glob": "^10.4.5",
+    "inflight": "npm:lru-cache@^10.4.3",
+    "uuid": "^11.0.5",
+    "popper.js": "npm:@popperjs/core@^2.11.8"
+  },
   "consolePlugin": {
     "name": "code-understanding-console",
     "version": "0.1.0",
