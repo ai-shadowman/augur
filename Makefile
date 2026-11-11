@@ -162,6 +162,12 @@ push-console-plugin-image:
 	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
 	podman push "$$PLUGIN_IMG"
 
+build-push-all:
+	$(MAKE) build-images
+	$(MAKE) build-console-app-image
+	$(MAKE) build-console-plugin-image
+	$(MAKE) push-console-plugin-image
+
 oc-build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
 	echo "==> Kicking off OpenShift BuildConfigs in namespace $$KFP_NAMESPACE..." && \
