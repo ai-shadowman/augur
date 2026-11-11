@@ -1057,12 +1057,11 @@
               renderMermaidError(node, new Error("Mermaid returned empty diagram output"), originalSrc);
             }
           } catch (e) {
-            console.error("Mermaid render error:", e);
-            renderMermaidError(node, e, originalSrc);
-          } finally {
-            document.getElementById(renderId)?.remove();
             document.getElementById(`d${renderId}`)?.remove();
             document.getElementById(`i${renderId}`)?.remove();
+            document.getElementById(renderId)?.remove();
+            console.error("Mermaid render error:", e);
+            renderMermaidError(node, e, originalSrc);
           }
         }
       })();
@@ -1104,6 +1103,15 @@
       return inner.split("|").map(c => c.trim());
     }
 
+    function sanitizeMermaid(content) {
+      return content
+        .split("\n").map(l => {
+          if (/^\s*%(?!%)/.test(l)) return l.replace(/^(\s*)%/, "$1%%"); // lone % → %%
+          return l.replace(/\s*%%.*$/, "");  // strip ALL %% comments (standalone and inline)
+        }).join("\n")
+        .replace(/\[([^\[\]"\n]+)\]/g, (m, label) => /[()/:@]/.test(label) ? `["${label}"]` : m);
+    }
+
     function renderMarkdown(src) {
       const fences = [];
       let text = String(src ?? "").replace(/\r\n/g, "\n");
@@ -1112,13 +1120,7 @@
         const isMermaid = lang.toLowerCase() === "mermaid" ||
           (!lang && /^\s*(?:graph|flowchart)\s+(?:TD|TB|BT|RL|LR)\b/m.test(content));
         if (isMermaid) {
-          const sanitized = content
-            .split("\n").map(l => {
-              if (/^\s*%(?!%)/.test(l)) return l.replace(/^(\s*)%/, "$1%%"); // lone % → %%
-              return l.replace(/\s*%%.*$/, "");  // strip ALL %% comments (standalone and inline)
-            }).join("\n")
-            .replace(/\[([^\]"\n]+)\]/g, (m, label) => /[()/:@]/.test(label) ? `["${label}"]` : m);
-          fences.push(`<pre class="mermaid">${esc(sanitized)}</pre>`);
+          fences.push(`<pre class="mermaid">${esc(sanitizeMermaid(content))}</pre>`);
         } else {
           fences.push(`<pre><code>${esc(content)}</code></pre>`);
         }
@@ -1128,6 +1130,7 @@
       const html = [];
       let i = 0;
       const isFence = (line) => line.trim().match(/^%%FENCE(\d+)%%$/);
+      const isMermaidStart = (line) => /^\s*(?:graph|flowchart)\s+(?:TD|TB|BT|RL|LR)\b/.test(line);
       const isList = (line) => /^\s*[-*] /.test(line);
       const isOl = (line) => /^\s*\d+\. /.test(line);
       const isHeading = (line) => /^#{1,6}\s+/.test(line);
@@ -1150,6 +1153,31 @@
         const fence = isFence(line);
         if (fence) { html.push(fences[Number(fence[1])]); i += 1; continue; }
         if (!line.trim()) { i += 1; continue; }
+        if (isMermaidStart(line)) {
+          const mLines = [line];
+          i += 1;
+          while (
+            i < lines.length &&
+            !isHeading(lines[i]) &&
+            !isFence(lines[i]) &&
+            !/^---+$/.test(lines[i].trim())
+          ) {
+            if (!lines[i].trim()) {
+              if (
+                i + 1 < lines.length &&
+                /^\s+(?:\w+|subgraph\b|end\b|style\b|classDef\b|class\b|linkStyle\b|direction\b)/.test(lines[i + 1])
+              ) {
+                i += 1;
+                continue;
+              }
+              break;
+            }
+            mLines.push(lines[i]);
+            i += 1;
+          }
+          html.push(`<pre class="mermaid">${esc(sanitizeMermaid(mLines.join("\n")))}</pre>`);
+          continue;
+        }
         if (/^---+$/.test(line.trim())) { html.push("<hr/>"); i += 1; continue; }
         if (isHeading(line)) {
           const level = Math.min(6, line.match(/^#+/)[0].length);
@@ -1203,6 +1231,7 @@
           !isList(lines[i]) &&
           !isOl(lines[i]) &&
           !isFence(lines[i]) &&
+          !isMermaidStart(lines[i]) &&
           !isStep(lines[i]) &&
           !isTableStart(i) &&
           !/^---+$/.test(lines[i].trim())
