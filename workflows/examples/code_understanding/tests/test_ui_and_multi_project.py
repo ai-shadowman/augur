@@ -371,6 +371,23 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "console-plugin.yaml").is_file())
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "_console-plugin.tpl").is_file())
 
+    def test_dockerfile_layer_caching_order(self):
+        ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
+        deps_idx = ui_df.index("COPY --chown=1001:0 ui/pyproject.toml ui/uv.lock ./")
+        sync_idx = ui_df.index("uv sync --frozen --no-install-project --no-dev --no-cache")
+        code_idx = ui_df.index("COPY --chown=1001:0 ui/ /opt/app-root/src/")
+        self.assertLess(deps_idx, sync_idx)
+        self.assertLess(sync_idx, code_idx)
+        self.assertIn("! -name .venv", ui_df[code_idx:])
+
+        plugin_df = (_REPO_ROOT / "console-plugin" / "Dockerfile").read_text(encoding="utf-8")
+        pkg_idx = plugin_df.index("COPY package.json package-lock.json* ./")
+        src_idx = plugin_df.index("COPY src ./src")
+        nginx_idx = plugin_df.index("COPY nginx.conf /etc/nginx/nginx.conf")
+        dist_idx = plugin_df.index("COPY --from=build")
+        self.assertLess(pkg_idx, src_idx)
+        self.assertLess(nginx_idx, dist_idx)
+
 
 class TestEvaluatorImprovements(unittest.TestCase):
     @classmethod
