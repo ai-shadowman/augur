@@ -146,11 +146,7 @@ build-console-app-image:
 	@set -a && . $(ENV_FILE) && set +a && \
 	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
 	echo "==> Building console application image: $$CONSOLE_IMG..." && \
-	podman build -f ui/Dockerfile -t "$$CONSOLE_IMG" .
-
-push-console-app-image:
-	@set -a && . $(ENV_FILE) && set +a && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	podman build -f ui/Dockerfile -t "$$CONSOLE_IMG" . && \
 	echo "==> Pushing console application image: $$CONSOLE_IMG..." && \
 	podman push "$$CONSOLE_IMG"
 
