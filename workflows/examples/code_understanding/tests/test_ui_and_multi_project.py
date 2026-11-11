@@ -342,15 +342,14 @@ class TestServicesMultiProjectIsolation(unittest.TestCase):
 
 
 class TestUIStaticAndTemplates(unittest.TestCase):
-    def test_ui_index_html_has_workspace_selector_and_project_slug_input(self):
+    def test_ui_index_html_has_project_slug_input_and_no_default_workspace_dropdown(self):
         html_path = _REPO_ROOT / "ui" / "static" / "index.html"
         content = html_path.read_text(encoding="utf-8")
-        self.assertIn('id="ws-select"', content)
-        self.assertIn('id="ws-list"', content)
+        self.assertIn('id="ns-select"', content)
+        self.assertNotIn('id="ws-row"', content)
+        self.assertNotIn('id="ws-select"', content)
         self.assertIn('id="project-slug-group"', content)
         self.assertIn('id="project-slug-input"', content)
-        self.assertIn("/api/workspaces", content)
-        self.assertIn("/api/workspace", content)
         self.assertIn("project_slug", content)
         self.assertIn("!isTableStart(i)", content)
         self.assertIn("renderMermaidError", content)

@@ -857,13 +857,6 @@
             <datalist id="ns-list"></datalist>
           </div>
         </div>
-        <div id="ws-row" class="cu-ns-row">
-          <div class="cu-ns-combo">
-            <input class="cu-field" id="ws-select" list="ws-list" autocomplete="off"
-                   placeholder="Workspace (default)" title="Project Workspace" style="font-size:0.875rem;min-height:2rem;">
-            <datalist id="ws-list"></datalist>
-          </div>
-        </div>
         <div id="status" class="cu-status warn checking">Loading…</div>
       </div>
       <section id="tab-repos" class="cu-card">
@@ -1966,11 +1959,10 @@
 
     async function load() {
       try {
-        const [status, catalog, indexes, v2runs, nsData, wsData] = await Promise.all([
+        const [status, catalog, indexes, v2runs, nsData] = await Promise.all([
           api("/api/status"), api("/api/v2/repositories/catalog-repos").catch(() => ({ repos: [] })), api("/api/indexes"),
           api("/api/v2/pipelines/runs").catch(() => ({ runs: [] })),
           api("/api/namespaces").catch(() => ({ namespaces: [], current: "" })),
-          api("/api/workspaces").catch(() => ({ workspaces: ["default"], current: "default" })),
         ]);
         $("status").className = "cu-status" + (status.ok ? " hidden" : " warn");
         $("status").innerHTML = `<div style="font-size:0.75rem">${status.ok ? "Connected" : "Not connected"}</div><div></div>
@@ -1984,10 +1976,6 @@
         } else {
           $("ns-row").classList.add("hidden");
         }
-        const wsList = wsData.workspaces || ["default"];
-        const wsCurrent = wsData.current || status.workspace || "default";
-        $("ws-list").innerHTML = wsList.map((ws) => `<option value="${esc(ws)}"></option>`).join("");
-        $("ws-select").value = wsCurrent;
 
         state.repos = catalog.repos || [];
         state.defaultKey = catalog.default_key;
@@ -2410,20 +2398,6 @@
     }
     $("ns-select").addEventListener("change", commitNamespace);
     $("ns-select").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitNamespace(); } });
-    async function commitWorkspace() {
-      const ws = $("ws-select").value.trim() || "default";
-      try {
-        await api("/api/workspace", { method: "POST", body: JSON.stringify({ workspace: ws }) });
-        state.runPage = 0;
-        state.selectedRunId = null;
-        load();
-      } catch (e) {
-        banner(String(e.message || e), true);
-        load();
-      }
-    }
-    $("ws-select").addEventListener("change", commitWorkspace);
-    $("ws-select").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitWorkspace(); } });
     $("slider-chat-log").addEventListener("click", (e) => {
       const btn = e.target.closest(".cu-bubble-dl-btn");
       if (!btn || btn.dataset.chatDl === undefined) return;
