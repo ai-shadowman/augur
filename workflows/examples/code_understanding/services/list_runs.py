@@ -6,6 +6,7 @@ import json
 import logging
 import os
 
+from services.get_run_status import _ACTIVE_RUN_STATES, _normalize_state, extract_active_stage
 from utils.service_utils import create_client, get_kfp_experiment_name
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,7 @@ def list_kfp_runs(
         run_id = getattr(r, "run_id", None) or getattr(r, "id", "")
         display = getattr(r, "display_name", None) or getattr(r, "name", "") or run_id
         state_raw = getattr(r, "state", None) or getattr(r, "runtime_state", None)
-        state = str(getattr(state_raw, "name", state_raw) or "PENDING").upper()
-        if not state or state in ("NONE", "RUNTIME_STATE_UNSPECIFIED"):
-            state = "PENDING"
+        state = _normalize_state(state_raw) or "PENDING"
         created_at = getattr(r, "created_at", None)
         finished_at = getattr(r, "finished_at", None)
 
@@ -95,6 +94,23 @@ def list_kfp_runs(
         elif git_repo:
             repos = [{"git_repo": git_repo, "git_branch": git_branch}]
 
+        current_stage = ""
+        if state in _ACTIVE_RUN_STATES:
+            run_for_stage = r
+            rd = getattr(r, "run_details", None)
+            tds = getattr(rd, "task_details", None) if rd is not None else None
+            if not (isinstance(tds, (list, tuple)) and tds) and run_id:
+                try:
+                    run_for_stage = client.get_run(run_id=run_id)
+                except Exception:
+                    logger.debug("Could not fetch full run details for active run %s", run_id, exc_info=True)
+            current_stage = extract_active_stage(
+                run_for_stage,
+                run_state=state,
+                run_id=run_id,
+                namespace=namespace,
+            )
+
         out.append(
             {
                 "job_id": run_id,
@@ -102,6 +118,7 @@ def list_kfp_runs(
                 "run_name": display,
                 "name": display,
                 "status": state,
+                "current_stage": current_stage,
                 "git_repo": git_repo,
                 "git_branch": git_branch,
                 "multi_repo": is_multi,

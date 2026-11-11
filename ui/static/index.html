@@ -203,6 +203,13 @@
     .cu-run-table .cu-job-dot.Failed::after,    .cu-run-table .cu-job-dot.Cancelled::after { content: "✕"; color: var(--cu-red); font-weight: 700; }
     .cu-run-table .cu-job-dot.Running, .cu-run-table .cu-job-dot.Pending { width: 0.85rem; height: 0.85rem; border: 2px solid #d2d2d2; border-top-color: var(--cu-gold); border-radius: 50%; animation: cu-spin 0.7s linear infinite; }
     .cu-run-table .cu-job-dot.Running::after, .cu-run-table .cu-job-dot.Pending::after { content: none; }
+    .cu-run-repo-cell { display: flex; align-items: center; gap: 0.45rem; }
+    .cu-run-repo-cell .cu-job-dot { flex-shrink: 0; }
+    .cu-run-repo-cell.has-stage { align-items: flex-start; }
+    .cu-run-repo-cell.has-stage .cu-job-dot { margin-top: 0.2rem; }
+    .cu-run-repo-info { min-width: 0; }
+    .cu-run-stage { font-size: 0.78rem; line-height: 1.35; color: var(--cu-gray); margin-top: 0.15rem; }
+    .cu-run-stage-name { font-weight: 500; color: var(--cu-charcoal); }
     .cu-job-kind { font-size: 0.78rem; font-weight: 600; }
     .cu-job-name { font-size: 0.7rem; color: var(--cu-gray); word-break: break-all; }
 
@@ -1070,7 +1077,8 @@
     const state = {
       repos: [], selected: new Set(), indexes: [], queryable: [],
       defaultKey: null, poll: null, chat: [], thinking: null,
-      animateLatest: false,
+      animateLatest: false, allRuns: [], runPage: 0, selectedRunId: null,
+      runsRefreshTimer: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1619,6 +1627,13 @@
       const repoCell = repoList.length
         ? visibleRepos + hiddenRepos
         : isMulti ? "<i>Combined repos</i>" : "";
+      const inProgress = run.status === "Running" || run.status === "Pending";
+      const stageLabel = inProgress
+        ? (run.current_stage || (run.status === "Pending" ? "Queued" : "Starting…"))
+        : "";
+      const stageHtml = stageLabel
+        ? `<div class="cu-run-stage">Stage: <span class="cu-run-stage-name">${esc(stageLabel)}</span></div>`
+        : "";
       return `<tr>
         <td>
           <div style="display:flex;align-items:center;gap:0.75rem">
@@ -1629,7 +1644,7 @@
             </div>
           </div>
         </td>
-        <td><div style="display:flex;align-items:center;gap:0.4rem"><span class="cu-job-dot ${esc(run.status)}"></span><span class="cu-muted" style="font-size:0.85rem">${repoCell}</span></div></td>
+        <td><div class="cu-run-repo-cell${stageHtml ? " has-stage" : ""}"><span class="cu-job-dot ${esc(run.status)}"></span><div class="cu-run-repo-info"><span class="cu-muted" style="font-size:0.85rem">${repoCell}</span>${stageHtml}</div></div></td>
         <td><span class="cu-chip ${succeeded ? "indexed" : (run.status === "Failed" || run.status === "Cancelled") ? "failed" : ""}">${esc(run.status)}</span></td>
         <td><span class="cu-muted" style="font-size:0.8rem">${started}</span></td>
         <td style="text-align:center">${succeeded ? `<button type="button" class="cu-btn-icon cu-run-chat" data-git-repo="${esc(run.git_repo || '')}" data-git-branch="${esc(run.git_branch || '')}" data-multi-repo="${isMulti}" data-project-slug="${esc(projectSlug)}" data-run-title="${esc(title)}" data-run-name="${esc(run.name || '')}" data-tooltip="Explore code"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>` : ""}</td>
@@ -1651,6 +1666,30 @@
       note.classList.toggle("cu-note-overflowing", note.scrollWidth > note.clientWidth);
     }
 
+    function applySelectedRunControls(cb) {
+      const selected = Boolean(cb && cb.checked);
+      const succeeded = selected && cb.dataset.succeeded === "true";
+      state.selectedRunId = selected ? (cb.dataset.runId || null) : null;
+      $("run-view-report").disabled = !(selected && succeeded);
+      $("run-download-report").disabled = !(selected && succeeded);
+      $("run-rerun").disabled = !(selected && succeeded);
+      $("run-view-report").dataset.runId = selected ? cb.dataset.runId : "";
+      $("run-view-report").dataset.runName = selected ? cb.dataset.runName : "";
+      $("run-view-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+      $("run-view-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+      $("run-view-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+      $("run-download-report").dataset.runId = selected ? cb.dataset.runId : "";
+      $("run-download-report").dataset.runName = selected ? cb.dataset.runName : "";
+      $("run-download-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+      $("run-download-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+      $("run-download-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+      $("run-rerun").dataset.runId = selected ? cb.dataset.runId : "";
+      $("run-rerun").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+      $("run-rerun").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+      $("run-rerun").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+      updateRunSelectionNote(selected ? cb : null);
+    }
+
     function bindRunCards(container) {
       const root = container || document;
       root.querySelectorAll(".cu-run-select").forEach((cb) => {
@@ -1658,26 +1697,7 @@
           document.querySelectorAll(".cu-run-select").forEach((other) => {
             if (other !== cb) other.checked = false;
           });
-          const selected = cb.checked;
-          const succeeded = cb.dataset.succeeded === "true";
-          $("run-view-report").disabled = !(selected && succeeded);
-          $("run-download-report").disabled = !(selected && succeeded);
-          $("run-rerun").disabled = !(selected && succeeded);
-          $("run-view-report").dataset.runId = selected ? cb.dataset.runId : "";
-          $("run-view-report").dataset.runName = selected ? cb.dataset.runName : "";
-          $("run-view-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-          $("run-view-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-          $("run-view-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
-          $("run-download-report").dataset.runId = selected ? cb.dataset.runId : "";
-          $("run-download-report").dataset.runName = selected ? cb.dataset.runName : "";
-          $("run-download-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-          $("run-download-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-          $("run-download-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
-          $("run-rerun").dataset.runId = selected ? cb.dataset.runId : "";
-          $("run-rerun").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-          $("run-rerun").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-          $("run-rerun").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
-          updateRunSelectionNote(selected ? cb : null);
+          applySelectedRunControls(cb.checked ? cb : null);
         });
       });
       root.querySelectorAll(".cu-repo-toggle").forEach((link) => {
@@ -1853,6 +1873,97 @@
       }
     }
 
+    const RUN_PAGE_SIZE = 5;
+    let _runsRefreshInFlight = false;
+
+    function hasInProgressRuns(runs) {
+      return (runs || []).some((r) => r.status === "Running" || r.status === "Pending");
+    }
+
+    function renderRunPage(page) {
+      const totalPages = Math.max(1, Math.ceil(state.allRuns.length / RUN_PAGE_SIZE));
+      const clampedPage = Math.max(0, Math.min(page, totalPages - 1));
+      state.runPage = clampedPage;
+      const pageRuns = state.allRuns.slice(clampedPage * RUN_PAGE_SIZE, (clampedPage + 1) * RUN_PAGE_SIZE);
+      $("run-list").innerHTML = pageRuns.length
+        ? pageRuns.map(runListCard).join("")
+        : `<tr><td colspan="6" class="cu-muted" style="padding:0.75rem 0.9rem">No runs yet.</td></tr>`;
+      const paginator = $("run-paginator");
+      if (totalPages <= 1) {
+        paginator.innerHTML = "";
+      } else {
+        paginator.innerHTML =
+          `<button type="button" class="cu-btn cu-btn-secondary" id="run-prev"${clampedPage === 0 ? " disabled" : ""}>&#x2039; Prev</button>` +
+          `<span class="cu-muted" style="font-size:0.85rem">Page ${clampedPage + 1} of ${totalPages}</span>` +
+          `<button type="button" class="cu-btn cu-btn-secondary" id="run-next"${clampedPage >= totalPages - 1 ? " disabled" : ""}>Next &#x203a;</button>`;
+        if (clampedPage > 0) $("run-prev").onclick = () => renderRunPage(clampedPage - 1);
+        if (clampedPage < totalPages - 1) $("run-next").onclick = () => renderRunPage(clampedPage + 1);
+      }
+      bindRunCards($("run-list"));
+      let restoredCb = null;
+      if (state.selectedRunId) {
+        $("run-list").querySelectorAll(".cu-run-select").forEach((cb) => {
+          if (cb.dataset.runId === state.selectedRunId) {
+            cb.checked = true;
+            restoredCb = cb;
+          }
+        });
+      }
+      if (restoredCb) {
+        applySelectedRunControls(restoredCb);
+      } else if (!state.allRuns.some((r) => r.run_id === state.selectedRunId)) {
+        applySelectedRunControls(null);
+      }
+    }
+
+    async function refreshActiveRuns() {
+      if (_runsRefreshInFlight || document.hidden) return;
+      _runsRefreshInFlight = true;
+      try {
+        const prevActiveIds = new Set(
+          state.allRuns
+            .filter((r) => r.status === "Running" || r.status === "Pending")
+            .map((r) => r.run_id)
+        );
+        const v2runs = await api("/api/v2/pipelines/runs");
+        state.allRuns = [...(v2runs.runs || [])];
+        renderRunPage(state.runPage);
+        const newlyFinished = state.allRuns.some(
+          (r) => prevActiveIds.has(r.run_id) && r.status !== "Running" && r.status !== "Pending"
+        );
+        if (newlyFinished) {
+          const indexes = await api("/api/indexes").catch(() => null);
+          if (indexes) {
+            state.indexes = indexes.indexes || [];
+            state.queryable = indexes.queryable || [];
+            renderRepos();
+            renderChatSelect();
+          }
+        }
+        syncRunsAutoRefresh();
+      } catch {
+        // Retry quietly on next tick
+      } finally {
+        _runsRefreshInFlight = false;
+      }
+    }
+
+    function syncRunsAutoRefresh() {
+      const active = hasInProgressRuns(state.allRuns);
+      if (active && !state.runsRefreshTimer) {
+        state.runsRefreshTimer = setInterval(refreshActiveRuns, 8000);
+      } else if (!active && state.runsRefreshTimer) {
+        clearInterval(state.runsRefreshTimer);
+        state.runsRefreshTimer = null;
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && hasInProgressRuns(state.allRuns)) {
+        refreshActiveRuns();
+      }
+    });
+
     async function load() {
       try {
         const [status, catalog, indexes, v2runs, nsData, wsData] = await Promise.all([
@@ -1882,33 +1993,9 @@
         state.defaultKey = catalog.default_key;
         state.indexes = indexes.indexes || [];
         state.queryable = indexes.queryable || [];
-        const allRuns = [...(v2runs.runs || [])];
-        const chevronDown = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-        const chevronUp = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 10l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-        const PAGE_SIZE = 5;
-        let runPage = 0;
-        const renderRunPage = (page) => {
-          runPage = page;
-          const totalPages = Math.max(1, Math.ceil(allRuns.length / PAGE_SIZE));
-          const pageRuns = allRuns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-          $("run-list").innerHTML = pageRuns.length
-            ? pageRuns.map(runListCard).join("")
-            : `<tr><td colspan="6" class="cu-muted" style="padding:0.75rem 0.9rem">No runs yet.</td></tr>`;
-          const paginator = $("run-paginator");
-          if (totalPages <= 1) {
-            paginator.innerHTML = "";
-          } else {
-            paginator.innerHTML =
-              `<button type="button" class="cu-btn cu-btn-secondary" id="run-prev"${page === 0 ? " disabled" : ""}>&#x2039; Prev</button>` +
-              `<span class="cu-muted" style="font-size:0.85rem">Page ${page + 1} of ${totalPages}</span>` +
-              `<button type="button" class="cu-btn cu-btn-secondary" id="run-next"${page >= totalPages - 1 ? " disabled" : ""}>Next &#x203a;</button>`;
-            if (page > 0) $("run-prev").onclick = () => renderRunPage(page - 1);
-            if (page < totalPages - 1) $("run-next").onclick = () => renderRunPage(page + 1);
-          }
-          bindRunCards($("run-list"));
-          updateRunSelectionNote(null);
-        };
-        renderRunPage(0);
+        state.allRuns = [...(v2runs.runs || [])];
+        renderRunPage(state.runPage);
+        syncRunsAutoRefresh();
         $("run-view-report").onclick = async function() {
           const btn = this;
           if (!btn.dataset.runId) return;
@@ -2040,9 +2127,10 @@
         try {
           const snap = await api(`/api/v2/pipelines/runs/${runId}`);
           if (state.thinking) {
+            const stagePart = snap.current_stage ? ` · ${snap.current_stage}` : "";
             setThinking({
               ...state.thinking,
-              status: `${snap.status} · ${runId}`,
+              status: `${snap.status}${stagePart} · ${runId}`,
             });
           }
           load();
@@ -2194,6 +2282,7 @@
         if (projectSlug) body.project_slug = projectSlug;
         if (mode === "report") body.pipeline_run_id = runId;
         const result = await api("/api/v2/pipelines", { method: "POST", body: JSON.stringify(body) });
+        state.runPage = 0;
         setThinking({ kind: "pipeline", label, status: `KFP run ${result.job_id} started` });
         pollV2(result.job_id);
       } catch (e) {
@@ -2291,6 +2380,7 @@
         const payload = { repos: submittedRepos };
         if (submittedRepos.length > 1 && projectSlug) payload.project_slug = projectSlug;
         const result = await api("/api/v2/pipelines", { method: "POST", body: JSON.stringify(payload) });
+        state.runPage = 0;
         setThinking({ kind: "pipeline", label: "Running pipeline", status: `KFP run ${result.job_id} started` });
         pollV2(result.job_id);
         showTab("runs");
@@ -2310,6 +2400,8 @@
       if (!ns) return;
       try {
         await api("/api/namespace", { method: "POST", body: JSON.stringify({ namespace: ns }) });
+        state.runPage = 0;
+        state.selectedRunId = null;
         load();
       } catch (e) {
         banner(String(e.message || e), true);
@@ -2322,6 +2414,8 @@
       const ws = $("ws-select").value.trim() || "default";
       try {
         await api("/api/workspace", { method: "POST", body: JSON.stringify({ workspace: ws }) });
+        state.runPage = 0;
+        state.selectedRunId = null;
         load();
       } catch (e) {
         banner(String(e.message || e), true);

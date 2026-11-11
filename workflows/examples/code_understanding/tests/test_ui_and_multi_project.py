@@ -500,5 +500,138 @@ class TestEvaluatorImprovements(unittest.TestCase):
         self.assertEqual(by_name["answer relevance"]["average"], 4.5)
 
 
+class TestRunStageTracking(unittest.TestCase):
+    @staticmethod
+    def _make_task(display_name: str, state: str, task_id: str = "", parent_task_id: str = ""):
+        return types.SimpleNamespace(
+            display_name=display_name,
+            state=state,
+            task_id=task_id,
+            parent_task_id=parent_task_id,
+            child_tasks=[],
+            end_time=None,
+        )
+
+    def test_extract_active_stage_across_pipeline_lifecycle(self):
+        from services.get_run_status import extract_active_stage
+
+        # 1. Completed / Failed runs return empty stage
+        done_run = types.SimpleNamespace(
+            state="SUCCEEDED",
+            run_details=types.SimpleNamespace(
+                task_details=[self._make_task("generate-migration-report-op", "SUCCEEDED")]
+            ),
+        )
+        self.assertEqual(extract_active_stage(done_run, run_state="SUCCEEDED"), "")
+
+        # 2. Newly queued / starting runs with no task details yet
+        empty_run = types.SimpleNamespace(state="PENDING", run_details=None)
+        self.assertEqual(extract_active_stage(empty_run, run_state="PENDING"), "Queued")
+        self.assertEqual(extract_active_stage(empty_run, run_state="RUNNING"), "Starting…")
+
+        # 3. Active GraphRAG Indexing leaf task (ignoring parent DAG tasks)
+        indexing_run = types.SimpleNamespace(
+            state="RUNNING",
+            run_details=types.SimpleNamespace(
+                task_details=[
+                    self._make_task("root", "RUNNING", task_id="t-root"),
+                    self._make_task("data-generation-pipeline", "SUCCEEDED", task_id="t-dg", parent_task_id="t-root"),
+                    self._make_task("benchmark-llm-op", "SUCCEEDED", task_id="t-b", parent_task_id="t-dg"),
+                    self._make_task("prepare-environment-op", "SUCCEEDED", task_id="t-p", parent_task_id="t-dg"),
+                    self._make_task("generate-code-and-meta-op", "SUCCEEDED", task_id="t-g", parent_task_id="t-dg"),
+                    self._make_task("graphrag-indexing-pipeline", "RUNNING", task_id="t-idx", parent_task_id="t-root"),
+                    self._make_task("graphrag-indexing-op", "RUNNING", task_id="t-idx-op", parent_task_id="t-idx"),
+                ]
+            ),
+        )
+        self.assertEqual(extract_active_stage(indexing_run, run_state="RUNNING"), "GraphRAG Indexing")
+
+        # 4. Concurrent Evaluation + Analysis leaf tasks
+        parallel_run = types.SimpleNamespace(
+            state="RUNNING",
+            run_details=types.SimpleNamespace(
+                task_details=[
+                    self._make_task("graphrag-indexing-op", "SUCCEEDED"),
+                    self._make_task("generate-migration-report-op", "RUNNING"),
+                    self._make_task("graphrag-evaluation-op", "RUNNING"),
+                ]
+            ),
+        )
+        self.assertEqual(extract_active_stage(parallel_run, run_state="RUNNING"), "Evaluation, Analysis")
+
+        # 5. Pod scheduling transition gap after Data Generation finishes
+        gap_run = types.SimpleNamespace(
+            state="RUNNING",
+            run_details=types.SimpleNamespace(
+                task_details=[
+                    self._make_task("benchmark-llm-op", "SUCCEEDED"),
+                    self._make_task("prepare-environment-op", "SUCCEEDED"),
+                    self._make_task("generate-code-and-meta-op", "SUCCEEDED"),
+                ]
+            ),
+        )
+        self.assertEqual(extract_active_stage(gap_run, run_state="RUNNING"), "GraphRAG Indexing")
+
+    def test_list_kfp_runs_populates_current_stage_for_running_only(self):
+        import services.list_runs as list_runs_mod
+
+        run_running = types.SimpleNamespace(
+            run_id="run-live",
+            display_name="single_repo_20261111_152357",
+            state="RUNNING",
+            created_at=None,
+            finished_at=None,
+            runtime_config=types.SimpleNamespace(
+                parameters={
+                    "git_repo": "https://github.com/kfrankli/northpolesouthern-train.git",
+                    "git_branch": "main",
+                }
+            ),
+            run_details=None,
+        )
+        full_running_detail = types.SimpleNamespace(
+            run_id="run-live",
+            state="RUNNING",
+            run_details=types.SimpleNamespace(
+                task_details=[self._make_task("benchmark-llm-op", "RUNNING")]
+            ),
+        )
+        run_done = types.SimpleNamespace(
+            run_id="run-done",
+            display_name="single_repo_20261110_120000",
+            state="SUCCEEDED",
+            created_at=None,
+            finished_at=None,
+            runtime_config=types.SimpleNamespace(
+                parameters={
+                    "git_repo": "https://github.com/kfrankli/northpolesouthern-train.git",
+                    "git_branch": "main",
+                }
+            ),
+            run_details=None,
+        )
+
+        fake_client = mock.MagicMock()
+        fake_client.get_experiment.return_value = types.SimpleNamespace(experiment_id="exp-1")
+        fake_client.list_runs.return_value = types.SimpleNamespace(runs=[run_running, run_done])
+        fake_client.get_run.return_value = full_running_detail
+
+        with mock.patch.object(list_runs_mod, "create_client", return_value=fake_client):
+            items = list_runs_mod.list_kfp_runs(limit=10, namespace="demo-ns")
+
+        fake_client.get_run.assert_called_once_with(run_id="run-live")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["current_stage"], "Data Generation (LLM Benchmark)")
+        self.assertEqual(items[1]["current_stage"], "")
+
+    def test_ui_index_html_renders_stage_under_repo_url(self):
+        html_path = _REPO_ROOT / "ui" / "static" / "index.html"
+        content = html_path.read_text(encoding="utf-8")
+        self.assertIn("cu-run-stage", content)
+        self.assertIn("run.current_stage", content)
+        self.assertIn("refreshActiveRuns", content)
+        self.assertIn("syncRunsAutoRefresh", content)
+
+
 if __name__ == "__main__":
     unittest.main()

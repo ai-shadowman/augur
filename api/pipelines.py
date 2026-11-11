@@ -76,6 +76,7 @@ class RunSummary(BaseModel):
     run_name: str
     name: str = ""
     status: str
+    current_stage: str = ""
     git_repo: str = ""
     git_branch: str = ""
     multi_repo: bool = False
@@ -105,6 +106,7 @@ class PipelineStatusResponse(BaseModel):
     job_id: str
     run_id: str = ""
     status: str
+    current_stage: str = ""
     git_slug: str = ""
     project_slug: str = ""
     migration_report: str | None = None
@@ -126,6 +128,7 @@ def _enrich_run_summary(r: dict[str, Any], ui_status: bool = False) -> dict[str,
         "run_name": run_name,
         "name": run_name,
         "status": _ui_status_label(raw_status) if ui_status else raw_status,
+        "current_stage": str(r.get("current_stage") or ""),
         "created_at": created,
         "start_time": created,
     }
@@ -207,20 +210,20 @@ def _build_status_response(
     project_slug: str = "",
     lowercase_status: bool = False,
 ) -> PipelineStatusResponse:
+    current_stage = ""
     try:
-        if not git_repo and not multi_repo and not project_slug:
-            try:
-                info = get_run_info(job_id, namespace=ns)
-                state = info["state"]
+        try:
+            info = get_run_info(job_id, namespace=ns)
+            state = info["state"]
+            current_stage = str(info.get("current_stage") or "")
+            if not git_repo and not multi_repo and not project_slug:
                 git_repo = info.get("git_repo", "")
                 git_branch = info.get("git_branch", "main")
                 multi_repo = bool(info.get("multi_repo", False))
                 project_slug = info.get("project_slug", "")
-            except ValueError:
-                raise
-            except Exception:
-                state = get_run_status(job_id, namespace=ns)
-        else:
+        except ValueError:
+            raise
+        except Exception:
             state = get_run_status(job_id, namespace=ns)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -233,6 +236,7 @@ def _build_status_response(
         "job_id": job_id,
         "run_id": job_id,
         "status": norm_status,
+        "current_stage": current_stage,
         "project_slug": project_slug,
     }
 
