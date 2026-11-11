@@ -5,7 +5,10 @@ import math
 import time
 from utils.request_timing import timed, timing_span
 
-if os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes"):
+if (
+    os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").lower() in ("true", "1", "yes")
+    or os.getenv("ENABLE_TLS_VERIFICATION", "true").strip().lower() in ("false", "0", "no")
+):
     _orig_create_default_context = ssl.create_default_context
 
     def _unverified_context(*args, **kwargs):

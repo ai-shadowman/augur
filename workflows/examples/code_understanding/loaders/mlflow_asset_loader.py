@@ -14,9 +14,12 @@ def _ensure_mlflow_imported():
     with _MLFLOW_IMPORT_LOCK:
         try:
             import mlflow as _mlflow
-            import mlflow.version as _mlflow_version
-            if not hasattr(_mlflow, "version"):
-                _mlflow.version = _mlflow_version
+            try:
+                import mlflow.version as _mlflow_version
+                if not hasattr(_mlflow, "version"):
+                    _mlflow.version = _mlflow_version
+            except ModuleNotFoundError:
+                pass
             from mlflow.tracking import MlflowClient as _MlflowClient
             return _mlflow, _MlflowClient
         except AttributeError:
@@ -28,9 +31,12 @@ def _ensure_mlflow_imported():
             for mod_name in [k for k in list(sys.modules.keys()) if k == "mlflow" or k.startswith("mlflow.")]:
                 sys.modules.pop(mod_name, None)
             import mlflow as _mlflow
-            import mlflow.version as _mlflow_version
-            if not hasattr(_mlflow, "version"):
-                _mlflow.version = _mlflow_version
+            try:
+                import mlflow.version as _mlflow_version
+                if not hasattr(_mlflow, "version"):
+                    _mlflow.version = _mlflow_version
+            except ModuleNotFoundError:
+                pass
             from mlflow.tracking import MlflowClient as _MlflowClient
             return _mlflow, _MlflowClient
 
@@ -47,8 +53,24 @@ from utils.artifact_measurement import measure_payload, upload_identity
 _SESSION_PATCHED = False
 
 
+def _is_mlflow_tracking_request(request_url: str | None) -> bool:
+    """Return True only when the request targets the configured MLFLOW_TRACKING_URI."""
+    tracking_uri = (os.environ.get("MLFLOW_TRACKING_URI") or "").strip()
+    if not tracking_uri or not tracking_uri.startswith(("http://", "https://")):
+        return True
+    if not request_url:
+        return False
+    from urllib.parse import urlparse
+
+    req_parsed = urlparse(str(request_url))
+    trk_parsed = urlparse(tracking_uri)
+    if not req_parsed.netloc or not trk_parsed.netloc:
+        return False
+    return req_parsed.netloc.lower() == trk_parsed.netloc.lower()
+
+
 def _patch_session_forwarded_token():
-    """Patches requests.Session.send once to attach X-Forwarded-Access-Token."""
+    """Patches requests.Session.send once to attach X-Forwarded-Access-Token for MLflow requests."""
     global _SESSION_PATCHED
     if _SESSION_PATCHED:
         return
@@ -56,7 +78,7 @@ def _patch_session_forwarded_token():
 
     def _send_with_forwarded_token(self, request, **kwargs):
         token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-        if token:
+        if token and _is_mlflow_tracking_request(getattr(request, "url", None)):
             request.headers["X-Forwarded-Access-Token"] = token
         return _orig_send(self, request, **kwargs)
 

@@ -79,11 +79,26 @@ yaml.add_representer(str, _str_representer)
 
 def extract_json_from_string(text: str) -> dict | list | None:
     """Extracts json from given string."""
-    try:
-        match = re.search(r'\{.*\}|\[.*\]', text, re.DOTALL)
-        return json.loads(match.group())
-    except Exception:
+    if not text:
         return None
+    cleaned = re.sub(r"<think>.*?</think>", "", str(text), flags=re.DOTALL | re.IGNORECASE)
+    for candidate in (cleaned, str(text)):
+        try:
+            match = re.search(r"\{.*\}|\[.*\]", candidate, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except Exception:
+            pass
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(candidate):
+            if ch in "{[":
+                try:
+                    obj, _ = decoder.raw_decode(candidate[idx:])
+                    if isinstance(obj, (dict, list)):
+                        return obj
+                except Exception:
+                    continue
+    return None
 
 
 def get_as_json(obj, prefix: str = "", sep: str = "_"):

@@ -372,5 +372,133 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "_console-plugin.tpl").is_file())
 
 
+class TestEvaluatorImprovements(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from tests import test_token_tracker  # noqa: F401 - ensures stubs for mlflow/pandas/litellm
+    def test_extract_json_from_string_strips_think_blocks(self):
+        from utils.json_utils import extract_json_from_string
+
+        raw = (
+            "<think>Let me check {foo: bar} first...</think>\n"
+            '{"faithfulness": 4, "answer_relevance": 5, "answer_similarity": 4, '
+            '"answer_correctness": 4, "reasoning": "Accurate and complete"}'
+        )
+        parsed = extract_json_from_string(raw)
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(parsed["faithfulness"], 4)
+        self.assertEqual(parsed["answer_relevance"], 5)
+
+    def test_is_mlflow_tracking_request_scopes_to_tracking_uri(self):
+        from eval.mlflow_custom_evaluator import _is_mlflow_tracking_request
+
+        with mock.patch.dict(
+            os.environ,
+            {"MLFLOW_TRACKING_URI": "https://mlflow.redhat-ods-applications.svc.cluster.local:8443"},
+            clear=False,
+        ):
+            self.assertTrue(
+                _is_mlflow_tracking_request(
+                    "https://mlflow.redhat-ods-applications.svc.cluster.local:8443/api/2.0/mlflow/runs/create"
+                )
+            )
+            self.assertFalse(
+                _is_mlflow_tracking_request("https://vllm-judge.apps.cluster.example.com/v1/chat/completions")
+            )
+
+    def test_judge_model_uri_sets_openai_api_base_and_base_url_and_tls(self):
+        from tests import test_token_tracker  # noqa: F401 - ensures stubs for mlflow/pandas/litellm
+        from eval.mlflow_custom_evaluator import MlFlowCustomEvaluator
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "JUDGE_LLM_ID": "gpt-oss-120b",
+                "JUDGE_LLM_API_BASE": "https://judge.internal.svc:8443/v1",
+                "JUDGE_LLM_TOKEN": "",
+                "OPENAI_API_BASE": "https://stale-host/v1",
+                "OPENAI_API_KEY": "",
+                "ENABLE_TLS_VERIFICATION": "false",
+            },
+            clear=False,
+        ):
+            evaluator = MlFlowCustomEvaluator()
+            uri = evaluator._judge_model_uri()
+            self.assertEqual(uri, "openai:/gpt-oss-120b")
+            self.assertEqual(os.environ.get("OPENAI_API_BASE"), "https://judge.internal.svc:8443/v1")
+            self.assertEqual(os.environ.get("OPENAI_BASE_URL"), "https://judge.internal.svc:8443/v1")
+            self.assertEqual(os.environ.get("OPENAI_API_KEY"), "EMPTY")
+            self.assertEqual(os.environ.get("MLFLOW_TRACKING_INSECURE_TLS"), "true")
+
+    def test_fallback_judge_populates_v1_scores_when_all_nan(self):
+        from eval.basic_custom_evaluator import BasicCustomEvaluator
+        from eval.mlflow_custom_evaluator import MlFlowCustomEvaluator
+        from utils.eval_utils import aggregate_evaluation_scores
+
+        evaluator = MlFlowCustomEvaluator()
+
+        fake_score = {
+            "faithfulness": 4.0,
+            "answer_relevance": 5.0,
+            "answer_similarity": 4.0,
+            "answer_correctness": 4.0,
+            "reasoning": "Accurate and well structured",
+        }
+
+        class _FakeDF:
+            def __init__(self, rows):
+                self._rows = [dict(r) for r in rows]
+                self.index = list(range(len(self._rows)))
+                self.empty = len(self._rows) == 0
+
+            @property
+            def columns(self):
+                return list(self._rows[0].keys()) if self._rows else []
+
+            def iterrows(self):
+                return enumerate(self._rows)
+
+            def __getitem__(self, col):
+                return [r.get(col) for r in self._rows]
+
+            def __setitem__(self, col, vals):
+                for r, v in zip(self._rows, vals):
+                    r[col] = v
+
+        with mock.patch.object(BasicCustomEvaluator, "score_answer", return_value=fake_score) as mock_score:
+            with mock.patch("eval.mlflow_custom_evaluator.pd.DataFrame", side_effect=lambda rows, index=None: _FakeDF(rows)):
+                df = _FakeDF(
+                    [
+                        {
+                            "inputs": "Q1",
+                            "targets": "Ref1",
+                            "predictions": "Ans1",
+                            "faithfulness/v1/score": None,
+                        }
+                    ]
+                )
+                df = evaluator._apply_basic_judge_fallback_df(df)
+                mock_score.assert_called_once_with(question="Q1", reference="Ref1", actual="Ans1")
+                self.assertEqual(df["faithfulness/v1/score"], [4.0])
+                self.assertEqual(df["answer_relevance/v1/score"], [5.0])
+                self.assertEqual(df["answer_similarity/v1/score"], [4.0])
+                self.assertEqual(df["answer_correctness/v1/score"], [4.0])
+                self.assertEqual(df["faithfulness/v1/justification"], ["Accurate and well structured"])
+
+        csv_with_fallback_scores = (
+            "question,faithfulness/v1/score,faithfulness/v1/justification,"
+            "answer_relevance/v1/score,answer_similarity/v1/score,answer_correctness/v1/score\n"
+            "Q1,4.0,Good,5.0,4.0,4.0\n"
+            "Q2,3.0,Fair,4.0,3.0,3.0\n"
+        )
+        agg = aggregate_evaluation_scores(csv_with_fallback_scores)
+        self.assertIsNotNone(agg)
+        by_name = {m["name"]: m for m in agg["metrics"]}
+        self.assertEqual(by_name["faithfulness"]["average"], 3.5)
+        self.assertEqual(by_name["faithfulness"]["pass_rate_3"], 100.0)
+        self.assertEqual(by_name["faithfulness"]["pass_rate_4"], 50.0)
+        self.assertEqual(by_name["answer relevance"]["average"], 4.5)
+
+
 if __name__ == "__main__":
     unittest.main()
