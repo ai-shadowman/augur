@@ -39,17 +39,14 @@ def get_kfp_host(namespace: str | None = None) -> tuple[str, str]:
     Raises:
         RuntimeError: If neither ``namespace`` nor ``KFP_NAMESPACE`` is set.
     """
-    ns = (namespace or os.environ.get("KFP_NAMESPACE", "")).strip()
+    default_ns = os.environ.get("KFP_NAMESPACE", "").strip()
+    ns = (namespace or default_ns).strip()
     if not ns:
         raise RuntimeError("KFP_NAMESPACE must be set and non-empty.")
-    if namespace:
-        host = f"https://ds-pipeline-dspa.{ns}.svc.cluster.local:8443"
-    else:
-        host = os.environ.get(
-            "KFP_HOST",
-            f"https://ds-pipeline-dspa.{ns}.svc.cluster.local:8443",
-        )
-    return host, ns
+    env_host = os.environ.get("KFP_HOST", "").strip()
+    if env_host and (not namespace or ns == default_ns):
+        return env_host, ns
+    return f"https://ds-pipeline-dspa.{ns}.svc.cluster.local:8443", ns
 
 
 def create_client(namespace: str | None = None):

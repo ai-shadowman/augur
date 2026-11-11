@@ -95,12 +95,8 @@ console:
   image: ""
   imagePullPolicy: Always
   route:
-    host: ""
-  jobScripts:
     enabled: false
-    runPipelines: ""
-    mlflowAssetLoader: ""
-    defaultAssetLoader: ""
+    host: ""
 
 consolePlugin:
   enabled: false
@@ -108,7 +104,6 @@ consolePlugin:
   image: ""
   imagePullPolicy: Always
   apiImage: ""
-  apiRouteHost: ""
   applicationMenuSection: OpenShift Self Managed Services
   consoleBaseUrl: ""
   iconDataUri: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiByeD0iNCIgZmlsbD0iI0M5MTkwQiIvPjxwYXRoIGQ9Ik03IDhoMTB2Mkg3Vjhaem0xMCA0SDd2LTJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg=="

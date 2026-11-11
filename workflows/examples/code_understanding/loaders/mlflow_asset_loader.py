@@ -42,48 +42,19 @@ def _ensure_mlflow_imported():
 
 
 mlflow, MlflowClient = _ensure_mlflow_imported()
-import requests
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 from .asset_loader import AssetLoader
+from utils.pipeline_utils import (
+    escape_mlflow_filter_value,
+    is_mlflow_tracking_request as _is_mlflow_tracking_request,
+    patch_mlflow_session_forwarded_token as _patch_session_forwarded_token,
+)
 from utils.request_timing import timing_span, timed, timing_enabled
 from utils.artifact_measurement import measure_payload, upload_identity
 
-_SESSION_PATCHED = False
-
-
-def _is_mlflow_tracking_request(request_url: str | None) -> bool:
-    """Return True only when the request targets the configured MLFLOW_TRACKING_URI."""
-    tracking_uri = (os.environ.get("MLFLOW_TRACKING_URI") or "").strip()
-    if not tracking_uri or not tracking_uri.startswith(("http://", "https://")):
-        return True
-    if not request_url:
-        return False
-    from urllib.parse import urlparse
-
-    req_parsed = urlparse(str(request_url))
-    trk_parsed = urlparse(tracking_uri)
-    if not req_parsed.netloc or not trk_parsed.netloc:
-        return False
-    return req_parsed.netloc.lower() == trk_parsed.netloc.lower()
-
-
-def _patch_session_forwarded_token():
-    """Patches requests.Session.send once to attach X-Forwarded-Access-Token for MLflow requests."""
-    global _SESSION_PATCHED
-    if _SESSION_PATCHED:
-        return
-    _orig_send = requests.Session.send
-
-    def _send_with_forwarded_token(self, request, **kwargs):
-        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-        if token and _is_mlflow_tracking_request(getattr(request, "url", None)):
-            request.headers["X-Forwarded-Access-Token"] = token
-        return _orig_send(self, request, **kwargs)
-
-    requests.Session.send = _send_with_forwarded_token
-    _SESSION_PATCHED = True
+_REPO_CATALOG_LOCK = threading.Lock()
 
 
 class MlFlowAssetLoader(AssetLoader):
@@ -190,7 +161,7 @@ class MlFlowAssetLoader(AssetLoader):
             if v is None:
                 tag_filter_parts.append(f'tags."{k}" IS NULL')
             elif v != "":
-                tag_filter_parts.append(f"tags.\"{k}\" = '{str(v)}'")
+                tag_filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
         if is_global_scoped_enrichment_tagset(tags):
             enrichment_experiment = self.get_or_create_experiment_by_name(
@@ -249,7 +220,7 @@ class MlFlowAssetLoader(AssetLoader):
                 if v is None:
                     filter_parts.append(f'tags."{k}" IS NULL')
                 elif v != "":
-                    filter_parts.append(f"tags.\"{k}\" = '{str(v)}'")
+                    filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
         existing = client.search_runs(
             experiment_ids=[experiment_id],
@@ -698,12 +669,14 @@ class MlFlowAssetLoader(AssetLoader):
 
         pipeline_run_id = get_pipeline_run_id(allow_generate=True)
 
-        try:
-            base = self.download("repos/repo_list.json") or []
-            catalog_repos = merge_json_enrichment(base, run_repos)
-            self.register_enrichments(enrichment_files={"repos/repo_list.json": catalog_repos})
-        except Exception:
-            logging.warning("Failed to update repo catalog enrichment", exc_info=True)
+        # shortcut: process-local lock, upgrade to optimistic MLflow tag CAS if scaling >1 replica
+        with _REPO_CATALOG_LOCK:
+            try:
+                base = self.download("repos/repo_list.json") or []
+                catalog_repos = merge_json_enrichment(base, run_repos)
+                self.register_enrichments(enrichment_files={"repos/repo_list.json": catalog_repos})
+            except Exception:
+                logging.warning("Failed to update repo catalog enrichment", exc_info=True)
 
         repo_tags = {"category": "repositories"}
         if pipeline_run_id:

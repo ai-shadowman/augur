@@ -1,8 +1,12 @@
 import logging
 import os
 import re
+import shutil
 import sys
-from contextlib import nullcontext
+import tempfile
+import threading
+from collections import OrderedDict
+from contextlib import contextmanager, nullcontext
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from utils.kubeflow_utils import setup_logging
@@ -10,6 +14,126 @@ setup_logging()
 
 from utils.otel_utils import enable_telemetry
 from utils.request_timing import timed, timing_span
+
+# shortcut: caches 2 index dirs on local pod disk, move to shared PVC if scaling >1 replica
+_INDEX_CACHE_MAX = 2
+_INDEX_CACHE: OrderedDict[tuple, dict] = OrderedDict()
+_INDEX_CACHE_LOCK = threading.Lock()
+
+
+def _resolve_mlflow_index_run_id(
+    *,
+    git_slug: str,
+    use_multi_repo: bool,
+    clean_project_slug: str,
+    pipeline_run_id: str,
+    namespace: str | None,
+    workspace: str | None,
+) -> str | None:
+    """Return the active MLflow indexing run_id when ASSET_LOADER=mlflow, else None."""
+    if os.environ.get("ASSET_LOADER", "local") != "mlflow":
+        return None
+    try:
+        from loaders.default_asset_loader import DefaultAssetLoader
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader, _ensure_mlflow_imported
+        from utils.pipeline_utils import escape_mlflow_filter_value
+
+        loader = DefaultAssetLoader(namespace=namespace, workspace=workspace)
+        if not isinstance(loader._loader, MlFlowAssetLoader):
+            return None
+        _ensure_mlflow_imported()
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient()
+        exp = client.get_experiment_by_name(loader._loader.RESULT_DIRECTORY_ASSET_EXPERIMENT)
+        if not exp or exp.lifecycle_stage != "active":
+            return None
+
+        effective_slug = (clean_project_slug or git_slug or None) if use_multi_repo else git_slug
+        base_tags: dict[str, object] = {"multi_repo": use_multi_repo, "category": "indexing"}
+        candidate_tags: list[dict[str, object]] = []
+        if effective_slug:
+            slug_tags = {**base_tags, "git_slug": effective_slug}
+            if pipeline_run_id:
+                candidate_tags.append({**slug_tags, "pipeline_run_id": pipeline_run_id})
+            candidate_tags.append(slug_tags)
+        if use_multi_repo:
+            if pipeline_run_id:
+                candidate_tags.append({**base_tags, "pipeline_run_id": pipeline_run_id})
+            candidate_tags.append(base_tags)
+
+        for cand in candidate_tags:
+            flt = " AND ".join(
+                f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'"
+                for k, v in cand.items()
+                if v is not None and v != ""
+            )
+            runs = client.search_runs(
+                experiment_ids=[exp.experiment_id],
+                filter_string=flt,
+                order_by=["start_time DESC"],
+                max_results=1,
+            )
+            if runs:
+                rid = getattr(getattr(runs[0], "info", None), "run_id", None)
+                if isinstance(rid, str) and rid:
+                    return rid
+    except Exception:
+        logging.debug("Could not resolve MLflow index run_id for cache", exc_info=True)
+    return None
+
+
+def _evict_idle_index_dirs() -> None:
+    for k in list(_INDEX_CACHE.keys()):
+        if len(_INDEX_CACHE) <= _INDEX_CACHE_MAX:
+            break
+        if _INDEX_CACHE[k]["refs"] == 0:
+            old = _INDEX_CACHE.pop(k)
+            shutil.rmtree(old["path"], ignore_errors=True)
+
+
+@contextmanager
+def _acquire_query_index_dir(
+    *,
+    index_run_id: str | None,
+    download_fn,
+    cache_scope: tuple,
+):
+    if not index_run_id:
+        with tempfile.TemporaryDirectory(prefix="augur_query_", ignore_cleanup_errors=True) as tmp_dir:
+            download_fn(tmp_dir)
+            yield tmp_dir
+        return
+
+    cache_key = (*cache_scope, index_run_id)
+    with _INDEX_CACHE_LOCK:
+        entry = _INDEX_CACHE.get(cache_key)
+        if entry is None:
+            entry = {
+                "path": tempfile.mkdtemp(prefix="augur_idx_"),
+                "lock": threading.Lock(),
+                "refs": 0,
+                "ready": False,
+            }
+            _INDEX_CACHE[cache_key] = entry
+        _INDEX_CACHE.move_to_end(cache_key)
+        entry["refs"] += 1
+        _evict_idle_index_dirs()
+
+    try:
+        if not entry["ready"]:
+            with entry["lock"]:
+                if not entry["ready"]:
+                    download_fn(entry["path"])
+                    entry["ready"] = True
+        yield entry["path"]
+    finally:
+        with _INDEX_CACHE_LOCK:
+            entry["refs"] -= 1
+            if not entry["ready"] and entry["refs"] == 0:
+                _INDEX_CACHE.pop(cache_key, None)
+                shutil.rmtree(entry["path"], ignore_errors=True)
+            _evict_idle_index_dirs()
 
 
 def _inject_section(report: str, section_md: str) -> str:
@@ -264,36 +388,67 @@ class AnalysisPipeline:
 
         adhoc_results_header = "\n---\n\n# ##################ADHOC RESULTS##################\n"
 
-        with tempfile.TemporaryDirectory(prefix="augur_query_", ignore_cleanup_errors=True) as graphrag_source_path:
-            try:
-                with timing_span("analysis.index_download", "io"):
-                    DependencyAnalyzer.download_graphrag_directory(
-                        download_dir=graphrag_source_path,
-                        git_slug=git_slug,
-                        multi_repo=use_multi_repo,
-                        git_repo=git_repo,
-                        namespace=namespace,
-                        workspace=workspace,
-                        pipeline_run_id=pipeline_run_id,
-                        project_slug=clean_project_slug,
-                    )
-            except Exception:
-                msg = (
-                    "Could not perform query: "
-                    + ("no multi-repository index was found" if use_multi_repo else
-                       f"no index was found (git_repo='{git_repo}')")
-                    + ". Maybe you need to generate it first?"
-                )
-                logging.error(msg)
-                print(adhoc_results_header, flush=True)
-                return msg
+        index_run_id = _resolve_mlflow_index_run_id(
+            git_slug=git_slug,
+            use_multi_repo=use_multi_repo,
+            clean_project_slug=clean_project_slug,
+            pipeline_run_id=pipeline_run_id,
+            namespace=namespace,
+            workspace=workspace,
+        )
 
-            with timing_span("analysis.analyzer_setup", "io"):
-                analyzer = DependencyAnalyzer(
-                    graphrag_source_path,
+        def _download_index(target_dir: str) -> None:
+            with timing_span("analysis.index_download", "io"):
+                DependencyAnalyzer.download_graphrag_directory(
+                    download_dir=target_dir,
                     git_slug=git_slug,
                     multi_repo=use_multi_repo,
+                    git_repo=git_repo,
+                    namespace=namespace,
+                    workspace=workspace,
+                    pipeline_run_id=pipeline_run_id,
+                    project_slug=clean_project_slug,
                 )
+
+        try:
+            index_ctx = _acquire_query_index_dir(
+                index_run_id=index_run_id,
+                download_fn=_download_index,
+                cache_scope=(namespace or "", workspace or "", git_slug or "", bool(use_multi_repo)),
+            )
+            graphrag_source_path = index_ctx.__enter__()
+        except Exception:
+            msg = (
+                "Could not perform query: "
+                + ("no multi-repository index was found" if use_multi_repo else
+                   f"no index was found (git_repo='{git_repo}')")
+                + ". Maybe you need to generate it first?"
+            )
+            logging.error(msg)
+            print(adhoc_results_header, flush=True)
+            return msg
+
+        try:
+            try:
+                from utils.token_tracker import TokenCostTracker
+                req_token_tracker = TokenCostTracker(git_slug=git_slug, git_repo=git_repo)
+            except Exception:
+                req_token_tracker = None
+
+            with timing_span("analysis.analyzer_setup", "io"):
+                try:
+                    analyzer = DependencyAnalyzer(
+                        graphrag_source_path,
+                        git_slug=git_slug,
+                        multi_repo=use_multi_repo,
+                        token_tracker=req_token_tracker,
+                    )
+                except TypeError:
+                    analyzer = DependencyAnalyzer(
+                        graphrag_source_path,
+                        git_slug=git_slug,
+                        multi_repo=use_multi_repo,
+                    )
 
             postamble = "Provide as much detail as possible. Include the git repo url(s) in the report."
 
@@ -303,7 +458,7 @@ class AnalysisPipeline:
 
             try:
                 from utils.duration_tracker import DurationTracker
-                dur_tracker = DurationTracker.get_instance()
+                dur_tracker = DurationTracker(git_slug=git_slug, git_repo=git_repo)
             except Exception:
                 dur_tracker = None
 
@@ -327,24 +482,27 @@ class AnalysisPipeline:
                 except Exception as e:
                     logging.debug(f"Failed to log duration metrics to MLflow: {e}")
 
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            result_file = os.path.join(graphrag_source_path, f"adhoc_query_{timestamp}.txt")
-            DefaultAssetLoader(namespace=namespace, workspace=workspace).log_results(
-                result_file,
-                artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
-                    DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES,
-                    git_slug=git_slug,
-                    multi_repo=use_multi_repo,
-                ),
-                content=f"Question: {question}\n\nAnswer:\n{result}",
-                tags={"category": "analysis",
-                      "adhoc_query": "true",
-                      "git_slug": git_slug or "multi-repo",
-                      "multi_repo": use_multi_repo},
-            )
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S_%f")
+            with tempfile.TemporaryDirectory(prefix="augur_qres_", ignore_cleanup_errors=True) as res_dir:
+                result_file = os.path.join(res_dir, f"adhoc_query_{timestamp}.txt")
+                DefaultAssetLoader(namespace=namespace, workspace=workspace).log_results(
+                    result_file,
+                    artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                        DefaultAssetLoader.RESULTS_PATH_PREFIX_ADHOC_QUERIES,
+                        git_slug=git_slug,
+                        multi_repo=use_multi_repo,
+                    ),
+                    content=f"Question: {question}\n\nAnswer:\n{result}",
+                    tags={"category": "analysis",
+                          "adhoc_query": "true",
+                          "git_slug": git_slug or "multi-repo",
+                          "multi_repo": use_multi_repo},
+                )
 
             print(adhoc_results_header, flush=True)
             return f"{result}\n\n"
+        finally:
+            index_ctx.__exit__(*sys.exc_info())
 
 
 ##############################################################################

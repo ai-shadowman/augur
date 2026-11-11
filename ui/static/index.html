@@ -799,9 +799,9 @@
       .cu-chips { grid-column: 2; justify-content: flex-start; margin-top: 0.25rem; }
     }
   </style>
-  <link rel="stylesheet" href="/static/vendor/gridjs.min.css"/>
-  <script src="/static/vendor/mermaid.min.js"></script>
-  <script src="/static/vendor/gridjs.umd.js"></script>
+  <link rel="stylesheet" href="static/vendor/gridjs.min.css"/>
+  <script src="static/vendor/mermaid.min.js"></script>
+  <script src="static/vendor/gridjs.umd.js"></script>
 </head>
 <body>
   <div class="cu-shell">
@@ -1326,8 +1326,16 @@
       $("start-analysis").disabled = true;
     }
 
-    async function api(path, opts) {
-      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]*)"));
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+    async function api(path, opts = {}) {
+      const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+      const csrf = getCookie("csrf-token");
+      if (csrf) headers["X-CSRFToken"] = csrf;
+      const relPath = String(path || "").replace(/^\/+/, "");
+      const res = await fetch(relPath, { ...opts, headers });
       const text = await res.text();
       if (!res.ok) throw new Error(text || res.statusText);
       return text ? JSON.parse(text) : {};
@@ -1959,8 +1967,9 @@
 
     async function load() {
       try {
-        const [status, catalog, indexes, v2runs, nsData] = await Promise.all([
-          api("/api/status"), api("/api/v2/repositories/catalog-repos").catch(() => ({ repos: [] })), api("/api/indexes"),
+        const [status, indexes, v2runs, nsData] = await Promise.all([
+          api("/api/status"),
+          api("/api/indexes"),
           api("/api/v2/pipelines/runs").catch(() => ({ runs: [] })),
           api("/api/namespaces").catch(() => ({ namespaces: [], current: "" })),
         ]);
@@ -1977,8 +1986,8 @@
           $("ns-row").classList.add("hidden");
         }
 
-        state.repos = catalog.repos || [];
-        state.defaultKey = catalog.default_key;
+        state.repos = indexes.repos || [];
+        state.defaultKey = indexes.default_key;
         state.indexes = indexes.indexes || [];
         state.queryable = indexes.queryable || [];
         state.allRuns = [...(v2runs.runs || [])];
@@ -2036,38 +2045,6 @@
       } catch (e) {
         banner(String(e.message || e), true);
       }
-    }
-
-    async function poll(job, kind) {
-      if (state.poll) clearInterval(state.poll);
-      const tick = async () => {
-        try {
-          const snap = await api(`/api/jobs/${job}`);
-          if (state.thinking) {
-            setThinking({
-              ...state.thinking,
-              status: `${snap.status} · ${job}`,
-            });
-            if (kind === "query") renderChat();
-          }
-          if (snap.done) {
-            clearInterval(state.poll);
-            state.poll = null;
-            setThinking(null);
-            if (snap.answer) state.chat.push({ role: "assistant", content: snap.answer });
-            renderChat();
-            load();
-          }
-        } catch (e) {
-          clearInterval(state.poll);
-          state.poll = null;
-          setThinking(null);
-          renderChat();
-          banner(String(e.message || e), true);
-        }
-      };
-      tick();
-      state.poll = setInterval(tick, 4000);
     }
 
     function pollQuery(queryId) {
@@ -2208,7 +2185,13 @@
             project_slug: option.project_slug || "",
           }),
         });
-        pollQuery(result.query_id);
+        if (result.status === "succeeded") {
+          setThinking(null);
+          state.chat.push({ role: "assistant", content: result.answer || result.result || "(empty response)" });
+          renderChat();
+        } else {
+          pollQuery(result.query_id);
+        }
       } catch (e) {
         setThinking(null);
         renderChat();
@@ -2390,14 +2373,19 @@
         await api("/api/namespace", { method: "POST", body: JSON.stringify({ namespace: ns }) });
         state.runPage = 0;
         state.selectedRunId = null;
-        load();
+        await load();
       } catch (e) {
+        await load(); // revert displayed value to server state before showing error
         banner(String(e.message || e), true);
-        load(); // revert displayed value to server state
       }
     }
     $("ns-select").addEventListener("change", commitNamespace);
-    $("ns-select").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitNamespace(); } });
+    $("ns-select").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        $("ns-select").blur();
+      }
+    });
     $("slider-chat-log").addEventListener("click", (e) => {
       const btn = e.target.closest(".cu-bubble-dl-btn");
       if (!btn || btn.dataset.chatDl === undefined) return;

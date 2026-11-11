@@ -10,7 +10,7 @@ metadata:
 data:
   config.json: |
     {
-      "appUrl": "https://{{ include "codeUnderstanding.pluginApiRouteHost" . }}"
+      "appUrl": "/api/proxy/plugin/code-understanding-console/backend/"
     }
   nginx.conf: |
     worker_processes auto;
@@ -153,6 +153,10 @@ spec:
               value: "{{ .Values.namespace }}"
             - name: MLFLOW_WORKSPACE
               value: "{{ .Values.namespace }}"
+            - name: REQUIRE_OPENSHIFT_AUTH
+              value: "true"
+            - name: OPENSHIFT_CONSOLE_URL
+              value: {{ .Values.consolePlugin.consoleBaseUrl | quote }}
             - name: AGENTMESH_REPO_URL
               value: "{{ .Values.repoUrl | default .Values.augurRepoUrl }}"
             - name: AGENTMESH_REPO_REF
@@ -234,27 +238,6 @@ spec:
       port: 8443
       targetPort: https
 ---
-kind: Route
-apiVersion: route.openshift.io/v1
-metadata:
-  name: code-understanding-plugin-api
-  namespace: {{ .Values.namespace }}
-  labels:
-    app: code-understanding-plugin-api
-  annotations:
-    haproxy.router.openshift.io/timeout: 30m
-spec:
-  to:
-    kind: Service
-    name: code-understanding-plugin-api
-    weight: 100
-  port:
-    targetPort: https
-  tls:
-    termination: reencrypt
-    insecureEdgeTerminationPolicy: Redirect
-  wildcardPolicy: None
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -289,7 +272,7 @@ spec:
       basePath: /
   proxy:
     - alias: backend
-      authorization: None
+      authorization: UserToken
       endpoint:
         type: Service
         service:

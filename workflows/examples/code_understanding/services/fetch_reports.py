@@ -7,7 +7,7 @@ import os
 
 from loaders.default_asset_loader import DefaultAssetLoader
 from utils.code_utils import generate_slug_from_repo as generate_git_slug
-from utils.pipeline_utils import resolve_mlflow_prefix, sanitize_slug
+from utils.pipeline_utils import escape_mlflow_filter_value, resolve_mlflow_prefix, sanitize_slug
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,11 @@ def _discover_run_report_meta(
         exp = client.get_experiment_by_name(loader._loader.RESULT_ASSET_EXPERIMENT)
         if not exp:
             return None
+        safe_run_id = escape_mlflow_filter_value(pipeline_run_id)
         for tag_key in ("pipeline_run_id", "kfp_run_id"):
             runs = client.search_runs(
                 experiment_ids=[exp.experiment_id],
-                filter_string=f"tags.\"{tag_key}\" = '{pipeline_run_id}' AND tags.\"category\" = 'analysis'",
+                filter_string=f"tags.\"{tag_key}\" = '{safe_run_id}' AND tags.\"category\" = 'analysis'",
                 order_by=["attributes.start_time DESC"],
                 max_results=5,
             )

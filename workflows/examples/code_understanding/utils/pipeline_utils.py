@@ -61,10 +61,56 @@ def get_pipeline_run_id(allow_generate: bool = False) -> str | None:
     if allow_generate:
         import uuid
 
-        os.environ["_AGENTMESH_PIPELINE_RUN_ID"] = str(uuid.uuid4())
-        return os.environ["_AGENTMESH_PIPELINE_RUN_ID"]
+        generated = str(uuid.uuid4())
+        if os.environ.get("AUGUR_SERVER_MODE") == "1":
+            return generated
+        os.environ["_AGENTMESH_PIPELINE_RUN_ID"] = generated
+        return generated
 
     return None
+
+
+_MLFLOW_SESSION_PATCHED = False
+
+
+def escape_mlflow_filter_value(value: object) -> str:
+    """Escapes backslashes and single quotes for MLflow filter strings."""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")
+
+
+def is_mlflow_tracking_request(request_url: str | None) -> bool:
+    """Return True only when the request targets the configured MLFLOW_TRACKING_URI."""
+    tracking_uri = (os.environ.get("MLFLOW_TRACKING_URI") or "").strip()
+    if not tracking_uri or not tracking_uri.startswith(("http://", "https://")):
+        return True
+    if not request_url:
+        return False
+    from urllib.parse import urlparse
+
+    req_parsed = urlparse(str(request_url))
+    trk_parsed = urlparse(tracking_uri)
+    if not req_parsed.netloc or not trk_parsed.netloc:
+        return False
+    return req_parsed.netloc.lower() == trk_parsed.netloc.lower()
+
+
+def patch_mlflow_session_forwarded_token() -> None:
+    """Patches requests.Session.send once to attach X-Forwarded-Access-Token strictly for MLflow."""
+    global _MLFLOW_SESSION_PATCHED
+    if _MLFLOW_SESSION_PATCHED:
+        return
+    import requests
+
+    _orig_send = requests.Session.send
+
+    def _send_with_forwarded_token(self, request, **kwargs):
+        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
+        if token and is_mlflow_tracking_request(getattr(request, "url", None)):
+            request.headers["X-Forwarded-Access-Token"] = token
+        return _orig_send(self, request, **kwargs)
+
+    requests.Session.send = _send_with_forwarded_token
+    _MLFLOW_SESSION_PATCHED = True
 
 
 def sanitize_slug(value: str | None) -> str:

@@ -25,6 +25,7 @@ PROJECT_WORKSPACE   	?=
 CONSOLE_APP_IMAGE_NAME    ?= console-app
 CONSOLE_PLUGIN_IMAGE_NAME ?= console-plugin
 CONSOLE_IMAGE_TAG         ?= latest
+CONSOLE_ROUTE_ENABLED     ?= false
 CONSOLE_ROUTE_HOST        ?=
 
 install:
@@ -415,17 +416,6 @@ deploy-otel:
 # Console application
 # ============================================================================
 
-apply-console-src:
-	@set -a && . $(ENV_FILE) && set +a && \
-	echo "==> Publishing job scripts ConfigMap..." && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set namespace="$$KFP_NAMESPACE" \
-		--set console.jobScripts.enabled=true \
-		--set-file console.jobScripts.runPipelines=workflows/examples/code_understanding/scripts/run_pipelines.sh \
-		--set-file console.jobScripts.mlflowAssetLoader=workflows/examples/code_understanding/loaders/mlflow_asset_loader.py \
-		--set-file console.jobScripts.defaultAssetLoader=workflows/examples/code_understanding/loaders/default_asset_loader.py \
-		-s templates/console-job-scripts.yaml | oc apply -n $$KFP_NAMESPACE -f -
-
 run-console-app:
 	@set -a && . $(ENV_FILE) && set +a && \
 	: "$${KFP_NAMESPACE:?Set KFP_NAMESPACE in .env or pass KFP_NAMESPACE=<namespace> to make}" && \
@@ -439,11 +429,9 @@ run-console-app:
 	export KFP_HOST="https://$$KFP_ROUTE_HOST" && \
 	uv run --project ui --frozen uvicorn --app-dir ui main:app --host 127.0.0.1 --port 8080
 
-deploy-console-app: apply-console-src
+_deploy-console-app-manifests:
 	@set -a && . $(ENV_FILE) && set +a && \
-	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
-	echo "==> Deploying Code Understanding console ($$CONSOLE_IMG)..." && \
+	echo "==> Deploying Code Understanding console ($(CONSOLE_IMG))..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set requester="$$(oc whoami)" \
@@ -452,25 +440,32 @@ deploy-console-app: apply-console-src
 		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
 		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set console.enabled=true \
-		--set-string console.image="$$CONSOLE_IMG" \
+		--set console.route.enabled="$(CONSOLE_ROUTE_ENABLED)" \
+		--set-string console.image="$(CONSOLE_IMG)" \
 		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
 		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
 	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
-	ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
 	echo "" && \
-	echo "==> Open the console in your browser:" && \
-	echo "    https://$$ROUTE_HOST" && \
-	echo "" && \
-	echo "    Or run: make port-forward-console-app  then open http://localhost:8080" && \
+	if [ "$(CONSOLE_ROUTE_ENABLED)" = "true" ]; then \
+		ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
+		echo "==> Open the console in your browser: https://$$ROUTE_HOST"; \
+	fi && \
+	echo "==> Run: make port-forward-console-app  then open http://localhost:8080" && \
 	echo ""
+
+deploy-console-app:
+	@set -a && . $(ENV_FILE) && set +a && \
+	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
 
 port-forward-console-app:
 	@set -a && . $(ENV_FILE) && set +a && \
 	echo "==> Forwarding http://localhost:8080 -> code-understanding-console:8080" && \
 	oc port-forward svc/code-understanding-console 8080:8080 -n $$KFP_NAMESPACE
 
-oc-deploy-console-app: apply-console-src
+oc-deploy-console-app:
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
 	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
@@ -482,40 +477,18 @@ oc-deploy-console-app: apply-console-src
 	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
 	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
-	echo "==> Deploying Code Understanding console ($$CONSOLE_IMG)..." && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set namespace="$$KFP_NAMESPACE" \
-		--set requester="$$(oc whoami)" \
-		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set console.enabled=true \
-		--set-string console.image="$$CONSOLE_IMG" \
-		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
-		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
-	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
-	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
-	ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
-	echo "" && \
-	echo "==> Open the console in your browser:" && \
-	echo "    https://$$ROUTE_HOST" && \
-	echo ""
+	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
 
 # ============================================================================
 # OpenShift console plugin
 # ============================================================================
 
-apply-plugin-src: apply-console-src
-
-deploy-console-plugin: apply-plugin-src
+_deploy-console-plugin-manifests:
 	@set -a && . $(ENV_FILE) && set +a && \
-	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
-	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
 	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
 	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
-	echo "==> Deploying OpenShift console plugin and FastAPI backend..." && \
+	echo "==> Deploying OpenShift console plugin ($(PLUGIN_IMG)) and FastAPI backend ($(CONSOLE_IMG))..." && \
+	oc delete route code-understanding-plugin-api -n "$$KFP_NAMESPACE" --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
@@ -524,26 +497,9 @@ deploy-console-plugin: apply-plugin-src
 		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set clusterDomain="$$CLUSTER_DOMAIN" \
 		--set consolePlugin.enabled=true \
-		--set-string consolePlugin.image="$$PLUGIN_IMG" \
-		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
+		--set-string consolePlugin.image="$(PLUGIN_IMG)" \
+		--set-string consolePlugin.apiImage="$(CONSOLE_IMG)" \
 		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
-		-s templates/console-plugin.yaml | oc apply -f - && \
-	echo "==> Waiting for plugin-api Route hostname to be assigned..." && \
-	oc wait route/code-understanding-plugin-api -n "$$KFP_NAMESPACE" \
-		--for=jsonpath='{.spec.host}' --timeout=300s && \
-	API_HOST="$$(oc get route code-understanding-plugin-api -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set namespace="$$KFP_NAMESPACE" \
-		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set clusterDomain="$$CLUSTER_DOMAIN" \
-		--set consolePlugin.enabled=true \
-		--set-string consolePlugin.image="$$PLUGIN_IMG" \
-		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
-		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
-		--set consolePlugin.apiRouteHost="$$API_HOST" \
 		-s templates/console-plugin.yaml | oc apply -f - && \
 	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
 	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \
@@ -551,7 +507,14 @@ deploy-console-plugin: apply-plugin-src
 	oc rollout status deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE --timeout=300s && \
 	$(MAKE) enable-console-plugin
 
-oc-deploy-console-plugin: apply-plugin-src
+deploy-console-plugin:
+	@set -a && . $(ENV_FILE) && set +a && \
+	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
+
+oc-deploy-console-plugin:
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
 	PLUGIN_NAME="$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}" && \
@@ -570,43 +533,7 @@ oc-deploy-console-plugin: apply-plugin-src
 	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
 	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$APP_TAG" && \
-	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
-	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
-	echo "==> Deploying OpenShift console plugin ($$PLUGIN_IMG) and FastAPI backend ($$CONSOLE_IMG)..." && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set namespace="$$KFP_NAMESPACE" \
-		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set clusterDomain="$$CLUSTER_DOMAIN" \
-		--set consolePlugin.enabled=true \
-		--set-string consolePlugin.image="$$PLUGIN_IMG" \
-		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
-		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
-		-s templates/console-plugin.yaml | oc apply -f - && \
-	echo "==> Waiting for plugin-api Route hostname to be assigned..." && \
-	oc wait route/code-understanding-plugin-api -n "$$KFP_NAMESPACE" \
-		--for=jsonpath='{.spec.host}' --timeout=300s && \
-	API_HOST="$$(oc get route code-understanding-plugin-api -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
-	helm template agent-mesh-for-sw resources/helm \
-		--set namespace="$$KFP_NAMESPACE" \
-		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
-		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
-		--set clusterDomain="$$CLUSTER_DOMAIN" \
-		--set consolePlugin.enabled=true \
-		--set-string consolePlugin.image="$$PLUGIN_IMG" \
-		--set-string consolePlugin.apiImage="$$CONSOLE_IMG" \
-		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
-		--set consolePlugin.apiRouteHost="$$API_HOST" \
-		-s templates/console-plugin.yaml | oc apply -f - && \
-	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
-	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \
-	oc rollout status deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE --timeout=300s && \
-	oc rollout status deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE --timeout=300s && \
-	$(MAKE) enable-console-plugin
+	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
 
 enable-console-plugin:
 	@echo "==> Enabling code-understanding-console in OpenShift console..." && \

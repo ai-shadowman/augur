@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import ssl
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 
+os.environ.setdefault("AUGUR_SERVER_MODE", "1")
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 os.environ.setdefault("LITELLM_TELEMETRY", "False")
 os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
@@ -34,7 +43,7 @@ except Exception:
 
 from fastapi import FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
@@ -46,53 +55,139 @@ from api.repositories import router as repositories_router  # noqa: E402
 try:
     from ui.cluster import (
         NAMESPACE_COOKIE,
-        WORKSPACE_COOKIE,
-        default_namespace,
-        default_workspace,
         get_active_namespace,
         get_active_workspace,
-        get_cluster_info,
         list_namespaces,
-        list_workspaces,
-        sanitize_workspace,
     )
-    from ui.indexes import list_indexed_repos, queryable_options
+    from ui.indexes import list_indexes_and_repos, queryable_options
 except ImportError:
     from cluster import (  # type: ignore[no-redef]
         NAMESPACE_COOKIE,
-        WORKSPACE_COOKIE,
-        default_namespace,
-        default_workspace,
         get_active_namespace,
         get_active_workspace,
-        get_cluster_info,
         list_namespaces,
-        list_workspaces,
-        sanitize_workspace,
     )
-    from indexes import list_indexed_repos, queryable_options  # type: ignore[no-redef]
+    from indexes import list_indexes_and_repos, queryable_options  # type: ignore[no-redef]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+_SA_CA_CERT = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+# shortcut: in-memory 60s token cache (128 entries), move to shared cache only if k8s API rate-limits
+_TOKEN_CACHE_TTL_SECONDS = 60.0
+_TOKEN_CACHE_MAX = 128
+_TOKEN_CACHE: OrderedDict[str, float] = OrderedDict()
+_TOKEN_CACHE_LOCK = threading.Lock()
 
 
-class FrameAncestorsMiddleware(BaseHTTPMiddleware):
+def _console_origin() -> str:
+    return os.environ.get("OPENSHIFT_CONSOLE_URL", "").strip().rstrip("/")
+
+
+def _allowed_origins() -> list[str]:
+    origin = _console_origin()
+    return [origin] if origin else ["http://localhost:8080", "http://127.0.0.1:8080"]
+
+
+def _frame_ancestors_csp() -> str:
+    origin = _console_origin()
+    return f"frame-ancestors 'self' {origin}" if origin else "frame-ancestors 'self'"
+
+
+def _require_openshift_auth() -> bool:
+    return os.environ.get("REQUIRE_OPENSHIFT_AUTH", "").strip().lower() in ("1", "true", "yes")
+
+
+def _extract_bearer_token(request: Request) -> str:
+    auth = (request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return (request.headers.get("x-forwarded-access-token") or "").strip()
+
+
+def _verify_openshift_token(token: str) -> bool:
+    if not token:
+        return False
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    with _TOKEN_CACHE_LOCK:
+        exp = _TOKEN_CACHE.get(digest)
+        if exp is not None and now < exp:
+            _TOKEN_CACHE.move_to_end(digest)
+            return True
+
+    api_base = os.environ.get("KUBERNETES_API_URL", "https://kubernetes.default.svc").rstrip("/")
+    ssl_ctx = (
+        ssl.create_default_context(cafile=_SA_CA_CERT)
+        if os.path.exists(_SA_CA_CERT)
+        else ssl.create_default_context()
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    verified = False
+    try:
+        req = urllib.request.Request(f"{api_base}/apis/user.openshift.io/v1/users/~", headers=headers)
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            verified = resp.status == 200 and bool((data.get("metadata") or {}).get("name"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            try:
+                ssr_body = b'{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview"}'
+                ssr_req = urllib.request.Request(
+                    f"{api_base}/apis/authentication.k8s.io/v1/selfsubjectreviews",
+                    data=ssr_body,
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(ssr_req, context=ssl_ctx, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    verified = resp.status in (200, 201) and bool(
+                        ((data.get("status") or {}).get("userInfo") or {}).get("username")
+                    )
+            except Exception:
+                verified = False
+    except Exception:
+        logger.debug("OpenShift token verification failed", exc_info=True)
+        verified = False
+
+    if verified:
+        with _TOKEN_CACHE_LOCK:
+            _TOKEN_CACHE[digest] = time.monotonic() + _TOKEN_CACHE_TTL_SECONDS
+            _TOKEN_CACHE.move_to_end(digest)
+            while len(_TOKEN_CACHE) > _TOKEN_CACHE_MAX:
+                _TOKEN_CACHE.popitem(last=False)
+    return verified
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if (
+            _require_openshift_auth()
+            and path.startswith("/api/")
+            and path != "/api/health"
+            and request.method != "OPTIONS"
+        ):
+            token = _extract_bearer_token(request)
+            if not _verify_openshift_token(token):
+                resp = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+                resp.headers["Content-Security-Policy"] = _frame_ancestors_csp()
+                return resp
+
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = "frame-ancestors *"
-        response.headers["X-Frame-Options"] = "ALLOWALL"
+        response.headers["Content-Security-Policy"] = _frame_ancestors_csp()
         return response
 
 
 app = FastAPI(title="Code Understanding Console", version="0.1.0")
-app.add_middleware(FrameAncestorsMiddleware)
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins(),
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRFToken"],
 )
 app.include_router(pipelines_router)
 app.include_router(queries_router)
@@ -102,10 +197,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 class SelectNamespaceRequest(BaseModel):
     namespace: str = Field(..., min_length=1)
-
-
-class SelectWorkspaceRequest(BaseModel):
-    workspace: str = Field(default="default")
 
 
 @app.get("/", include_in_schema=False)
@@ -129,24 +220,11 @@ def api_health(request: Request) -> dict[str, str]:
 
 @app.get("/api/status", tags=["cluster"])
 def api_status(request: Request) -> dict:
-    active_ns = get_active_namespace(request)
-    active_ws = get_active_workspace(request)
     return {
         "ok": True,
-        "namespace": active_ns,
-        "workspace": active_ws,
-        "cluster": get_cluster_info(),
+        "namespace": get_active_namespace(request),
+        "workspace": get_active_workspace(request),
     }
-
-
-@app.get("/api/cluster", tags=["cluster"])
-def api_cluster(request: Request) -> dict:
-    info = get_cluster_info()
-    info["active_namespace"] = get_active_namespace(request)
-    info["default_namespace"] = default_namespace()
-    info["active_workspace"] = get_active_workspace(request)
-    info["default_workspace"] = default_workspace()
-    return info
 
 
 @app.get("/api/namespaces", tags=["cluster"])
@@ -173,37 +251,17 @@ def api_set_namespace(body: SelectNamespaceRequest, response: Response) -> dict:
     return {"active": ns}
 
 
-@app.get("/api/workspaces", tags=["cluster"])
-def api_workspaces(request: Request) -> dict:
-    ns = get_active_namespace(request)
-    active = get_active_workspace(request)
-    items = list_workspaces(namespace=ns)
-    if active and active not in items:
-        items = ["default", *sorted({*(w for w in items if w != "default"), active})]
-    return {"active": active, "current": active, "workspaces": items}
-
-
-@app.post("/api/workspace", tags=["cluster"])
-def api_set_workspace(body: SelectWorkspaceRequest, response: Response) -> dict:
-    ws = sanitize_workspace(body.workspace)
-    response.set_cookie(
-        key=WORKSPACE_COOKIE,
-        value=ws,
-        httponly=False,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
-    return {"active": ws}
-
-
 @app.get("/api/indexes", tags=["indexes"])
 def api_indexes(request: Request) -> dict:
     ns = get_active_namespace(request)
     ws = get_active_workspace(request)
-    indexes = list_indexed_repos(namespace=ns, workspace=ws)
+    indexes, repos = list_indexes_and_repos(namespace=ns, workspace=ws)
+    default_key = f"{repos[0]['git_repo']}|{repos[0]['git_branch']}" if repos else None
     return {
         "namespace": ns,
         "workspace": ws,
         "indexes": indexes,
         "queryable": queryable_options(indexes),
+        "repos": repos,
+        "default_key": default_key,
     }

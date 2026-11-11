@@ -26,12 +26,12 @@ MULTI_REPO="${MULTI_REPO:-false}"
 PIPELINE_RUN_ID="${PIPELINE_RUN_ID:-}"
 PROJECT_SLUG="${PROJECT_SLUG:-}"
 
-RESULT=$(QUESTION="$QUESTION" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" GIT_REPO="$GIT_REPO" GIT_BRANCH="$GIT_BRANCH" MULTI_REPO="$MULTI_REPO" PIPELINE_RUN_ID="$PIPELINE_RUN_ID" PROJECT_SLUG="$PROJECT_SLUG" \
+QUESTION="$QUESTION" USE_GLOBAL="$USE_GLOBAL" RETRY_COUNT="$RETRY_COUNT" GIT_REPO="$GIT_REPO" GIT_BRANCH="$GIT_BRANCH" MULTI_REPO="$MULTI_REPO" PIPELINE_RUN_ID="$PIPELINE_RUN_ID" PROJECT_SLUG="$PROJECT_SLUG" \
   PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \
   python3 - << 'PYEOF'
 import os
-from services.run_adhoc_query import run_adhoc_query
-result = run_adhoc_query(
+from services.run_adhoc_query import execute_adhoc_query
+result = execute_adhoc_query(
     question=os.environ["QUESTION"],
     retry_count=int(os.environ["RETRY_COUNT"]),
     use_global=os.environ["USE_GLOBAL"] == "1",
@@ -43,6 +43,3 @@ result = run_adhoc_query(
 )
 print(result)
 PYEOF
-) || true
-
-echo "$RESULT"

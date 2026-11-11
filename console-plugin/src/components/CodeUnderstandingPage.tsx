@@ -28,7 +28,8 @@ const CodeUnderstandingPage = () => {
       })
       .then((config) => {
         if (!cancelled) {
-          setAppUrl(config.appUrl);
+          const url = config.appUrl || '/api/proxy/plugin/code-understanding-console/backend/';
+          setAppUrl(url.endsWith('/') ? url : `${url}/`);
         }
       })
       .catch(() => {

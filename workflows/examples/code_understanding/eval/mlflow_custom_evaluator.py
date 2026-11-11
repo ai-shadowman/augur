@@ -15,11 +15,14 @@ from .basic_custom_evaluator import BasicCustomEvaluator
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
-from utils.pipeline_utils import resolve_mlflow_prefix
+from utils.pipeline_utils import (
+    is_mlflow_tracking_request as _is_mlflow_tracking_request,
+    patch_mlflow_session_forwarded_token as _patch_session_forwarded_token,
+    resolve_mlflow_prefix,
+)
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-_SESSION_PATCHED = False
 _TLS_PATCHED = False
 
 
@@ -57,37 +60,6 @@ def _configure_tls():
         litellm.ssl_verify = False
     except Exception:
         pass
-
-
-def _is_mlflow_tracking_request(request_url: str | None) -> bool:
-    """Return True only when the request targets the configured MLFLOW_TRACKING_URI."""
-    tracking_uri = (os.environ.get("MLFLOW_TRACKING_URI") or "").strip()
-    if not tracking_uri or not tracking_uri.startswith(("http://", "https://")):
-        return True
-    if not request_url:
-        return False
-    req_parsed = urlparse(str(request_url))
-    trk_parsed = urlparse(tracking_uri)
-    if not req_parsed.netloc or not trk_parsed.netloc:
-        return False
-    return req_parsed.netloc.lower() == trk_parsed.netloc.lower()
-
-
-def _patch_session_forwarded_token():
-    """Patches requests.Session.send once to attach X-Forwarded-Access-Token strictly for MLFLOW_TRACKING_URI."""
-    global _SESSION_PATCHED
-    if _SESSION_PATCHED:
-        return
-    _orig_send = requests.Session.send
-
-    def _send_with_forwarded_token(self, request, **kwargs):
-        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-        if token and _is_mlflow_tracking_request(getattr(request, "url", None)):
-            request.headers["X-Forwarded-Access-Token"] = token
-        return _orig_send(self, request, **kwargs)
-
-    requests.Session.send = _send_with_forwarded_token
-    _SESSION_PATCHED = True
 
 
 class MlFlowCustomEvaluator(CustomEvaluator):

@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.repositories_service import fetch_catalog_repos
-from api.repositories_service import log_repos as _log_repos
+_CODE_UNDERSTANDING_DIR = str(
+    Path(__file__).resolve().parent.parent / "workflows" / "examples" / "code_understanding"
+)
+if _CODE_UNDERSTANDING_DIR not in sys.path:
+    sys.path.insert(0, _CODE_UNDERSTANDING_DIR)
+
+from services.get_catalog_repos import get_catalog_repos as fetch_catalog_repos  # noqa: E402
+from services.update_repos import log_repos as _log_repos  # noqa: E402
 try:
     from ui.cluster import get_active_namespace, get_active_workspace
 except ImportError:

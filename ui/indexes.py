@@ -103,10 +103,15 @@ def _query_mlflow_indexed_runs(
 def list_indexed_repos(
     namespace: str | None = None,
     workspace: str | None = None,
+    configured_repos: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return the combined list of configured + indexed repos for *namespace* and *workspace*."""
     ns = (namespace or os.environ.get("KFP_NAMESPACE") or "demo").strip()
-    configured = _load_configured_repos(namespace=ns, workspace=workspace)
+    configured = (
+        configured_repos
+        if configured_repos is not None
+        else _load_configured_repos(namespace=ns, workspace=workspace)
+    )
 
     try:
         indexed_map = _query_mlflow_indexed_runs(ns, workspace=workspace)
@@ -186,6 +191,16 @@ def list_indexed_repos(
         )
 
     return rows
+
+
+def list_indexes_and_repos(
+    namespace: str | None = None,
+    workspace: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Return ``(indexes, configured_repos)`` in a single catalog read."""
+    ns = (namespace or os.environ.get("KFP_NAMESPACE") or "demo").strip()
+    configured = _load_configured_repos(namespace=ns, workspace=workspace)
+    return list_indexed_repos(namespace=ns, workspace=workspace, configured_repos=configured), configured
 
 
 def queryable_options(indexes: list[dict[str, Any]]) -> list[dict[str, Any]]:

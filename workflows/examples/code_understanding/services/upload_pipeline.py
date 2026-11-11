@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from utils.service_utils import create_client
 
@@ -37,7 +37,7 @@ def upload_pipeline(yaml_path: str, pipeline_name: str, namespace: str | None = 
             raise RuntimeError(f"Pipeline '{pipeline_name}' not found after 409") from exc
         version = client.upload_pipeline_version(
             pipeline_package_path=yaml_path,
-            pipeline_version_name=datetime.utcnow().strftime("%Y%m%d%H%M%S"),
+            pipeline_version_name=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
             pipeline_id=items[0].pipeline_id,
         )
         print(f"  Uploaded version id: {version.pipeline_version_id}")

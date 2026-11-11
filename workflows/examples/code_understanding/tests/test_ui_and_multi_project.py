@@ -14,14 +14,161 @@ for _p in (str(_CODE_UNDERSTANDING_DIR), str(_REPO_ROOT), str(_REPO_ROOT / "ui")
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# Provide lightweight module stubs when running in a minimal Python environment without mlflow/requests
+# Provide lightweight module stubs when running in a minimal Python environment without mlflow/requests/fastapi
+import importlib.util
+
 if "requests" not in sys.modules:
-    sys.modules["requests"] = mock.MagicMock()
+    _req_mod = types.ModuleType("requests")
+
+    class _StubSession:
+        def send(self, request, **kwargs):
+            return types.SimpleNamespace(status_code=200)
+
+    _req_mod.Session = _StubSession
+    sys.modules["requests"] = _req_mod
 
 if "mlflow" not in sys.modules:
     _mlflow_mod = mock.MagicMock()
     sys.modules["mlflow"] = _mlflow_mod
     sys.modules["mlflow.tracking"] = _mlflow_mod.tracking
+
+if importlib.util.find_spec("fastapi") is None and "fastapi" not in sys.modules:
+    _fastapi = types.ModuleType("fastapi")
+    _fastapi_cors = types.ModuleType("fastapi.middleware.cors")
+    _fastapi_resp = types.ModuleType("fastapi.responses")
+    _fastapi_static = types.ModuleType("fastapi.staticfiles")
+    _pydantic = types.ModuleType("pydantic")
+    _starlette = types.ModuleType("starlette")
+    _starlette_mw = types.ModuleType("starlette.middleware")
+    _starlette_base = types.ModuleType("starlette.middleware.base")
+
+    class HTTPException(Exception):
+        def __init__(self, status_code: int, detail: str = ""):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class Request:
+        def __init__(self, cookies=None, headers=None, path="/", method="GET"):
+            self.cookies = cookies or {}
+            self.headers = {k.lower(): v for k, v in (headers or {}).items()}
+            self.url = types.SimpleNamespace(path=path)
+            self.method = method
+
+    class Response:
+        def __init__(self):
+            self.headers = {}
+            self.cookies = {}
+
+        def set_cookie(self, key: str, value: str, **kwargs):
+            self.cookies[key] = {"value": value, **kwargs}
+
+    def Query(default=None, **kwargs):
+        return default
+
+    class APIRouter:
+        def __init__(self, prefix: str = "", tags=None):
+            self.prefix = prefix
+            self.routes = []
+
+        def get(self, path: str, **kwargs):
+            def _dec(fn):
+                self.routes.append(("GET", self.prefix + path, fn))
+                return fn
+            return _dec
+
+        def post(self, path: str, **kwargs):
+            def _dec(fn):
+                self.routes.append(("POST", self.prefix + path, fn))
+                return fn
+            return _dec
+
+    class FastAPI(APIRouter):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.middlewares = []
+
+        def add_middleware(self, cls, **kwargs):
+            self.middlewares.append((cls, kwargs))
+
+        def include_router(self, router):
+            self.routes.extend(router.routes)
+
+        def mount(self, *args, **kwargs):
+            pass
+
+    class FileResponse:
+        def __init__(self, path):
+            self.path = path
+            self.headers = {}
+
+    class JSONResponse:
+        def __init__(self, content, status_code: int = 200):
+            self.content = content
+            self.status_code = status_code
+            self.headers = {}
+
+    class _FieldSpec:
+        def __init__(self, default=None, **kwargs):
+            self.default = None if default is Ellipsis else default
+            self.default_factory = kwargs.get("default_factory")
+
+    def Field(default=None, **kwargs):
+        return _FieldSpec(default=default, **kwargs)
+
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in type(self).__dict__.items():
+                if k.startswith("_") or callable(v):
+                    continue
+                if isinstance(v, _FieldSpec):
+                    setattr(self, k, v.default_factory() if v.default_factory else v.default)
+                else:
+                    setattr(self, k, v)
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+        def model_dump(self):
+            out = {}
+            for k, v in self.__dict__.items():
+                if isinstance(v, BaseModel):
+                    out[k] = v.model_dump()
+                elif isinstance(v, list):
+                    out[k] = [x.model_dump() if isinstance(x, BaseModel) else x for x in v]
+                else:
+                    out[k] = v
+            return out
+
+    class BaseHTTPMiddleware:
+        def __init__(self, app=None):
+            self.app = app
+
+    _fastapi.HTTPException = HTTPException
+    _fastapi.Request = Request
+    _fastapi.Response = Response
+    _fastapi.Query = Query
+    _fastapi.APIRouter = APIRouter
+    _fastapi.FastAPI = FastAPI
+    _fastapi_cors.CORSMiddleware = object
+    _fastapi_resp.FileResponse = FileResponse
+    _fastapi_resp.JSONResponse = JSONResponse
+    _fastapi_static.StaticFiles = lambda **kw: kw
+    _pydantic.BaseModel = BaseModel
+    _pydantic.Field = Field
+    _starlette_base.BaseHTTPMiddleware = BaseHTTPMiddleware
+
+    sys.modules.update(
+        {
+            "fastapi": _fastapi,
+            "fastapi.middleware.cors": _fastapi_cors,
+            "fastapi.responses": _fastapi_resp,
+            "fastapi.staticfiles": _fastapi_static,
+            "pydantic": _pydantic,
+            "starlette": _starlette,
+            "starlette.middleware": _starlette_mw,
+            "starlette.middleware.base": _starlette_base,
+        }
+    )
 
 from utils.pipeline_utils import (
     generate_multi_repo_slug,
@@ -82,15 +229,30 @@ class TestMultiProjectAndWorkspaceUtils(unittest.TestCase):
         env_clean = {
             k: v
             for k, v in os.environ.items()
-            if k not in ("PIPELINE_RUN_ID", "_AGENTMESH_PIPELINE_RUN_ID")
+            if k not in ("PIPELINE_RUN_ID", "_AGENTMESH_PIPELINE_RUN_ID", "AUGUR_SERVER_MODE")
         }
         with mock.patch.dict(os.environ, env_clean, clear=True):
             with mock.patch("utils.kubeflow_utils.get_kfp_run_id", return_value=None):
                 self.assertIsNone(get_pipeline_run_id(allow_generate=False))
                 generated = get_pipeline_run_id(allow_generate=True)
                 self.assertIsNotNone(generated)
-                # Subsequent calls without allow_generate still see the cached env var
+                # Subsequent calls without allow_generate still see the cached env var in CLI mode
                 self.assertEqual(get_pipeline_run_id(allow_generate=False), generated)
+
+    def test_get_pipeline_run_id_server_mode_does_not_mutate_environ(self):
+        env_clean = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("PIPELINE_RUN_ID", "_AGENTMESH_PIPELINE_RUN_ID")
+        }
+        env_clean["AUGUR_SERVER_MODE"] = "1"
+        with mock.patch.dict(os.environ, env_clean, clear=True):
+            with mock.patch("utils.kubeflow_utils.get_kfp_run_id", return_value=None):
+                r1 = get_pipeline_run_id(allow_generate=True)
+                r2 = get_pipeline_run_id(allow_generate=True)
+                self.assertNotEqual(r1, r2)
+                self.assertNotIn("_AGENTMESH_PIPELINE_RUN_ID", os.environ)
+                self.assertIsNone(get_pipeline_run_id(allow_generate=False))
 
 
 class TestConcurrentAdhocQueryIsolation(unittest.TestCase):
@@ -100,11 +262,11 @@ class TestConcurrentAdhocQueryIsolation(unittest.TestCase):
         observed_dirs = []
 
         class FakeAnalyzer:
-            def __init__(self, graphrag_source_path, git_slug="", multi_repo=False):
+            def __init__(self, graphrag_source_path, git_slug="", multi_repo=False, token_tracker=None):
                 self.graphrag_source_path = graphrag_source_path
                 self.git_slug = git_slug
                 self.multi_repo = multi_repo
-                self.token_tracker = mock.MagicMock()
+                self.token_tracker = token_tracker or mock.MagicMock()
 
             @staticmethod
             def download_graphrag_directory(download_dir, git_slug=None, multi_repo=False, **kwargs):
@@ -647,6 +809,256 @@ class TestRunStageTracking(unittest.TestCase):
         self.assertIn("run.current_stage", content)
         self.assertIn("refreshActiveRuns", content)
         self.assertIn("syncRunsAutoRefresh", content)
+
+
+class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
+    def test_escape_mlflow_filter_value_and_scoped_session_token_patch(self):
+        import requests
+        from utils.pipeline_utils import (
+            escape_mlflow_filter_value,
+            patch_mlflow_session_forwarded_token,
+        )
+
+        self.assertEqual(escape_mlflow_filter_value(r"a'b\c"), r"a\'b\\c")
+
+        patch_mlflow_session_forwarded_token()
+        sess = requests.Session()
+        req_mlflow = types.SimpleNamespace(
+            url="https://mlflow.demo.svc:8443/api/2.0/mlflow/runs/search",
+            headers={},
+        )
+        req_external = types.SimpleNamespace(
+            url="https://api.github.com/repos/org/repo",
+            headers={},
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "MLFLOW_TRACKING_URI": "https://mlflow.demo.svc:8443",
+                "MLFLOW_TRACKING_TOKEN": "secret-ocp-token",
+            },
+            clear=False,
+        ):
+            sess.send(req_mlflow)
+            sess.send(req_external)
+
+        self.assertEqual(req_mlflow.headers.get("X-Forwarded-Access-Token"), "secret-ocp-token")
+        self.assertNotIn("X-Forwarded-Access-Token", req_external.headers)
+
+    def test_get_kfp_host_preserves_env_host_for_default_namespace_only(self):
+        from utils.service_utils import get_kfp_host
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "KFP_NAMESPACE": "team-a",
+                "KFP_HOST": "https://ds-pipeline-dspa-team-a.apps.cluster.example.com",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                get_kfp_host(),
+                ("https://ds-pipeline-dspa-team-a.apps.cluster.example.com", "team-a"),
+            )
+            self.assertEqual(
+                get_kfp_host("team-a"),
+                ("https://ds-pipeline-dspa-team-a.apps.cluster.example.com", "team-a"),
+            )
+            self.assertEqual(
+                get_kfp_host("team-b"),
+                ("https://ds-pipeline-dspa.team-b.svc.cluster.local:8443", "team-b"),
+            )
+
+    def test_get_active_workspace_ignores_stale_cookie(self):
+        from fastapi import Request
+        from ui.cluster import get_active_workspace
+
+        req = Request(cookies={"cu_workspace": "stale-team"})
+        with mock.patch.dict(os.environ, {"PROJECT_WORKSPACE": ""}, clear=False):
+            self.assertEqual(get_active_workspace(req), "default")
+        with mock.patch.dict(os.environ, {"PROJECT_WORKSPACE": "configured-ws"}, clear=False):
+            self.assertEqual(get_active_workspace(req), "configured-ws")
+
+    def test_adhoc_query_caches_index_by_mlflow_run_id_and_isolates_trackers(self):
+        import shutil
+        import pipelines.base.analysis as base_analysis
+
+        downloads = []
+        seen_trackers = []
+
+        class CachingFakeAnalyzer:
+            def __init__(self, graphrag_source_path, git_slug="", multi_repo=False, token_tracker=None):
+                self.graphrag_source_path = graphrag_source_path
+                self.git_slug = git_slug
+                self.token_tracker = token_tracker or mock.MagicMock()
+                seen_trackers.append(self.token_tracker)
+
+            @staticmethod
+            def download_graphrag_directory(download_dir, git_slug=None, multi_repo=False, **kwargs):
+                downloads.append(download_dir)
+
+            async def query_with_llm(self, prompt, **kwargs):
+                return "cached answer"
+
+        fake_graphrag_utils = types.ModuleType("utils.graphrag_utils")
+        fake_graphrag_utils.DependencyAnalyzer = CachingFakeAnalyzer
+
+        with base_analysis._INDEX_CACHE_LOCK:
+            for entry in base_analysis._INDEX_CACHE.values():
+                shutil.rmtree(entry["path"], ignore_errors=True)
+            base_analysis._INDEX_CACHE.clear()
+
+        try:
+            with mock.patch.dict(sys.modules, {"utils.graphrag_utils": fake_graphrag_utils}):
+                with mock.patch("loaders.default_asset_loader.DefaultAssetLoader"):
+                    with mock.patch.object(base_analysis, "_resolve_mlflow_index_run_id", return_value="idx-run-1"):
+                        base_analysis.run_adhoc_query_pipeline(question="Q1", git_repo="https://github.com/o/r.git")
+                        base_analysis.run_adhoc_query_pipeline(question="Q2", git_repo="https://github.com/o/r.git")
+                    with mock.patch.object(base_analysis, "_resolve_mlflow_index_run_id", return_value="idx-run-2"):
+                        base_analysis.run_adhoc_query_pipeline(question="Q3", git_repo="https://github.com/o/r.git")
+
+            # Same run_id downloaded once; new run_id triggered fresh download
+            self.assertEqual(len(downloads), 2)
+            self.assertNotEqual(downloads[0], downloads[1])
+            self.assertIsNot(seen_trackers[0], seen_trackers[1])
+        finally:
+            with base_analysis._INDEX_CACHE_LOCK:
+                for entry in base_analysis._INDEX_CACHE.values():
+                    shutil.rmtree(entry["path"], ignore_errors=True)
+                base_analysis._INDEX_CACHE.clear()
+
+    def test_security_middleware_and_openshift_token_verification(self):
+        import asyncio
+        import json
+        from fastapi import Request, Response
+        import ui.main as ui_main
+
+        with ui_main._TOKEN_CACHE_LOCK:
+            ui_main._TOKEN_CACHE.clear()
+
+        mw = ui_main.SecurityMiddleware()
+
+        async def _ok_next(_req):
+            r = Response()
+            r.status_code = 200
+            return r
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUIRE_OPENSHIFT_AUTH": "true",
+                "OPENSHIFT_CONSOLE_URL": "https://console-openshift-console.apps.example.com/",
+            },
+            clear=False,
+        ):
+            # Missing token on /api/status -> 401
+            unauth_resp = asyncio.run(mw.dispatch(Request(path="/api/status"), _ok_next))
+            self.assertEqual(unauth_resp.status_code, 401)
+            self.assertEqual(
+                unauth_resp.headers["Content-Security-Policy"],
+                "frame-ancestors 'self' https://console-openshift-console.apps.example.com",
+            )
+            self.assertNotIn("X-Frame-Options", unauth_resp.headers)
+
+            # /api/health remains unauthenticated for kubelet probes
+            health_resp = asyncio.run(mw.dispatch(Request(path="/api/health"), _ok_next))
+            self.assertEqual(health_resp.status_code, 200)
+
+            # Valid bearer token verified once against k8s API and cached on repeat call
+            fake_http_resp = mock.MagicMock()
+            fake_http_resp.__enter__.return_value = fake_http_resp
+            fake_http_resp.status = 200
+            fake_http_resp.read.return_value = json.dumps({"metadata": {"name": "alice"}}).encode("utf-8")
+
+            with mock.patch("urllib.request.urlopen", return_value=fake_http_resp) as mock_urlopen:
+                req_authed = Request(
+                    path="/api/status",
+                    headers={"Authorization": "Bearer valid-ocp-token"},
+                )
+                r1 = asyncio.run(mw.dispatch(req_authed, _ok_next))
+                r2 = asyncio.run(mw.dispatch(req_authed, _ok_next))
+                self.assertEqual(r1.status_code, 200)
+                self.assertEqual(r2.status_code, 200)
+                self.assertEqual(mock_urlopen.call_count, 1)
+
+    def test_fastapi_routes_namespace_indexes_queries_repositories_and_pipelines(self):
+        from fastapi import HTTPException, Request, Response
+        import api.pipelines as api_pipelines
+        import api.queries as api_queries
+        import api.repositories as api_repositories
+        import ui.main as ui_main
+
+        # 1. Namespace cookie + validation
+        resp = Response()
+        out = ui_main.api_set_namespace(ui_main.SelectNamespaceRequest(namespace=" team-ns "), resp)
+        self.assertEqual(out, {"active": "team-ns"})
+        with self.assertRaises(HTTPException) as ctx:
+            ui_main.api_set_namespace(ui_main.SelectNamespaceRequest(namespace="   "), Response())
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        # 2. /api/indexes returns repos + default_key in a single response
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        with mock.patch.object(
+            ui_main,
+            "list_indexes_and_repos",
+            return_value=(
+                [{"git_repo": "https://github.com/o/r.git", "git_branch": "main", "git_slug": "o-r-main", "indexed": True, "multi_repo": False}],
+                [{"git_repo": "https://github.com/o/r.git", "git_branch": "main"}],
+            ),
+        ):
+            idx_payload = ui_main.api_indexes(req)
+        self.assertEqual(idx_payload["namespace"], "team-ns")
+        self.assertEqual(idx_payload["default_key"], "https://github.com/o/r.git|main")
+        self.assertEqual(len(idx_payload["queryable"]), 1)
+
+        # 3. /api/v2/queries executes synchronously and caps _QUERY_RESULTS at 50
+        with api_queries._QUERY_RESULTS_LOCK:
+            api_queries._QUERY_RESULTS.clear()
+        with mock.patch.object(api_queries, "execute_adhoc_query", return_value="GraphRAG answer") as mock_q:
+            q_resp = api_queries.post_adhoc_query(
+                api_queries.AdhocQueryRequest(question="What services exist?", git_repo="https://github.com/o/r.git"),
+                req,
+            )
+            self.assertEqual(q_resp.answer, "GraphRAG answer")
+            mock_q.assert_called_once()
+            self.assertEqual(mock_q.call_args.kwargs["namespace"], "team-ns")
+            for i in range(60):
+                api_queries._store_query_result(f"qid-{i}", {"query_id": f"qid-{i}", "status": "succeeded"})
+        self.assertEqual(len(api_queries._QUERY_RESULTS), api_queries._QUERY_RESULTS_MAX)
+
+        # 4. /api/v2/repositories scopes reads/writes to active namespace
+        with mock.patch.object(
+            api_repositories,
+            "fetch_catalog_repos",
+            return_value=[{"git_repo": "https://github.com/o/r.git", "git_branch": "dev"}],
+        ) as mock_fetch, mock.patch.object(api_repositories, "_log_repos") as mock_log:
+            updated = api_repositories.post_repositories(
+                api_repositories.UpdateReposRequest(
+                    repos=[api_repositories.RepoItem(git_repo="https://github.com/o/r.git", git_branch="dev")]
+                ),
+                req,
+            )
+            mock_log.assert_called_once_with(
+                [{"git_repo": "https://github.com/o/r.git", "git_branch": "dev"}],
+                namespace="team-ns",
+                workspace="default",
+            )
+            mock_fetch.assert_called_once_with(namespace="team-ns", workspace="default")
+            self.assertEqual(updated[0].git_branch, "dev")
+
+        # 5. /api/v2/pipelines validates empty payload and maps UI status labels
+        with self.assertRaises(HTTPException) as p_ctx:
+            api_pipelines.trigger_pipeline(api_pipelines.TriggerPipelineRequest(), req)
+        self.assertEqual(p_ctx.exception.status_code, 422)
+
+        with mock.patch.object(
+            api_pipelines,
+            "list_runs",
+            return_value=[{"run_id": "r-1", "run_name": "run-1", "status": "IN_PROGRESS", "current_stage": "Analysis"}],
+        ):
+            runs_env = api_pipelines.get_recent_runs_envelope(req, limit=5)
+        self.assertEqual(runs_env["runs"][0]["status"], "Running")
+        self.assertEqual(runs_env["runs"][0]["current_stage"], "Analysis")
 
 
 if __name__ == "__main__":

@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 import uuid
+from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.query_service import run_adhoc_query
+_CODE_UNDERSTANDING_DIR = str(
+    Path(__file__).resolve().parent.parent / "workflows" / "examples" / "code_understanding"
+)
+if _CODE_UNDERSTANDING_DIR not in sys.path:
+    sys.path.insert(0, _CODE_UNDERSTANDING_DIR)
+
+from services.run_adhoc_query import execute_adhoc_query  # noqa: E402
 try:
     from ui.cluster import get_active_namespace, get_active_workspace
 except ImportError:
@@ -19,7 +29,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/queries", tags=["queries"])
 
-_QUERY_RESULTS: dict[str, dict[str, Any]] = {}
+# shortcut: in-memory 50-entry query cache, move to shared store if multi-replica async polling is added
+_QUERY_RESULTS_MAX = 50
+_QUERY_RESULTS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_QUERY_RESULTS_LOCK = threading.Lock()
+
+
+def _store_query_result(query_id: str, payload: dict[str, Any]) -> None:
+    with _QUERY_RESULTS_LOCK:
+        _QUERY_RESULTS[query_id] = payload
+        _QUERY_RESULTS.move_to_end(query_id)
+        while len(_QUERY_RESULTS) > _QUERY_RESULTS_MAX:
+            _QUERY_RESULTS.popitem(last=False)
 
 
 class AdhocQueryRequest(BaseModel):
@@ -56,7 +77,7 @@ def post_adhoc_query(body: AdhocQueryRequest, request: Request) -> AdhocQueryRes
     ws = get_active_workspace(request)
     query_id = str(uuid.uuid4())
     try:
-        answer = run_adhoc_query(
+        answer = execute_adhoc_query(
             question=body.question,
             retry_count=body.retry_count,
             use_global=body.use_global,
@@ -70,11 +91,10 @@ def post_adhoc_query(body: AdhocQueryRequest, request: Request) -> AdhocQueryRes
         )
     except Exception as exc:
         logger.exception("Ad-hoc query failed")
-        _QUERY_RESULTS[query_id] = {
-            "query_id": query_id,
-            "status": "failed",
-            "error": str(exc),
-        }
+        _store_query_result(
+            query_id,
+            {"query_id": query_id, "status": "failed", "error": str(exc)},
+        )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     payload = {
@@ -89,14 +109,15 @@ def post_adhoc_query(body: AdhocQueryRequest, request: Request) -> AdhocQueryRes
         "use_global": body.use_global,
         "project_slug": body.project_slug,
     }
-    _QUERY_RESULTS[query_id] = payload
+    _store_query_result(query_id, payload)
     return AdhocQueryResponse(**payload)
 
 
 @router.get("/{query_id}")
 def get_adhoc_query_status(query_id: str) -> dict[str, Any]:
     """Return status/result of a previously submitted ad-hoc query."""
-    item = _QUERY_RESULTS.get(query_id)
+    with _QUERY_RESULTS_LOCK:
+        item = _QUERY_RESULTS.get(query_id)
     if not item:
         raise HTTPException(status_code=404, detail=f"Query '{query_id}' not found")
     return item

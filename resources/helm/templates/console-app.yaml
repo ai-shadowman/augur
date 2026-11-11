@@ -56,6 +56,10 @@ spec:
               value: "1"
             - name: PIP_NO_INDEX
               value: "1"
+            {{- if .Values.console.route.enabled }}
+            - name: REQUIRE_OPENSHIFT_AUTH
+              value: "true"
+            {{- end }}
             {{- if not .Values.tls.enableVerification }}
             - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
               value: "true"
@@ -100,6 +104,7 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+{{- if .Values.console.route.enabled }}
 ---
 kind: Route
 apiVersion: route.openshift.io/v1
@@ -124,4 +129,5 @@ spec:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
+{{- end }}
 {{- end }}
