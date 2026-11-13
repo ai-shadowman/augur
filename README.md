@@ -86,7 +86,15 @@ AUGUR includes an automated unit testing suite across all telemetry and pipeline
 python -m unittest discover -s workflows/examples/code_understanding/tests
 ```
 
+### Code Understanding Console UI
+AUGUR includes a FastAPI web console and OpenShift Dynamic Console Plugin for managing repositories, triggering single- and multi-repo pipelines, tracking live pipeline stages, viewing migration/evaluation reports, and chatting with GraphRAG indexes:
+```bash
+make oc-deploy-console-plugin
+```
+For full architecture, build, and deployment options, see 👉 **[README_CONSOLE.md](README_CONSOLE.md)**.
+
 ## Documentation & Guides
+- 👉 **[README_CONSOLE.md](README_CONSOLE.md)**: Code Understanding Console UI & OpenShift Console Plugin overview, build targets, and deployment guide.
 - 👉 **[README_TRACING.md](README_TRACING.md)**: Distributed tracing setup (required OpenShift operators, `make deploy-otel`, and querying traces by `kfp.run_id` in OpenShift **Observe → Traces** and **MLflow**).
 - 👉 **[GUILDLLM_README.MD](GUILDLLM_README.MD)**: GuideLLM dynamic concurrency benchmarking (`make benchmark-llm` standalone OpenShift job and `benchmark_llm_op` pre-pipeline auto-tuning).
 - 👉 **[README_CODE_METRICS.md](README_CODE_METRICS.md)**: Detailed guide for `CodeMetricsTracker` (files, lines of code, comments, blanks).
