@@ -1,9 +1,21 @@
 [
     {
+        "git_repo": "https://github.com/kfrankli/northpolesouthern-timetable",
+        "git_branch": "main"
+    },
+    {
+        "git_repo": "https://github.com/kfrankli/northpolesouthern-train",
+        "git_branch": "main"
+    },
+	{
         "git_repo": "https://github.com/agapebondservant/tic-tac-toe-sample",
         "git_branch": "main"
     },
     {
+        "git_repo": "https://github.com/dbrletic/cron-job-creator",
+        "git_branch": "master"
+    },
+	{
         "git_repo": "https://github.com/agapebondservant/spacefx-sample-javafx",
         "git_branch": "main"
     },
@@ -39,4 +51,5 @@
         "git_repo": "https://github.com/Tzoop/MemoryGame",
         "git_branch": "master"
     }
+	
 ]
