@@ -1012,7 +1012,7 @@
       node.replaceWith(box);
     }
 
-    function runMermaid(container) {
+    async function runMermaid(container) {
       if (!container) return;
       const nodes = Array.from(container.querySelectorAll("pre.mermaid")).filter(n => !n.dataset.processed);
       if (!nodes.length) return;
@@ -1025,46 +1025,44 @@
       }
       // Render one diagram per event-loop tick so a slow/broken diagram cannot
       // freeze the UI or block other diagrams from rendering.
-      (async () => {
-        for (const node of nodes) {
-          if (node.dataset.processed) continue;
-          node.dataset.processed = "true";
-          const originalSrc = (node.dataset.mermaidSrc || node.textContent || "").trim();
-          node.dataset.mermaidSrc = originalSrc;
-          if (!originalSrc) {
-            renderMermaidError(node, new Error("Empty Mermaid diagram"), "");
-            continue;
-          }
-          await new Promise(resolve => setTimeout(resolve, 16));
-          const renderId = `cu-mermaid-${++_mermaidCounter}-${Date.now()}`;
-          try {
-            const timeout = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Mermaid rendering timed out after 5s")), 5000)
-            );
-            const rendered = await Promise.race([
-              mermaid.render(renderId, originalSrc),
-              timeout,
-            ]);
-            if (rendered && rendered.svg) {
-              const div = document.createElement("div");
-              div.className = "cu-mermaid-diagram";
-              div.innerHTML = rendered.svg;
-              if (typeof rendered.bindFunctions === "function") {
-                rendered.bindFunctions(div);
-              }
-              node.replaceWith(div);
-            } else {
-              renderMermaidError(node, new Error("Mermaid returned empty diagram output"), originalSrc);
-            }
-          } catch (e) {
-            document.getElementById(`d${renderId}`)?.remove();
-            document.getElementById(`i${renderId}`)?.remove();
-            document.getElementById(renderId)?.remove();
-            console.error("Mermaid render error:", e);
-            renderMermaidError(node, e, originalSrc);
-          }
+      for (const node of nodes) {
+        if (node.dataset.processed) continue;
+        node.dataset.processed = "true";
+        const originalSrc = (node.dataset.mermaidSrc || node.textContent || "").trim();
+        node.dataset.mermaidSrc = originalSrc;
+        if (!originalSrc) {
+          renderMermaidError(node, new Error("Empty Mermaid diagram"), "");
+          continue;
         }
-      })();
+        await new Promise(resolve => setTimeout(resolve, 16));
+        const renderId = `cu-mermaid-${++_mermaidCounter}-${Date.now()}`;
+        try {
+          const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Mermaid rendering timed out after 5s")), 5000)
+          );
+          const rendered = await Promise.race([
+            mermaid.render(renderId, originalSrc),
+            timeout,
+          ]);
+          if (rendered && rendered.svg) {
+            const div = document.createElement("div");
+            div.className = "cu-mermaid-diagram";
+            div.innerHTML = rendered.svg;
+            if (typeof rendered.bindFunctions === "function") {
+              rendered.bindFunctions(div);
+            }
+            node.replaceWith(div);
+          } else {
+            renderMermaidError(node, new Error("Mermaid returned empty diagram output"), originalSrc);
+          }
+        } catch (e) {
+          document.getElementById(`d${renderId}`)?.remove();
+          document.getElementById(`i${renderId}`)?.remove();
+          document.getElementById(renderId)?.remove();
+          console.error("Mermaid render error:", e);
+          renderMermaidError(node, e, originalSrc);
+        }
+      }
     }
 
     const state = {
@@ -1407,24 +1405,145 @@
       return `/api/v2/pipelines/runs/${runId}${query ? `?${query}` : ""}`;
     }
 
-    async function openReport(runId, runName, gitRepo, gitBranch, projectSlug) {
-      const snap = await api(buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug));
-      $("report-viewer-title").textContent = gitRepo
-        ? `${shortName(gitRepo).replace(/\.git$/, "")} @ ${gitBranch}`
+    function formatReportHeading(gitRepo, gitBranch, projectSlug) {
+      return gitRepo
+        ? `${shortName(gitRepo).replace(/\.git$/, "")} @ ${gitBranch || "main"}`
         : projectSlug
           ? `Combined repos (${projectSlug})`
           : "Combined repos";
+    }
+
+    async function downloadReportAsPdf(markdown, baseFilename, title = "", subtitle = "") {
+      const staging = document.createElement("div");
+      staging.className = "cu-md";
+      staging.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;opacity:0;pointer-events:none";
+      document.body.appendChild(staging);
+      let renderedHtml = "";
+      try {
+        try {
+          staging.innerHTML = renderMarkdown(markdown);
+          await runMermaid(staging);
+        } catch (err) {
+          staging.innerHTML = `<pre><code>${esc(markdown)}</code></pre>`;
+        }
+        renderedHtml = staging.innerHTML;
+      } finally {
+        staging.remove();
+      }
+
+      document.getElementById("cu-pdf-print-frame")?.remove();
+      const frame = document.createElement("iframe");
+      frame.id = "cu-pdf-print-frame";
+      frame.setAttribute("aria-hidden", "true");
+      frame.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0";
+      document.body.appendChild(frame);
+
+      const safeTitle = String(baseFilename || "analysis_report").replace(/\.pdf$/i, "");
+      const headerHtml = (title || subtitle)
+        ? `<header class="pdf-meta">` +
+            (title ? `<div class="pdf-meta-title">${esc(title)}</div>` : "") +
+            (subtitle ? `<div class="pdf-meta-sub">${esc(subtitle)}</div>` : "") +
+          `</header>`
+        : "";
+
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      doc.open();
+      doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(safeTitle)}</title><style>
+        @page { size: auto; margin: 14mm 14mm 16mm; }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        html, body { margin: 0; padding: 0; background: #fff; color: #151515; font: 10.5pt/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .pdf-meta { border-bottom: 2px solid #ee0000; padding-bottom: 6pt; margin-bottom: 14pt; }
+        .pdf-meta-title { font-size: 14pt; font-weight: 700; color: #151515; }
+        .pdf-meta-sub { font-size: 9.5pt; color: #6a6e73; margin-top: 2pt; }
+        .cu-md { line-height: 1.55; overflow-wrap: anywhere; }
+        .cu-md > *:first-child { margin-top: 0; }
+        h1, h2, h3, h4, h5, h6 { color: #151515; font-weight: 600; line-height: 1.3; margin: 14pt 0 5pt; break-after: avoid; page-break-after: avoid; }
+        h1 { font-size: 15.5pt; }
+        h2 { font-size: 13pt; border-bottom: 1px solid #d2d2d2; padding-bottom: 3pt; }
+        h3 { font-size: 11.5pt; }
+        h4, h5, h6 { font-size: 10.5pt; }
+        p { margin: 5pt 0; }
+        ul, ol { margin: 4pt 0 8pt; padding-left: 18pt; }
+        li { margin: 2.5pt 0; }
+        a { color: #0066cc; text-decoration: underline; }
+        hr { border: 0; border-top: 1px solid #d2d2d2; margin: 12pt 0; }
+        code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 8.8pt; background: #f0f0f0; padding: 1pt 3pt; border-radius: 3px; }
+        pre { background: #f6f8fa; color: #151515; border: 1px solid #d2d2d2; border-radius: 4px; padding: 8pt 10pt; font-size: 8.5pt; line-height: 1.4; white-space: pre-wrap; word-break: break-word; margin: 8pt 0; }
+        pre code { background: none; padding: 0; font-size: inherit; }
+        .cu-md-table { border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 8.8pt; word-break: break-word; }
+        .cu-md-table thead { display: table-header-group; }
+        .cu-md-table tr { break-inside: avoid; page-break-inside: avoid; }
+        .cu-md-table th, .cu-md-table td { border: 1px solid #d2d2d2; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+        .cu-md-table th { background: #f0f4f8; font-weight: 600; }
+        .cu-md-table tr:nth-child(even) td { background: #f9fbfd; }
+        .cu-mermaid-diagram { margin: 10pt 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+        .cu-mermaid-diagram svg { max-width: 100% !important; height: auto !important; }
+        .cu-diagram-err-box { margin: 8pt 0; border: 1px solid #f0ab00; border-left: 4px solid #f0ab00; background: #fffbe6; padding: 8pt 10pt; break-inside: avoid; page-break-inside: avoid; }
+        .cu-diagram-err-header { color: #8a5d00; font-weight: 700; font-size: 9.5pt; margin-bottom: 3pt; }
+        .cu-diagram-err-msg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 8.5pt; white-space: pre-wrap; }
+      </style></head><body>${headerHtml}<article class="cu-md">${renderedHtml}</article></body></html>`);
+      doc.close();
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const prevTitle = document.title;
+      document.title = safeTitle;
+      let prevTopTitle = null;
+      try {
+        if (window.top && window.top !== window && window.top.document) {
+          prevTopTitle = window.top.document.title;
+          window.top.document.title = safeTitle;
+        }
+      } catch {}
+      const restoreTitles = () => {
+        if (document.title === safeTitle) document.title = prevTitle;
+        if (prevTopTitle !== null) {
+          try {
+            if (window.top.document.title === safeTitle) window.top.document.title = prevTopTitle;
+          } catch {}
+        }
+      };
+      const win = frame.contentWindow;
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        restoreTitles();
+        setTimeout(() => frame.remove(), 500);
+      };
+      win.addEventListener("afterprint", cleanup, { once: true });
+      win.focus();
+      win.print();
+      setTimeout(restoreTitles, 2000);
+    }
+
+    async function openReport(runId, runName, gitRepo, gitBranch, projectSlug) {
+      const snap = await api(buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug));
+      const reportHeading = formatReportHeading(gitRepo, gitBranch, projectSlug);
+      $("report-viewer-title").textContent = reportHeading;
       $("report-viewer-subtitle").textContent = runName;
 
       const reports = { analysis: snap.analysis_report, evaluation: snap.evaluation_report };
 
       function appendReportDl(rawContent, filename) {
-        const mime = filename.endsWith(".csv") ? "text/csv" : "text/markdown";
+        const isPdf = filename.endsWith(".pdf");
         const footer = document.createElement("div");
         footer.className = "cu-bubble-footer";
-        footer.innerHTML = `<button class="cu-bubble-dl-btn" title="Download report" aria-label="Download report">${iconDownload}</button>`;
-        footer.querySelector("button").onclick = () => {
-          const blob = new Blob([rawContent], { type: mime });
+        const label = isPdf ? "Download report as PDF" : "Download report";
+        footer.innerHTML = `<button class="cu-bubble-dl-btn" title="${label}" aria-label="${label}">${iconDownload}</button>`;
+        const dlBtn = footer.querySelector("button");
+        dlBtn.onclick = async () => {
+          if (isPdf) {
+            dlBtn.disabled = true;
+            try {
+              await downloadReportAsPdf(rawContent, filename, reportHeading, runName);
+            } catch (e) {
+              banner(String(e.message || e), true);
+            } finally {
+              dlBtn.disabled = false;
+            }
+            return;
+          }
+          const blob = new Blob([rawContent], { type: "text/csv" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -1570,7 +1689,7 @@
                 `</div>` +
                 `<pre><code>${esc(content)}</code></pre>`;
             }
-            appendReportDl(content, `${runName || "report"}_analysis_report.md`);
+            appendReportDl(content, `${runName || "report"}_analysis_report.pdf`);
           }
         }
       }
@@ -1609,7 +1728,7 @@
       const actions = succeeded
         ? `<div class="cu-run-list-actions">
             <button type="button" class="cu-run-expand" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-project-slug="${esc(projectSlug)}" title="View analysis report">${iconExpand}</button>
-            <button type="button" class="cu-run-download" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" title="Download analysis report">${iconDownload}</button>
+            <button type="button" class="cu-run-download" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-project-slug="${esc(projectSlug)}" title="Download analysis report">${iconDownload}</button>
           </div>`
         : "";
       const repoList = storedRepos && storedRepos.length
@@ -1732,16 +1851,27 @@
       root.querySelectorAll(".cu-run-download").forEach((btn) => {
         btn.addEventListener("click", async () => {
           try {
-            const snap = await api(`/api/v2/pipelines/runs/${btn.dataset.runId}`);
+            const snap = await api(
+              buildRunDetailUrl(
+                btn.dataset.runId,
+                btn.dataset.gitRepo || "",
+                btn.dataset.gitBranch || "",
+                btn.dataset.projectSlug || "",
+              )
+            );
             const report = snap.analysis_report;
             if (!report) { banner("No analysis report available.", true); return; }
-            const blob = new Blob([report], { type: "text/markdown" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `${btn.dataset.runName || btn.dataset.runId}_analysis_report.md`;
-            a.click();
-            URL.revokeObjectURL(url);
+            const heading = formatReportHeading(
+              btn.dataset.gitRepo || "",
+              btn.dataset.gitBranch || "",
+              btn.dataset.projectSlug || "",
+            );
+            await downloadReportAsPdf(
+              report,
+              `${btn.dataset.runName || btn.dataset.runId}_analysis_report.pdf`,
+              heading,
+              btn.dataset.runName || btn.dataset.runId,
+            );
           } catch (e) {
             banner(String(e.message || e), true);
           }
@@ -2011,6 +2141,9 @@
         $("run-download-report").onclick = async function() {
           const btn = this;
           if (!btn.dataset.runId) return;
+          const origContent = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Download Report`;
           try {
             const snap = await api(
               buildRunDetailUrl(
@@ -2022,15 +2155,22 @@
             );
             const report = snap.analysis_report;
             if (!report) { banner("No analysis report available.", true); return; }
-            const blob = new Blob([report], { type: "text/markdown" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `${btn.dataset.runName || btn.dataset.runId}_analysis_report.md`;
-            a.click();
-            URL.revokeObjectURL(url);
+            const heading = formatReportHeading(
+              btn.dataset.gitRepo || "",
+              btn.dataset.gitBranch || "",
+              btn.dataset.projectSlug || "",
+            );
+            await downloadReportAsPdf(
+              report,
+              `${btn.dataset.runName || btn.dataset.runId}_analysis_report.pdf`,
+              heading,
+              btn.dataset.runName || btn.dataset.runId,
+            );
           } catch (e) {
             banner(String(e.message || e), true);
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = origContent;
           }
         };
         $("selection-note").classList.remove("hidden");

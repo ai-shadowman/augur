@@ -19,7 +19,7 @@ The console consists of two components that work together:
 * **Single-Repo & Multi-Repo Pipeline Execution**: Select **1** repository to run `single_repo_pipeline`, or **2+** repositories (with an optional project slug) to run cross-repository comparative analysis via `multi_repo_pipeline`.
 * **Live Pipeline Stage Tracking**: Automatically polls active (`Pending` / `Running`) KFP runs and displays the current stage (`Data Generation (LLM Benchmark)`, `Data Generation (Cloning Repo)`, `Data Generation`, `GraphRAG Indexing`, `Evaluation`, `Analysis`) directly under the repository URL.
 * **Migration & Evaluation Report Viewer**:
-  * **Analysis tab**: Renders Markdown migration reports (`migration_report_*.md`) with embedded Mermaid architecture/dependency diagrams and one-click Markdown download.
+  * **Analysis tab**: Renders Markdown migration reports (`migration_report_*.md`) with embedded Mermaid architecture/dependency diagrams and PDF export (`Save as PDF`).
   * **Analysis Evaluation tab**: Displays per-metric judge averages (`1–5`), pass rates (`>= 3` and `>= 4`), and an interactive, sortable CSV table highlighting failing rows.
 * **Re-run Workflows**: Re-run a completed pipeline either **from scratch** (full Data Generation + Indexing + Analysis) or **report only** (re-runs Analysis against the existing GraphRAG index).
 * **Interactive Code Chat**: Slide-out chat panel (`POST /api/v2/queries`) that queries any single-repo or multi-repo GraphRAG knowledge graph in MLflow and caches downloaded indexes locally per pod for fast follow-up questions.
