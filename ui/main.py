@@ -178,6 +178,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = _frame_ancestors_csp()
+        if path in ("/", "/static/index.html"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
 
@@ -201,7 +203,10 @@ class SelectNamespaceRequest(BaseModel):
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/healthz", tags=["meta"])

@@ -1949,8 +1949,8 @@
       }
     }
 
-    function syncRunsAutoRefresh() {
-      const active = hasInProgressRuns(state.allRuns);
+    function syncRunsAutoRefresh(forceActive = false) {
+      const active = forceActive || hasInProgressRuns(state.allRuns);
       if (active && !state.runsRefreshTimer) {
         state.runsRefreshTimer = setInterval(refreshActiveRuns, 8000);
       } else if (!active && state.runsRefreshTimer) {
@@ -1970,7 +1970,7 @@
         const [status, indexes, v2runs, nsData] = await Promise.all([
           api("/api/status"),
           api("/api/indexes"),
-          api("/api/v2/pipelines/runs").catch(() => ({ runs: [] })),
+          api("/api/v2/pipelines/runs").catch(() => null),
           api("/api/namespaces").catch(() => ({ namespaces: [], current: "" })),
         ]);
         $("status").className = "cu-status" + (status.ok ? " hidden" : " warn");
@@ -1990,7 +1990,7 @@
         state.defaultKey = indexes.default_key;
         state.indexes = indexes.indexes || [];
         state.queryable = indexes.queryable || [];
-        state.allRuns = [...(v2runs.runs || [])];
+        if (v2runs) state.allRuns = [...(v2runs.runs || [])];
         renderRunPage(state.runPage);
         syncRunsAutoRefresh();
         $("run-view-report").onclick = async function() {
@@ -2098,7 +2098,15 @@
               status: `${snap.status}${stagePart} · ${runId}`,
             });
           }
-          load();
+          await load();
+          if (snap.status === "running" || snap.status === "pending") {
+            const matched = state.allRuns.find((r) => r.run_id === runId);
+            if (matched && snap.current_stage && matched.current_stage !== snap.current_stage) {
+              matched.current_stage = snap.current_stage;
+              renderRunPage(state.runPage);
+            }
+            syncRunsAutoRefresh(true);
+          }
           if (["succeeded", "skipped", "failed", "cancelled", "running"].includes(snap.status)) {
             clearInterval(state.poll);
             state.poll = null;

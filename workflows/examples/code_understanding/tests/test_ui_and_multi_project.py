@@ -98,9 +98,9 @@ if importlib.util.find_spec("fastapi") is None and "fastapi" not in sys.modules:
             pass
 
     class FileResponse:
-        def __init__(self, path):
+        def __init__(self, path, headers=None, **kwargs):
             self.path = path
-            self.headers = {}
+            self.headers = dict(headers or {})
 
     class JSONResponse:
         def __init__(self, content, status_code: int = 200):
@@ -988,7 +988,12 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         import api.repositories as api_repositories
         import ui.main as ui_main
 
-        # 1. Namespace cookie + validation
+        # 1. Index no-cache header + Namespace cookie + validation
+        idx_file_resp = ui_main.index()
+        self.assertEqual(
+            idx_file_resp.headers.get("Cache-Control"),
+            "no-cache, no-store, must-revalidate",
+        )
         resp = Response()
         out = ui_main.api_set_namespace(ui_main.SelectNamespaceRequest(namespace=" team-ns "), resp)
         self.assertEqual(out, {"active": "team-ns"})
