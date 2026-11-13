@@ -19,6 +19,14 @@ $(info ==> Using CLUSTER_DOMAIN: $(CLUSTER_DOMAIN))
 PIPELINE_GIT_REPO   	?=
 PIPELINE_GIT_BRANCH 	?=
 PIPELINE_GIT_REPO_LIST	?=
+PIPELINE_RUN_ID     	?=
+PROJECT_SLUG        	?=
+PROJECT_WORKSPACE   	?=
+CONSOLE_APP_IMAGE_NAME    ?= console-app
+CONSOLE_PLUGIN_IMAGE_NAME ?= console-plugin
+CONSOLE_IMAGE_TAG         ?= latest
+CONSOLE_ROUTE_ENABLED     ?= false
+CONSOLE_ROUTE_HOST        ?=
 
 install:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -136,6 +144,32 @@ build-images:
 	echo "==> Pushing pipeline-tools image..." && \
 	podman push "$$TOOLS_IMG"
 
+build-console-app-image:
+	@set -a && . $(ENV_FILE) && set +a && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Building console application image: $$CONSOLE_IMG..." && \
+	podman build -f ui/Dockerfile -t "$$CONSOLE_IMG" . && \
+	echo "==> Pushing console application image: $$CONSOLE_IMG..." && \
+	podman push "$$CONSOLE_IMG"
+
+build-console-plugin-image:
+	@set -a && . $(ENV_FILE) && set +a && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Building console plugin image: $$PLUGIN_IMG..." && \
+	podman build -f console-plugin/Dockerfile -t "$$PLUGIN_IMG" console-plugin
+
+push-console-plugin-image:
+	@set -a && . $(ENV_FILE) && set +a && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
+	podman push "$$PLUGIN_IMG"
+
+build-push-all:
+	$(MAKE) build-images
+	$(MAKE) build-console-app-image
+	$(MAKE) build-console-plugin-image
+	$(MAKE) push-console-plugin-image
+
 oc-build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
 	echo "==> Kicking off OpenShift BuildConfigs in namespace $$KFP_NAMESPACE..." && \
@@ -212,6 +246,8 @@ run-adhoc-query:
 		--set-string adhocQuery.gitRepo="$(GIT_REPO)" \
 		--set-string adhocQuery.gitBranch="$(GIT_BRANCH)" \
 		--set-string adhocQuery.retryCount="$${RETRY_COUNT:-3}" \
+		--set-string adhocQuery.pipelineRunId="$(PIPELINE_RUN_ID)" \
+		--set-string adhocQuery.projectSlug="$(PROJECT_SLUG)" \
 		--set pipelineTools.image.registry="$$KFP_IMAGE_REGISTRY" \
 		--set pipelineTools.image.name="$$KFP_PIPELINE_TOOLS_IMAGE_NAME" \
 		--set pipelineTools.image.tag="$$KFP_PIPELINE_TOOLS_IMAGE_TAG" \
@@ -229,11 +265,14 @@ run-adhoc-query:
 
 run-pipelines:
 	@set -a && . $(ENV_FILE) && set +a && \
+	JOB_ID="$$(date +%Y%m%d%H%M%S)$$(printf '%04x' $$((RANDOM)))" && \
 	\
 	[ -n "$(PIPELINE_GIT_REPO)" ]   && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge -p '{"stringData":{"GIT_REPO":"$(PIPELINE_GIT_REPO)"}}' || true && \
 	[ -n "$(PIPELINE_GIT_BRANCH)" ] && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
 		--type=merge -p '{"stringData":{"GIT_BRANCH":"$(PIPELINE_GIT_BRANCH)"}}' || true && \
+	[ -n "$(PIPELINE_RUN_ID)" ]     && oc patch secret code-understanding-env -n $$KFP_NAMESPACE \
+		--type=merge -p '{"stringData":{"PIPELINE_RUN_ID":"$(PIPELINE_RUN_ID)"}}' || true && \
 	REPO_LIST="$$GIT_REPO_LIST" && \
 	if [ -n "$$PIPELINE_GIT_REPO_LIST" ] && [ -f "$$PIPELINE_GIT_REPO_LIST" ]; then \
 		echo "==> PIPELINE_GIT_REPO_LIST is set, using instead of GIT_REPO_LIST"; \
@@ -245,8 +284,7 @@ run-pipelines:
 			--from-file=GIT_REPO_LIST_CONTENTS="$$REPO_LIST"; \
 		echo "$$REPO_LIST"; \
 	fi || true && \
-	echo "==> Submitting run-pipelines job..." && \
-	oc delete job run-pipelines -n $$KFP_NAMESPACE --ignore-not-found=true && \
+	echo "==> Submitting run-pipelines-$$JOB_ID job..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
 		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
@@ -254,6 +292,7 @@ run-pipelines:
 		--set augurRepoUsername="$(AUGUR_GIT_REPO_USERNAME)" \
 		--set augurRepoToken="$(AUGUR_GIT_REPO_TOKEN)" \
 		--set runPipelines.run=true \
+		--set-string runPipelines.jobId="$$JOB_ID" \
 		--set-string runPipelines.args="$${ARGS:---single-repo}" \
 		--set-string runPipelines.targetPath="$${KFP_DATA_GENERATION_OUTPUT_PATH:-target}" \
 		--set-string runPipelines.graphragSourcePath="$${KFP_DATA_INDEXING_OUTPUT_PATH:-graph_rag_app/source}" \
@@ -263,11 +302,11 @@ run-pipelines:
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/run-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	\
-	echo "==> Waiting for run-pipelines container to start..." && \
-	until oc logs job/run-pipelines -n $$KFP_NAMESPACE >/dev/null 2>&1; do sleep 2; done && \
+	echo "==> Waiting for run-pipelines-$$JOB_ID container to start..." && \
+	until oc logs job/run-pipelines-$$JOB_ID -n $$KFP_NAMESPACE >/dev/null 2>&1; do sleep 2; done && \
 	\
 	echo "==> Streaming pipeline run results..." && \
-	oc logs -f job/run-pipelines -n $$KFP_NAMESPACE
+	oc logs -f job/run-pipelines-$$JOB_ID -n $$KFP_NAMESPACE
 
 benchmark-llm:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -373,3 +412,148 @@ deploy-otel:
 		-s templates/opentelemetry.yaml | oc apply -f - && \
 	echo "==> Enabling OpenShift Distributed Tracing UIPlugin..." && \
 	oc apply -f resources/distributed-tracing-uiplugin.yaml
+
+# ============================================================================
+# Console application
+# ============================================================================
+
+run-console-app:
+	@set -a && . $(ENV_FILE) && set +a && \
+	: "$${KFP_NAMESPACE:?Set KFP_NAMESPACE in .env or pass KFP_NAMESPACE=<namespace> to make}" && \
+	export KFP_NAMESPACE && \
+	export AGENTMESH_REPO_URL="$(AUGUR_GIT_REPO_URL)" && \
+	export AGENTMESH_REPO_REF="$(AUGUR_GIT_REPO_BRANCH)" && \
+	export MLFLOW_WORKSPACE="$$KFP_NAMESPACE" && \
+	if [ -z "$${MLFLOW_TRACKING_TOKEN:-}" ]; then export MLFLOW_TRACKING_TOKEN="$$(oc whoami --show-token)"; fi && \
+	KFP_ROUTE_HOST="$$(oc get route ds-pipeline-dspa -n "$$KFP_NAMESPACE" -o jsonpath='{.spec.host}')" && \
+	: "$${KFP_ROUTE_HOST:?Could not find the ds-pipeline-dspa route in namespace $$KFP_NAMESPACE}" && \
+	export KFP_HOST="https://$$KFP_ROUTE_HOST" && \
+	uv run --project ui --frozen uvicorn --app-dir ui main:app --host 127.0.0.1 --port 8080
+
+_deploy-console-app-manifests:
+	@set -a && . $(ENV_FILE) && set +a && \
+	echo "==> Deploying Code Understanding console ($(CONSOLE_IMG))..." && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set requester="$$(oc whoami)" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set console.enabled=true \
+		--set console.route.enabled="$(CONSOLE_ROUTE_ENABLED)" \
+		--set-string console.image="$(CONSOLE_IMG)" \
+		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
+		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
+	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
+	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
+	echo "" && \
+	if [ "$(CONSOLE_ROUTE_ENABLED)" = "true" ]; then \
+		ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
+		echo "==> Open the console in your browser: https://$$ROUTE_HOST"; \
+	fi && \
+	echo "==> Run: make port-forward-console-app  then open http://localhost:8080" && \
+	echo ""
+
+deploy-console-app:
+	@set -a && . $(ENV_FILE) && set +a && \
+	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
+
+port-forward-console-app:
+	@set -a && . $(ENV_FILE) && set +a && \
+	echo "==> Forwarding http://localhost:8080 -> code-understanding-console:8080" && \
+	oc port-forward svc/code-understanding-console 8080:8080 -n $$KFP_NAMESPACE
+
+oc-deploy-console-app:
+	@set -a && . $(ENV_FILE) && set +a && \
+	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
+	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
+		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
+	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
+	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
+	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
+	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
+
+# ============================================================================
+# OpenShift console plugin
+# ============================================================================
+
+_deploy-console-plugin-manifests:
+	@set -a && . $(ENV_FILE) && set +a && \
+	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
+	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
+	echo "==> Deploying OpenShift console plugin ($(PLUGIN_IMG)) and FastAPI backend ($(CONSOLE_IMG))..." && \
+	oc delete route code-understanding-plugin-api -n "$$KFP_NAMESPACE" --ignore-not-found=true && \
+	helm template agent-mesh-for-sw resources/helm \
+		--set namespace="$$KFP_NAMESPACE" \
+		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
+		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
+		--set clusterDomain="$$CLUSTER_DOMAIN" \
+		--set consolePlugin.enabled=true \
+		--set-string consolePlugin.image="$(PLUGIN_IMG)" \
+		--set-string consolePlugin.apiImage="$(CONSOLE_IMG)" \
+		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
+		-s templates/console-plugin.yaml | oc apply -f - && \
+	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
+	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \
+	oc rollout status deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE --timeout=300s && \
+	oc rollout status deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE --timeout=300s && \
+	$(MAKE) enable-console-plugin
+
+deploy-console-plugin:
+	@set -a && . $(ENV_FILE) && set +a && \
+	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
+
+oc-deploy-console-plugin:
+	@set -a && . $(ENV_FILE) && set +a && \
+	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
+	PLUGIN_NAME="$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}" && \
+	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
+		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
+	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
+	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
+	echo "==> Ensuring OpenShift binary BuildConfig $$PLUGIN_NAME exists in $$KFP_NAMESPACE..." && \
+	oc get bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
+		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	echo "==> Building $$PLUGIN_NAME in-cluster from console-plugin/..." && \
+	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
+	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
+	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$APP_TAG" && \
+	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
+
+enable-console-plugin:
+	@echo "==> Enabling code-understanding-console in OpenShift console..." && \
+	EXISTING="$$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}' 2>/dev/null)" && \
+	if echo "$$EXISTING" | grep -q 'code-understanding-console'; then \
+	  echo "Plugin already enabled."; \
+	else \
+	  CONSOLE_GENERATION="$$(oc patch consoles.operator.openshift.io cluster --type=json \
+	    -p='[{"op":"add","path":"/spec/plugins/-","value":"code-understanding-console"}]' \
+	    -o jsonpath='{.metadata.generation}')" && \
+	  echo "==> Waiting for the OpenShift console to load the plugin..." && \
+	  oc wait consoles.operator.openshift.io/cluster \
+	    --for=jsonpath='{.status.observedGeneration}'="$$CONSOLE_GENERATION" \
+	    --timeout=300s; \
+	fi && \
+	oc rollout status deployment/console -n openshift-console --timeout=300s && \
+	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
+	echo "" && \
+	echo "==> Open in OpenShift console:" && \
+	echo "    https://$$CONSOLE_HOST/code-understanding" && \
+	echo "    Application launcher: Code Understanding" && \
+	echo ""

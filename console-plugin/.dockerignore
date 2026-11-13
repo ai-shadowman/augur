@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.npm
+.cache
+*.md
+*.log
+Dockerfile
+.dockerignore
+.gitignore

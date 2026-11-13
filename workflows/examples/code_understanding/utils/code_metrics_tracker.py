@@ -853,7 +853,24 @@ class CodeMetricsTracker:
                     multi_repo=multi_repo,
                 )
                 with tempfile.TemporaryDirectory() as tmp_dir:
-                    if DefaultAssetLoader().download_dir(artifact_path, tmp_dir):
+                    loader = DefaultAssetLoader()
+                    from utils.pipeline_utils import get_pipeline_run_id
+                    p_run_id = get_pipeline_run_id()
+                    downloaded = False
+                    if p_run_id:
+                        try:
+                            downloaded = bool(
+                                loader.download_dir(
+                                    artifact_path,
+                                    tmp_dir,
+                                    asset_tags={"pipeline_run_id": p_run_id},
+                                )
+                            )
+                        except Exception:
+                            downloaded = False
+                    if not downloaded:
+                        downloaded = bool(loader.download_dir(artifact_path, tmp_dir))
+                    if downloaded:
                         cand = os.path.join(tmp_dir, "project_metrics.json")
                         if os.path.isfile(cand):
                             self.load_and_merge(cand, current_stage=current_stage)

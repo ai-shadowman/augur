@@ -8,6 +8,8 @@ augurRepoUrl: ""
 augurRepoBranch: main
 augurRepoUsername: ""
 augurRepoToken: ""
+repoUrl: ""
+repoRef: main
 
 minio:
   rootUser: ""
@@ -63,9 +65,12 @@ adhocQuery:
   jobId: ""
   gitRepo: ""
   gitBranch: "main"
+  pipelineRunId: ""
+  projectSlug: ""
 
 runPipelines:
   run: false
+  jobId: ""
   args: "--single"
   targetPath: "target"
   graphragSourcePath: "graph_rag_app/source"
@@ -83,3 +88,22 @@ otel:
     bucket: tempo
     storageSize: 10Gi
     retention: 2160h
+
+console:
+  enabled: false
+  replicas: 1
+  image: ""
+  imagePullPolicy: Always
+  route:
+    enabled: false
+    host: ""
+
+consolePlugin:
+  enabled: false
+  replicas: 1
+  image: ""
+  imagePullPolicy: Always
+  apiImage: ""
+  applicationMenuSection: OpenShift Self Managed Services
+  consoleBaseUrl: ""
+  iconDataUri: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiByeD0iNCIgZmlsbD0iI0M5MTkwQiIvPjxwYXRoIGQ9Ik03IDhoMTB2Mkg3Vjhaem0xMCA0SDd2LTJ6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg=="

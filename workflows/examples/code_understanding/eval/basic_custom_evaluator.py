@@ -26,6 +26,14 @@ class BasicCustomEvaluator(CustomEvaluator):
     """LLM-as-judge evaluator using direct LiteLLM calls without an external evaluation framework.
     """
 
+    _METRIC_KEYS = [
+        "faithfulness",
+        "answer_relevance",
+        "answer_similarity",
+        "answer_correctness",
+        "reasoning",
+    ]
+
     _JUDGE_PROMPT = """Evaluate the following answer against the reference answer.
 
 Question: {question}
@@ -44,6 +52,40 @@ Rate the actual answer on each dimension from 1 to 5:
 
 Respond ONLY with valid JSON in this exact format:
 {{"faithfulness": <score>, "answer_relevance": <score>, "answer_similarity": <score>, "answer_correctness": <score>, "reasoning": "<brief explanation>"}}"""
+
+    def score_answer(self, question: str, reference: str, actual: str) -> dict:
+        """Scores a single (question, reference, actual) triple using JUDGE_LLM via LiteLLM."""
+        try:
+            response = completion(
+                **_llm_kwargs("JUDGE"),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": self._JUDGE_PROMPT.format(
+                            question=question,
+                            reference=reference,
+                            actual=actual,
+                        ),
+                    }
+                ],
+            )
+            result = extract_json_from_string(response.choices[0].message.content)
+            if not isinstance(result, dict):
+                logging.error("Judge LLM returned no valid JSON object")
+                return {k: None for k in self._METRIC_KEYS}
+            out = {}
+            for k in self._METRIC_KEYS:
+                val = result.get(k)
+                if k != "reasoning" and val is not None:
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        val = None
+                out[k] = val
+            return out
+        except Exception as e:
+            logging.error(f"Judge LLM failed: {e}")
+            return {k: None for k in self._METRIC_KEYS}
 
     def evaluate(self, input: str, graphrag_source_dir: str, git_repo: str, git_branch: str,
                  git_slug: str = None, multi_repo: bool = False):

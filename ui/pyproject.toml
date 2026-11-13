@@ -1,0 +1,17 @@
+[project]
+name = "agent-mesh-ui"
+version = "0.1.0"
+description = "Code Understanding console"
+requires-python = ">=3.11,<4"
+dependencies = [
+    "fastapi>=0.115.6",
+    "uvicorn[standard]>=0.34.0",
+    "graphrag==2.6.0",
+    "jsonpath-ng>=1.7.0",
+    "kfp>=2.0.0,<3.0.0",
+    "PyGithub>=2.0.0",
+    "kubernetes>=8.0.0,<31",
+    "mlflow>=3.0.0,<4.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
+    "pydantic>=2.0.0",
+]

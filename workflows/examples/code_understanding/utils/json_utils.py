@@ -7,6 +7,48 @@ import yaml
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
 
+def merge_json(base, override, treat_lists_as_singletons: bool = False):
+    """Recursively merges override into base.
+
+    - Both dicts: keys combined; override wins on conflict.
+    - Both lists: base elements kept; override elements appended if not already present.
+      When ``treat_lists_as_singletons=False`` (default) each override element is treated
+      as an independent value: appended only if an equal element is not already present
+      (identity semantics — multiple elements of the same type may coexist).
+      When ``treat_lists_as_singletons=True`` at most one element of each type is kept —
+      nested dicts/lists are merged recursively into the first element of the same type
+      (type-based singleton semantics).
+    - Otherwise: override takes precedence over base.
+    """
+    if not override:
+        return base
+    if not base:
+        return override
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = {}
+        for key in set(base) | set(override):
+            merged[key] = merge_json(base.get(key), override.get(key), treat_lists_as_singletons)
+        return merged
+    if isinstance(base, list) and isinstance(override, list):
+        result = list(base)
+        for item in override:
+            if isinstance(item, (dict, list)):
+                if treat_lists_as_singletons:
+                    for i, existing in enumerate(result):
+                        if type(existing) is type(item):
+                            result[i] = merge_json(existing, item, treat_lists_as_singletons)
+                            break
+                    else:
+                        result.append(item)
+                else:
+                    if item not in result:
+                        result.append(item)
+            elif item not in result:
+                result.append(item)
+        return result
+    return override if override is not None else base
+
+
 def _apply_defaults_to_json_keys(target: dict, schema: dict, handle_iterables: bool) -> None:
     """Applies missing schema defaults to target.
     If handle_iterables=True, applies list/dict defaults.
@@ -37,11 +79,26 @@ yaml.add_representer(str, _str_representer)
 
 def extract_json_from_string(text: str) -> dict | list | None:
     """Extracts json from given string."""
-    try:
-        match = re.search(r'\{.*\}|\[.*\]', text, re.DOTALL)
-        return json.loads(match.group())
-    except Exception:
+    if not text:
         return None
+    cleaned = re.sub(r"<think>.*?</think>", "", str(text), flags=re.DOTALL | re.IGNORECASE)
+    for candidate in (cleaned, str(text)):
+        try:
+            match = re.search(r"\{.*\}|\[.*\]", candidate, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except Exception:
+            pass
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(candidate):
+            if ch in "{[":
+                try:
+                    obj, _ = decoder.raw_decode(candidate[idx:])
+                    if isinstance(obj, (dict, list)):
+                        return obj
+                except Exception:
+                    continue
+    return None
 
 
 def get_as_json(obj, prefix: str = "", sep: str = "_"):
