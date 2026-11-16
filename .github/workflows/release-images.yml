@@ -17,13 +17,23 @@ jobs:
       matrix:
         include:
           - image: data-generation
-            context: resources/images/data-generation
+            context: .
+            file: resources/images/data-generation/Containerfile
           - image: data-indexing
-            context: resources/images/data-indexing
+            context: .
+            file: resources/images/data-indexing/Containerfile
           - image: data-analysis
             context: .
+            file: resources/images/data-analysis/Containerfile
           - image: pipeline-tools
             context: .
+            file: resources/images/pipeline-tools/Containerfile
+          - image: console-app
+            context: .
+            file: ui/Dockerfile
+          - image: console-plugin
+            context: console-plugin
+            file: console-plugin/Dockerfile
     steps:
       - name: Check out tagged source and history
         uses: actions/checkout@v7
@@ -44,7 +54,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
-          file: resources/images/${{ matrix.image }}/Containerfile
+          file: ${{ matrix.file }}
           platforms: linux/amd64
           push: true
           tags: quay.io/ai-shadowman/${{ matrix.image }}:${{ github.ref_name }}
