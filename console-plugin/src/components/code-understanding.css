@@ -12,3 +12,13 @@
   gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
+
+.cu-console-error {
+  padding: 1rem 1.25rem;
+  border-left: 3px solid #c9190b;
+  background: rgba(201, 25, 11, 0.08);
+}
+
+.cu-console-error p {
+  margin: 0 0 0.75rem;
+}

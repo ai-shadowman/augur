@@ -506,16 +506,22 @@ class TestServicesMultiProjectIsolation(unittest.TestCase):
 class TestUIStaticAndTemplates(unittest.TestCase):
     def test_ui_index_html_has_project_slug_input_and_no_default_workspace_dropdown(self):
         html_path = _REPO_ROOT / "ui" / "static" / "index.html"
-        content = html_path.read_text(encoding="utf-8")
-        self.assertIn('id="ns-select"', content)
-        self.assertNotIn('id="ws-row"', content)
-        self.assertNotIn('id="ws-select"', content)
-        self.assertIn('id="project-slug-group"', content)
-        self.assertIn('id="project-slug-input"', content)
-        self.assertIn("project_slug", content)
-        self.assertIn("!isTableStart(i)", content)
-        self.assertIn("renderMermaidError", content)
-        self.assertIn("mermaid.render(", content)
+        js_path = _REPO_ROOT / "ui" / "static" / "app.js"
+        html = html_path.read_text(encoding="utf-8")
+        js = js_path.read_text(encoding="utf-8")
+        self.assertIn('id="ns-select"', html)
+        self.assertNotIn('id="ws-row"', html)
+        self.assertNotIn('id="ws-select"', html)
+        self.assertIn('id="project-slug-group"', html)
+        self.assertIn('id="project-slug-input"', html)
+        self.assertIn('<script src="static/app.js"></script>', html)
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("onclick=", html)
+        self.assertNotIn("onclick=", js)
+        self.assertIn("project_slug", js)
+        self.assertIn("!isTableStart(i)", js)
+        self.assertIn("renderMermaidError", js)
+        self.assertIn("mermaid.render(", js)
 
     def test_ensure_mlflow_imported_binds_version(self):
         from loaders.mlflow_asset_loader import _ensure_mlflow_imported
@@ -531,6 +537,11 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "console-app.yaml").is_file())
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "console-plugin.yaml").is_file())
         self.assertTrue((_REPO_ROOT / "resources" / "helm" / "templates" / "_console-plugin.tpl").is_file())
+        plugin_page = (
+            _REPO_ROOT / "console-plugin" / "src" / "components" / "CodeUnderstandingPage.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertIn("srcDoc={srcDoc}", plugin_page)
+        self.assertIn("<base href=", plugin_page)
 
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
@@ -803,12 +814,12 @@ class TestRunStageTracking(unittest.TestCase):
         self.assertEqual(items[1]["current_stage"], "")
 
     def test_ui_index_html_renders_stage_under_repo_url(self):
-        html_path = _REPO_ROOT / "ui" / "static" / "index.html"
-        content = html_path.read_text(encoding="utf-8")
-        self.assertIn("cu-run-stage", content)
-        self.assertIn("run.current_stage", content)
-        self.assertIn("refreshActiveRuns", content)
-        self.assertIn("syncRunsAutoRefresh", content)
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("cu-run-stage", html + "\n" + js)
+        self.assertIn("run.current_stage", js)
+        self.assertIn("refreshActiveRuns", js)
+        self.assertIn("syncRunsAutoRefresh", js)
 
 
 class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
@@ -981,6 +992,12 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
                 self.assertEqual(r2.status_code, 200)
                 self.assertEqual(mock_urlopen.call_count, 1)
 
+            app_js_resp = asyncio.run(mw.dispatch(Request(path="/static/app.js"), _ok_next))
+            self.assertEqual(
+                app_js_resp.headers.get("Cache-Control"),
+                "no-cache, no-store, must-revalidate",
+            )
+
     def test_fastapi_routes_namespace_indexes_queries_repositories_and_pipelines(self):
         from fastapi import HTTPException, Request, Response
         import api.pipelines as api_pipelines
@@ -1015,6 +1032,12 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertEqual(idx_payload["namespace"], "team-ns")
         self.assertEqual(idx_payload["default_key"], "https://github.com/o/r.git|main")
         self.assertEqual(len(idx_payload["queryable"]), 1)
+        self.assertEqual(
+            ui_main.get_active_namespace(
+                Request(headers={"X-CU-Namespace": "proxy-ns"}, cookies={"cu_namespace": "team-ns"})
+            ),
+            "proxy-ns",
+        )
 
         # 3. /api/v2/queries executes synchronously and caps _QUERY_RESULTS at 50
         with api_queries._QUERY_RESULTS_LOCK:

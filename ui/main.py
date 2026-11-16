@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import mimetypes
 import os
 import ssl
 import sys
@@ -73,6 +74,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("text/javascript", ".js")
 _SA_CA_CERT = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 _NO_CACHE_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -183,7 +186,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = _frame_ancestors_csp()
-        if path in ("/", "/index.html", "/static/index.html"):
+        if path in ("/", "/index.html", "/static/index.html", "/static/app.js"):
             for hdr, val in _NO_CACHE_HEADERS.items():
                 response.headers[hdr] = val
         return response
@@ -195,7 +198,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-CSRFToken"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRFToken", "X-CU-Namespace"],
 )
 app.include_router(pipelines_router)
 app.include_router(queries_router)
