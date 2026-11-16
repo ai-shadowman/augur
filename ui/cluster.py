@@ -46,8 +46,11 @@ def default_workspace() -> str:
 
 
 def get_active_namespace(request: Request | None = None) -> str:
-    """Return the active namespace for this request (cookie -> default)."""
+    """Return the active namespace for this request (header -> cookie -> default)."""
     if request is not None:
+        hdr_val = ((getattr(request, "headers", None) or {}).get("x-cu-namespace") or "").strip()
+        if hdr_val:
+            return hdr_val
         cookie_val = (request.cookies.get(NAMESPACE_COOKIE) or "").strip()
         if cookie_val:
             return cookie_val

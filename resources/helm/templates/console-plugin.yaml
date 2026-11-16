@@ -37,6 +37,16 @@ data:
         ssl_certificate_key /var/serving-cert/tls.key;
         ssl_protocols TLSv1.2 TLSv1.3;
 
+        location = /config.json {
+          add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+          try_files $uri =404;
+        }
+
+        location = /plugin-manifest.json {
+          add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+          try_files $uri =404;
+        }
+
         location / {
           try_files $uri $uri/ /index.html;
         }

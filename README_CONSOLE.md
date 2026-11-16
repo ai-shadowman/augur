@@ -65,7 +65,6 @@ Deploys both the Nginx dynamic plugin (`Deployment/code-understanding-console-pl
 
    # Build & push the OpenShift dynamic plugin image
    make build-console-plugin-image
-   make push-console-plugin-image
    ```
    *(Tip: `make build-push-all` builds and pushes all four KFP pipeline images plus both console images in one command.)*
 
@@ -128,6 +127,6 @@ Then open <http://127.0.0.1:8080>.
 
 When you modify files under [`ui/`](ui/), [`api/`](api/), [`console-plugin/`](console-plugin/), or [`workflows/examples/code_understanding/`](workflows/examples/code_understanding/):
 
-1. Rebuild and push the updated image(s) (`make build-console-app-image`, and `make build-console-plugin-image && make push-console-plugin-image` if [`console-plugin/`](console-plugin/) changed).
+1. Rebuild and push the updated image(s) (`make build-console-app-image`, and `make build-console-plugin-image` if [`console-plugin/`](console-plugin/) changed).
 2. Re-run `make deploy-console-plugin` (or `make deploy-console-app`) so OpenShift restarts the deployment pods and pulls the updated image.
    *(Or run `make oc-deploy-console-plugin` / `make oc-deploy-console-app` to rebuild in-cluster and roll out in one command.)*
