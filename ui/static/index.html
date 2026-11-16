@@ -665,8 +665,8 @@
     .cu-eval-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     .cu-eval-chip { display: inline-flex; gap: 0.35rem; align-items: center; padding: 0.25rem 0.6rem; border-radius: 0.75rem; font-size: 0.8rem; background: #f0f0f0; color: var(--cu-charcoal); }
     .cu-eval-chip--overall { background: var(--cu-charcoal); color: #fff; }
-    .cu-pipeline-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.5rem; margin-bottom: 0.75rem; }
-    .cu-pipeline-row .cu-note { margin: 0; flex: 1; min-width: 0; }
+    .cu-pipeline-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.5rem; margin-bottom: 0.75rem; }
+    .cu-pipeline-row .cu-note { margin: 0; flex: 1 1 10rem; min-width: 0; }
     .cu-pipeline-row .cu-btn { flex-shrink: 0; }
     .hidden { display: none !important; }
     .cu-btn-icon {
@@ -884,7 +884,8 @@
         <div class="cu-pipeline-row">
           <div class="cu-note hidden" id="run-selection-note"></div>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-view-report" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="11" y1="9" x2="8" y2="9"/></svg>View Report</button>
-          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download Report</button>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download PDF Report</button>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-md-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download Markdown Report</button>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-rerun" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Re-run</button>
         </div>
         <div class="cu-repo-list" style="max-height:none;overflow:hidden">
@@ -1413,6 +1414,16 @@
           : "Combined repos";
     }
 
+    function downloadBlob(content, filename, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
     async function downloadReportAsPdf(markdown, baseFilename, title = "", subtitle = "") {
       const staging = document.createElement("div");
       staging.className = "cu-md";
@@ -1543,13 +1554,7 @@
             }
             return;
           }
-          const blob = new Blob([rawContent], { type: "text/csv" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          a.click();
-          URL.revokeObjectURL(url);
+          downloadBlob(rawContent, filename, "text/csv");
         };
         $("report-viewer-content").appendChild(footer);
       }
@@ -1790,23 +1795,15 @@
       const selected = Boolean(cb && cb.checked);
       const succeeded = selected && cb.dataset.succeeded === "true";
       state.selectedRunId = selected ? (cb.dataset.runId || null) : null;
-      $("run-view-report").disabled = !(selected && succeeded);
-      $("run-download-report").disabled = !(selected && succeeded);
-      $("run-rerun").disabled = !(selected && succeeded);
-      $("run-view-report").dataset.runId = selected ? cb.dataset.runId : "";
-      $("run-view-report").dataset.runName = selected ? cb.dataset.runName : "";
-      $("run-view-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-      $("run-view-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-      $("run-view-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
-      $("run-download-report").dataset.runId = selected ? cb.dataset.runId : "";
-      $("run-download-report").dataset.runName = selected ? cb.dataset.runName : "";
-      $("run-download-report").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-      $("run-download-report").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-      $("run-download-report").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
-      $("run-rerun").dataset.runId = selected ? cb.dataset.runId : "";
-      $("run-rerun").dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
-      $("run-rerun").dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
-      $("run-rerun").dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+      for (const id of ["run-view-report", "run-download-report", "run-download-md-report", "run-rerun"]) {
+        const btn = $(id);
+        btn.disabled = !(selected && succeeded);
+        btn.dataset.runId = selected ? cb.dataset.runId : "";
+        btn.dataset.runName = selected ? cb.dataset.runName : "";
+        btn.dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
+        btn.dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+        btn.dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
+      }
       updateRunSelectionNote(selected ? cb : null);
     }
 
@@ -2143,7 +2140,7 @@
           if (!btn.dataset.runId) return;
           const origContent = btn.innerHTML;
           btn.disabled = true;
-          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Download Report`;
+          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Download PDF Report`;
           try {
             const snap = await api(
               buildRunDetailUrl(
@@ -2169,7 +2166,36 @@
           } catch (e) {
             banner(String(e.message || e), true);
           } finally {
-            btn.disabled = false;
+            btn.disabled = !btn.dataset.runId;
+            btn.innerHTML = origContent;
+          }
+        };
+        $("run-download-md-report").onclick = async function() {
+          const btn = this;
+          if (!btn.dataset.runId) return;
+          const origContent = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = `<svg style="animation:cu-spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Download Markdown Report`;
+          try {
+            const snap = await api(
+              buildRunDetailUrl(
+                btn.dataset.runId,
+                btn.dataset.gitRepo || "",
+                btn.dataset.gitBranch || "",
+                btn.dataset.projectSlug || "",
+              )
+            );
+            const report = snap.analysis_report;
+            if (!report) { banner("No analysis report available.", true); return; }
+            downloadBlob(
+              report,
+              `${btn.dataset.runName || btn.dataset.runId}_analysis_report.md`,
+              "text/markdown",
+            );
+          } catch (e) {
+            banner(String(e.message || e), true);
+          } finally {
+            btn.disabled = !btn.dataset.runId;
             btn.innerHTML = origContent;
           }
         };
@@ -2539,13 +2565,7 @@
       if (!btn || btn.dataset.chatDl === undefined) return;
       const msg = state.chat[Number(btn.dataset.chatDl)];
       if (!msg) return;
-      const blob = new Blob([msg.content], { type: "text/markdown" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `chat_response_${Number(btn.dataset.chatDl) + 1}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(msg.content, `chat_response_${Number(btn.dataset.chatDl) + 1}.md`, "text/markdown");
     });
     $("slider-send").onclick = () => sendQuestion($("slider-question").value);
     $("slider-question").addEventListener("keydown", (event) => {
