@@ -155,7 +155,9 @@ build-console-plugin-image:
 	@set -a && . $(ENV_FILE) && set +a && \
 	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
 	echo "==> Building console plugin image: $$PLUGIN_IMG..." && \
-	podman build -f console-plugin/Dockerfile -t "$$PLUGIN_IMG" console-plugin
+	podman build -f console-plugin/Dockerfile -t "$$PLUGIN_IMG" console-plugin && \
+	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
+	podman push "$$PLUGIN_IMG"
 
 push-console-plugin-image:
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -167,7 +169,6 @@ build-push-all:
 	$(MAKE) build-images
 	$(MAKE) build-console-app-image
 	$(MAKE) build-console-plugin-image
-	$(MAKE) push-console-plugin-image
 
 oc-build-images:
 	@set -a && . $(ENV_FILE) && set +a && \
