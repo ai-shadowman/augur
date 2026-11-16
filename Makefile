@@ -446,6 +446,12 @@ _deploy-console-app-manifests:
 		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
 	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
+	if oc get deployment code-understanding-plugin-api -n "$$KFP_NAMESPACE" >/dev/null 2>&1; then \
+		echo "==> Updating OpenShift console plugin backend (code-understanding-plugin-api)..." && \
+		oc set image deployment/code-understanding-plugin-api api="$(CONSOLE_IMG)" -n "$$KFP_NAMESPACE" && \
+		oc rollout restart deployment/code-understanding-plugin-api -n "$$KFP_NAMESPACE" && \
+		oc rollout status deployment/code-understanding-plugin-api -n "$$KFP_NAMESPACE" --timeout=300s; \
+	fi && \
 	echo "" && \
 	if [ "$(CONSOLE_ROUTE_ENABLED)" = "true" ]; then \
 		ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
@@ -473,7 +479,7 @@ oc-deploy-console-app:
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
 	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
-		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"$$APP_NAME:$$APP_TAG\"}},\"strategy\":{\"dockerStrategy\":{\"dockerfilePath\":\"ui/Dockerfile\"}}}}" && \
 	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
 	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
@@ -523,12 +529,14 @@ oc-deploy-console-plugin:
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
 	oc patch bc "$$APP_NAME" -n "$$KFP_NAMESPACE" --type=merge \
-		-p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"ui/Dockerfile"}}}}' && \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"$$APP_NAME:$$APP_TAG\"}},\"strategy\":{\"dockerStrategy\":{\"dockerfilePath\":\"ui/Dockerfile\"}}}}" && \
 	echo "==> Building $$APP_NAME in-cluster from local directory..." && \
 	oc start-build "$$APP_NAME" --from-dir=. --follow -n "$$KFP_NAMESPACE" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$PLUGIN_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
+	oc patch bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"$$PLUGIN_NAME:$$APP_TAG\"}}}}" && \
 	echo "==> Building $$PLUGIN_NAME in-cluster from console-plugin/..." && \
 	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \

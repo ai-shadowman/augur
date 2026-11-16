@@ -74,6 +74,11 @@ logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 _SA_CA_CERT = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 # shortcut: in-memory 60s token cache (128 entries), move to shared cache only if k8s API rate-limits
 _TOKEN_CACHE_TTL_SECONDS = 60.0
@@ -178,8 +183,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = _frame_ancestors_csp()
-        if path in ("/", "/static/index.html"):
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        if path in ("/", "/index.html", "/static/index.html"):
+            for hdr, val in _NO_CACHE_HEADERS.items():
+                response.headers[hdr] = val
         return response
 
 
@@ -205,7 +211,7 @@ class SelectNamespaceRequest(BaseModel):
 def index() -> FileResponse:
     return FileResponse(
         STATIC_DIR / "index.html",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers=_NO_CACHE_HEADERS,
     )
 
 

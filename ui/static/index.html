@@ -860,7 +860,7 @@
         <div id="status" class="cu-status warn checking">Loading…</div>
       </div>
       <section id="tab-repos" class="cu-card">
-        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Repositories</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Repositories</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="hardRefresh()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
         <h2>Repositories</h2>
           <p class="cu-muted">
               Analyze your code using knowledge graphs.<br/>
@@ -876,7 +876,7 @@
         <div id="repo-list" class="cu-repo-list"></div>
       </section>
       <section id="tab-runs" class="cu-card hidden">
-        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Runs</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Runs</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="hardRefresh()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
         <h2>Runs</h2>
         <div class="cu-pipeline-row">
           <p class="cu-muted" style="margin:0;flex:1">Select a run to view, download, query or re-run analysis reports.</p>
@@ -896,7 +896,7 @@
         <div id="run-paginator" class="cu-paginator"></div>
       </section>
       <section id="tab-analysis" class="cu-card hidden">
-        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li><a href="#" data-tab="runs">Runs</a></li><li>Analysis</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="location.reload()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+        <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li><a href="#" data-tab="runs">Runs</a></li><li>Analysis</li></ol></nav><button type="button" class="cu-btn-icon" title="Refresh" aria-label="Refresh" onclick="hardRefresh()" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
         <div style="margin-bottom:0.75rem"><button type="button" class="cu-btn cu-btn-secondary" id="back-to-runs" style="min-height:1.125rem;padding-top:0;padding-bottom:0;font-size:0.8rem"><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Back to list</button></div>
         <h3 id="report-viewer-title"></h3>
         <div id="report-viewer-subtitle"></div>
@@ -1074,6 +1074,11 @@
     };
 
     const $ = (id) => document.getElementById(id);
+    function hardRefresh() {
+      const u = new URL(window.location.href);
+      u.searchParams.set("_t", String(Date.now()));
+      window.location.replace(u.toString());
+    }
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[ch]));
