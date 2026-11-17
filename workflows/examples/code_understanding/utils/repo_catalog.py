@@ -178,3 +178,70 @@ def format_annotation(matches: list[dict]) -> str:
         "(" + "; ".join([f"provided by repository {m['git_repo']}, slug {m['git_slug']}"]
                         + [f"{key}: {m[key]}" for key in ("purpose", "runtime") if m[key]]) + ")"
         for m in matches)
+
+
+_FLAG = re.compile(r"multi_repo (?:true|false)")
+_IMPORT = "- [import] "
+
+
+def _annotate_code_file(path: Path, annotations: dict[str, str]) -> None:
+    """Force the header's flag to false and annotate resolved import lines; every other byte is kept."""
+    with open(path, encoding="utf-8", newline="") as handle:
+        lines = handle.read().split("\n")
+    header = next((i for i, line in enumerate(lines[:3]) if _HEADER_MARK in line), None)
+    if header is not None and _FLAG.search(lines[header]):
+        lines[header] = _FLAG.sub("multi_repo false", lines[header], count=1)
+    else:
+        logger.warning("No multi_repo flag in the header of %s; left as is", path)
+    start = next((i + 1 for i, line in enumerate(lines) if line.strip() == "Dependencies:"), len(lines))
+    for i in range(start, len(lines)):
+        if not lines[i].startswith("- ["):
+            break
+        body = lines[i].removesuffix("\r")
+        name = body.removeprefix(_IMPORT)
+        if name != body and name in annotations:
+            lines[i] = f"{body} {annotations[name]}{lines[i][len(body):]}"
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write("\n".join(lines))
+
+
+def annotate_focal_repo(source_dir: str, dest_dir: str, catalog: dict, focal_slug: str) -> dict:
+    """Copy the focal repository's generated data to ``dest_dir``, marked single-repo, with sibling imports annotated."""
+    import shutil
+
+    import yaml
+
+    import utils.json_utils  # noqa: F401  registers the literal-block str representer the metadata was written with
+
+    source, dest = Path(source_dir), Path(dest_dir)
+    if not any(source.rglob("*.txt")):
+        raise RuntimeError(f"Focal repository has no generated data at {source_dir}")
+    if source.resolve().is_relative_to(dest.resolve()) or dest.resolve().is_relative_to(source.resolve()):
+        raise ValueError(f"dest_dir {dest_dir} overlaps source_dir {source_dir}")
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+
+    counts = {"files": 0, "resolved_imports": 0, "unresolved_imports": 0}
+    for meta_path in sorted(dest.rglob("*_metadata.txt")):
+        meta = read_flat_metadata(str(meta_path))
+        if meta is None:
+            continue
+        imports = set(meta.get("imports", []))
+        annotations = {name: text for name in imports
+                       if (text := format_annotation(resolve_import(name, catalog, focal_slug)))}
+        code_path = meta_path.with_name(meta_path.name.removesuffix("_metadata.txt") + ".txt")
+        if code_path.is_file():
+            _annotate_code_file(code_path, annotations)
+
+        data = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+        data["multi_repo"] = False
+        for key, value in data.items():
+            if re.fullmatch(r"imports_\d+", str(key)) and value in annotations:
+                data[key] = f"{value} {annotations[value]}"
+        meta_path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True), encoding="utf-8")
+
+        counts["files"] += 1
+        counts["resolved_imports"] += len(annotations)
+        counts["unresolved_imports"] += len(imports) - len(annotations)
+    return counts

@@ -11,6 +11,7 @@ from provenance.models import Layer, Package, RepoFacts
 from provenance.pipeline import FACTS_FILENAME
 from utils.code_utils import generate_slug_from_repo
 from utils.repo_catalog import (
+    annotate_focal_repo,
     build_repo_catalog,
     format_annotation,
     read_flat_metadata,
@@ -388,6 +389,167 @@ class TestFormatAnnotation(unittest.TestCase):
 
     def test_no_matches_is_empty_string(self):
         self.assertEqual(format_annotation([]), "")
+
+
+class TestAnnotateFocalRepo(RealYaml):
+    FOCAL = TestResolveImport.FOCAL
+    CATALOG = TestResolveImport.CATALOG
+    HEADER = "/*This file is located at src/Model.java from repository url U, repository slug S, multi_repo true\n"
+    REST = ("\n Package: com.org.timetable\n\nDependencies:\n"
+            "- [import] com.org.train.Train\n- [import] java.util.List\n- [library] junit 5\n*/\n"
+            "import com.org.train.Train;\n// - [import] com.org.train.Train\n")
+    ANNOTATION = format_annotation(resolve_import("com.org.train.Train", CATALOG, FOCAL))
+    ANNOTATED = "- [import] com.org.train.Train " + ANNOTATION
+
+    def setUp(self):
+        super().setUp()
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.source, self.dest = tmp / "source", tmp / "dest"
+        self.write_code(self.HEADER + self.REST)
+        write_meta(self.source, "src/Model_metadata.txt", file_path="src/Model.java", package="com.org.timetable",
+                   multi_repo="true", imports_0="com.org.train.Train", imports_1="java.util.List")
+        (self.source / FACTS_FILENAME).write_text('{"runtime": "Java 17"}\n', encoding="utf-8")
+
+    def write_code(self, text):
+        path = self.source / "src" / "Model.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode())
+
+    def annotate(self):
+        return annotate_focal_repo(str(self.source), str(self.dest), self.CATALOG, self.FOCAL)
+
+    def code(self, root=None):
+        return ((root or self.dest) / "src" / "Model.txt").read_bytes().decode()
+
+    def lines(self):
+        return self.code().split("\n")
+
+    def snapshot(self, root):
+        return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+    def test_first_line_flag_is_forced_false(self):
+        self.annotate()
+        self.assertEqual(self.lines()[0], self.HEADER.replace("multi_repo true", "multi_repo false").rstrip("\n"))
+
+    def test_flag_already_false_is_left_false(self):
+        header = self.HEADER.replace("multi_repo true", "multi_repo false")
+        self.write_code(header + self.REST)
+        self.annotate()
+        self.assertEqual(self.lines()[0], header.rstrip("\n"))
+
+    def test_resolved_import_line_gets_the_annotation(self):
+        self.assertIn("provided by repository", self.ANNOTATION)
+        self.annotate()
+        self.assertEqual(self.lines()[5], self.ANNOTATED)
+
+    def test_unresolved_import_and_library_lines_are_byte_identical(self):
+        self.annotate()
+        self.assertEqual(self.lines()[6:8], ["- [import] java.util.List", "- [library] junit 5"])
+
+    def test_only_the_flag_and_resolved_lines_differ(self):
+        self.annotate()
+        before, after = self.code(self.source).split("\n"), self.lines()
+        self.assertEqual(len(before), len(after))
+        self.assertEqual([i for i, (a, b) in enumerate(zip(before, after)) if a != b], [0, 5])
+        self.assertTrue(self.code().endswith("// - [import] com.org.train.Train\n"))
+
+    def test_line_endings_and_missing_final_newline_are_kept(self):
+        self.write_code((self.HEADER + self.REST).replace("\n", "\r\n").removesuffix("\r\n"))
+        self.annotate()
+        self.assertEqual(self.code(), (self.HEADER + self.REST).replace("multi_repo true", "multi_repo false")
+                         .replace("- [import] com.org.train.Train\n", self.ANNOTATED + "\n", 1)
+                         .replace("\n", "\r\n").removesuffix("\r\n"))
+
+    def test_header_line_on_second_line_is_still_found(self):
+        self.write_code("/*\n" + self.HEADER.removeprefix("/*") + self.REST)
+        self.annotate()
+        lines = self.lines()
+        self.assertEqual(lines[0], "/*")
+        self.assertIn("repository slug S, multi_repo false", lines[1])
+        self.assertEqual(lines[6], self.ANNOTATED)
+
+    def test_header_lookalike_in_code_body_is_not_rewritten(self):
+        # Review Focus 3.
+        body = "This file is located at X, multi_repo true\nDependencies:\n- [import] com.org.train.Train\n"
+        self.write_code(self.HEADER + self.REST + body)
+        self.annotate()
+        self.assertEqual(self.lines()[9:], ["import com.org.train.Train;", "// - [import] com.org.train.Train",
+                                            *body.split("\n")])
+
+    def test_header_below_line_three_keeps_its_flag_with_a_warning(self):
+        self.write_code("/*\n\n\n" + self.HEADER.removeprefix("/*") + self.REST)
+        with self.assertLogs("utils.repo_catalog", "WARNING"):
+            self.annotate()
+        self.assertIn("multi_repo true", self.lines()[3])
+        self.assertEqual(self.lines()[8], self.ANNOTATED)
+
+    def test_file_without_dependencies_block_only_changes_the_flag(self):
+        text = self.HEADER + "\n Package: com.org.timetable*/\nimport com.org.train.Train;\n- [import] com.org.train.Train\n"
+        self.write_code(text)
+        self.annotate()
+        self.assertEqual(self.code(), text.replace("multi_repo true", "multi_repo false"))
+
+    def test_metadata_file_gets_flag_false_and_annotated_import(self):
+        import yaml
+
+        self.annotate()
+        data = yaml.safe_load((self.dest / "src" / "Model_metadata.txt").read_text(encoding="utf-8"))
+        self.assertIs(data["multi_repo"], False)
+        self.assertEqual(data["imports_0"], "com.org.train.Train " + self.ANNOTATION)
+        self.assertEqual(data["imports_1"], "java.util.List")
+        self.assertEqual((data["file_path"], data["package"]), ("src/Model.java", "com.org.timetable"))
+
+    def test_metadata_without_code_file_is_still_rewritten(self):
+        import yaml
+
+        (self.source / "src" / "Model.txt").unlink()
+        self.assertEqual(self.annotate()["files"], 1)
+        data = yaml.safe_load((self.dest / "src" / "Model_metadata.txt").read_text(encoding="utf-8"))
+        self.assertIs(data["multi_repo"], False)
+        self.assertEqual(data["imports_0"], "com.org.train.Train " + self.ANNOTATION)
+
+    def test_source_dir_is_not_modified(self):
+        before = self.snapshot(self.source)
+        self.annotate()
+        self.assertEqual(self.snapshot(self.source), before)
+
+    def test_other_files_are_copied_untouched(self):
+        # tokens_metadata.txt is a telemetry sidecar, not source metadata: the pair is skipped.
+        (self.source / "tokens.txt").write_text("{}", encoding="utf-8")
+        (self.source / "tokens_metadata.txt").write_text("{}", encoding="utf-8")
+        with self.assertLogs("utils.repo_catalog", "WARNING"):
+            self.assertEqual(self.annotate()["files"], 1)
+        for name in (FACTS_FILENAME, "tokens.txt", "tokens_metadata.txt"):
+            self.assertEqual((self.dest / name).read_bytes(), (self.source / name).read_bytes())
+
+    def test_existing_dest_dir_is_replaced(self):
+        self.dest.mkdir()
+        (self.dest / "stale.txt").write_text("old", encoding="utf-8")
+        self.annotate()
+        self.assertFalse((self.dest / "stale.txt").exists())
+        self.assertTrue((self.dest / "src" / "Model.txt").is_file())
+
+    def test_dest_overlapping_source_is_rejected(self):
+        before = self.snapshot(self.source)
+        for dest in (self.source, self.source / "out", self.source.parent):
+            with self.subTest(dest=dest), self.assertRaises(ValueError):
+                annotate_focal_repo(str(self.source), str(dest), self.CATALOG, self.FOCAL)
+        self.assertEqual(self.snapshot(self.source), before)
+
+    def test_counts(self):
+        self.assertEqual(self.annotate(), {"files": 1, "resolved_imports": 1, "unresolved_imports": 1})
+
+    def test_missing_source_dir_raises(self):
+        with self.assertRaises(RuntimeError):
+            annotate_focal_repo(str(self.source.parent / "absent"), str(self.dest), self.CATALOG, self.FOCAL)
+
+    def test_source_dir_without_txt_files_raises(self):
+        empty = self.source.parent / "empty"
+        empty.mkdir()
+        (empty / FACTS_FILENAME).write_text("{}", encoding="utf-8")
+        with self.assertRaises(RuntimeError):
+            annotate_focal_repo(str(empty), str(self.dest), self.CATALOG, self.FOCAL)
+        self.assertFalse(self.dest.exists())
 
 
 if __name__ == "__main__":
