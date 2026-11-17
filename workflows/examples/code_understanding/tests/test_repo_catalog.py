@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -9,7 +10,6 @@ from unittest.mock import patch
 from provenance import facts as facts_module
 from provenance.models import Layer, Package, RepoFacts
 from provenance.pipeline import FACTS_FILENAME
-from utils.code_utils import generate_slug_from_repo
 from utils.repo_catalog import (
     annotate_focal_repo,
     build_repo_catalog,
@@ -17,11 +17,20 @@ from utils.repo_catalog import (
     read_flat_metadata,
     require_focal_in_list,
     resolve_import,
+    save_repo_catalog,
 )
 
 TRAIN = "https://github.com/org/train"
 TIMETABLE = "https://github.com/org/timetable"
 RAIL = "https://github.com/org/rail"
+
+
+def generate_slug_from_repo(git_repo, git_branch):
+    # Imported per call: utils.code_utils loads real pandas/mlflow, and doing that at
+    # collection stops other test modules from installing their sys.modules stubs.
+    from utils.code_utils import generate_slug_from_repo as slug
+
+    return slug(git_repo, git_branch)
 
 
 def write_meta(repo_dir, rel, **fields):
@@ -550,6 +559,37 @@ class TestAnnotateFocalRepo(RealYaml):
         with self.assertRaises(RuntimeError):
             annotate_focal_repo(str(empty), str(self.dest), self.CATALOG, self.FOCAL)
         self.assertFalse(self.dest.exists())
+
+
+class TestSaveRepoCatalog(unittest.TestCase):
+    CATALOG = {"repos": [{"git_slug": "org-train-main", "git_repo": TRAIN, "git_branch": "main"}]}
+    TAGS = {"category": "data-generation", "multi_repo": "True", "repo-catalog": "true"}
+
+    def setUp(self):
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.loader = self.enterContext(patch("loaders.default_asset_loader.DefaultAssetLoader"))
+
+    def test_writes_json_and_returns_path(self):
+        path = save_repo_catalog(self.CATALOG, self.tmp)
+        self.assertEqual(path, os.path.join(self.tmp, "repo_catalog.json"))
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), self.CATALOG)
+        self.assertEqual(Path(path).read_text(encoding="utf-8"),
+                         json.dumps(self.CATALOG, indent=2, sort_keys=True))
+
+    def test_logs_under_multi_repo_metadata_path_with_tags(self):
+        path = save_repo_catalog(self.CATALOG, self.tmp)
+        self.loader.get_log_results_artifact_path.assert_called_once_with(
+            self.loader.RESULTS_PATH_PREFIX_METADATA, git_slug=None, multi_repo=True)
+        self.loader.return_value.log_results.assert_called_once_with(
+            path, artifact_path=self.loader.get_log_results_artifact_path.return_value, tags=self.TAGS)
+
+    def test_logging_failure_does_not_raise(self):
+        self.loader.return_value.log_results.side_effect = RuntimeError("tracking server down")
+        with self.assertLogs("utils.repo_catalog", "WARNING"):
+            path = save_repo_catalog(self.CATALOG, self.tmp)
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), self.CATALOG)
 
 
 if __name__ == "__main__":

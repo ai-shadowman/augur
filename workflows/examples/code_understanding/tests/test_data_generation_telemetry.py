@@ -560,6 +560,27 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
         self.assertEqual(observed, ["Main.txt", "repo-a/Main_metadata.txt"])
         self.assertTrue((self.codebase / "repo-a" / "tokens.txt").exists())
 
+    def test_repo_catalog_is_removed_from_index_input(self):
+        # Review Focus 4: a catalog left in <parent_target> by an earlier run is not indexed.
+        (self.codebase / "repo_catalog.json").write_text("{}", encoding="utf-8")
+        (self.codebase / "Main_metadata.txt").write_text("source metadata", encoding="utf-8")
+        # Generated docs for a source file whose stem is repo_catalog must still be indexed.
+        (self.codebase / "utils").mkdir()
+        (self.codebase / "utils" / "repo_catalog.txt").write_text("source doc", encoding="utf-8")
+        (self.codebase / "utils" / "repo_catalog_metadata.txt").write_text("source metadata", encoding="utf-8")
+        observed = []
+
+        def inspect_input(root):
+            observed.extend(sorted(
+                str(path.relative_to(Path(root) / "input"))
+                for path in (Path(root) / "input").rglob("*") if path.is_file()
+            ))
+
+        self.run_indexing(inspect_input)
+        self.assertEqual(observed, [
+            "Main_metadata.txt", "utils/repo_catalog.txt", "utils/repo_catalog_metadata.txt",
+        ])
+
     def test_stale_nested_telemetry_is_removed_from_reused_input(self):
         stale = self.graphrag / "input" / "old-repo" / "tokens_metadata.txt"
         stale.parent.mkdir()

@@ -168,6 +168,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]
                     for suffix in [".json", ".txt", "_metadata.txt"]
                 }
+                excluded_files.add("repo_catalog.json")
                 # Multi-repo artifacts and reused inputs can contain nested telemetry.
                 # Let removal failures stop indexing rather than ingesting those files.
                 for root, _, files in os.walk(f"{graphrag_source_path}/input"):

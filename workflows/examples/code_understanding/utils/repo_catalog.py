@@ -6,6 +6,7 @@ its siblings. Everything here is read from files data generation already wrote
 costs no model calls.
 """
 
+import json
 import logging
 import os
 import re
@@ -141,6 +142,25 @@ def _repo_entry(parent_target_path: str, item: dict) -> dict:
 def build_repo_catalog(parent_target_path: str, git_repos: list[dict]) -> dict:
     """Catalog of every listed repository, built from its generated data under ``parent_target_path``."""
     return {"repos": [_repo_entry(parent_target_path, item) for item in git_repos]}
+
+
+def save_repo_catalog(catalog: dict, parent_target_path: str) -> str:
+    """Write ``<parent_target_path>/repo_catalog.json``, log it, and return its path."""
+    path = os.path.join(parent_target_path, CATALOG_FILENAME)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(catalog, handle, indent=2, sort_keys=True)
+    # The deep pass reads the file on disk; logging it is best effort.
+    try:
+        from loaders.default_asset_loader import DefaultAssetLoader
+
+        DefaultAssetLoader().log_results(
+            path,
+            artifact_path=DefaultAssetLoader.get_log_results_artifact_path(
+                DefaultAssetLoader.RESULTS_PATH_PREFIX_METADATA, git_slug=None, multi_repo=True),
+            tags={"category": "data-generation", "multi_repo": "True", "repo-catalog": "true"})
+    except Exception as exc:
+        logger.warning("Repository catalog %s not logged: %s", path, exc)
+    return path
 
 
 _SEPARATORS = (".", "/", "::")
