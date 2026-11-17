@@ -592,5 +592,20 @@ class TestSaveRepoCatalog(unittest.TestCase):
             self.assertEqual(json.load(handle), self.CATALOG)
 
 
+class TestExtractGraphPromptRule(unittest.TestCase):
+    PROMPT = (Path(__file__).resolve().parents[1] / "assets/graphrag/extract_graph.txt").read_text()
+
+    def test_prompt_recognises_the_annotation_format_annotation_writes(self):
+        annotation = format_annotation([{"git_repo": "U", "git_slug": "S", "package": "p",
+                                         "purpose": "", "runtime": ""}])
+        self.assertTrue(annotation.startswith("(provided by repository "))
+        self.assertIn("(provided by repository <url>, slug <slug>", self.PROMPT)
+
+    def test_rule_names_the_relationship_and_the_no_annotation_guard(self):
+        self.assertIn("An import line with no annotation is\n  unaffected by this rule.", self.PROMPT)
+        rule = self.PROMPT[self.PROMPT.index("(provided by repository <url>"):]
+        self.assertIn("CROSS_REPO_IMPORTS", rule[:700])
+
+
 if __name__ == "__main__":
     unittest.main()
