@@ -12,12 +12,15 @@ from provenance.pipeline import FACTS_FILENAME
 from utils.code_utils import generate_slug_from_repo
 from utils.repo_catalog import (
     build_repo_catalog,
+    format_annotation,
     read_flat_metadata,
     require_focal_in_list,
+    resolve_import,
 )
 
 TRAIN = "https://github.com/org/train"
 TIMETABLE = "https://github.com/org/timetable"
+RAIL = "https://github.com/org/rail"
 
 
 def write_meta(repo_dir, rel, **fields):
@@ -241,6 +244,150 @@ class TestBuildRepoCatalog(RealYaml):
         missing = "https://github.com/org/absent"
         with self.assertRaisesRegex(RuntimeError, "org/absent"):
             self.build([{"git_repo": missing, "git_branch": "main"}])
+
+
+def one_repo_catalog(packages, runtime_stack=None):
+    repo = {"git_repo": "https://github.com/org/lib", "git_branch": "main", "git_slug": "org-lib-main",
+            "packages": packages}
+    if runtime_stack:
+        repo["runtime_stack"] = runtime_stack
+    return {"repos": [repo]}
+
+
+class TestResolveImport(unittest.TestCase):
+    FOCAL = "org-timetable-main"
+    CATALOG = {"repos": [
+        {"git_repo": TIMETABLE, "git_branch": "main", "git_slug": "org-timetable-main",
+         "packages": [{"package": "com.org.timetable",
+                       "files": [{"file_path": "src/Model.java", "purpose": "Timetable model."}]}]},
+        {"git_repo": TRAIN, "git_branch": "main", "git_slug": "org-train-main", "runtime_stack": ["Java 17"],
+         "packages": [
+             {"package": "com.org.train", "files": [
+                 {"file_path": "src/Car.java", "purpose": "Models a car."},
+                 {"file_path": "src/Train.java", "purpose": "Models a train."}]},
+             {"package": "com.org.train.api", "files": [
+                 {"file_path": "src/api/Routes.java", "purpose": "HTTP routes."}]}]},
+        # Listed after org-train-main so the slug sort is observable.
+        {"git_repo": RAIL, "git_branch": "main", "git_slug": "org-rail-main",
+         "packages": [{"package": "com.org.train",
+                       "files": [{"file_path": "src/Rail.java", "purpose": "Rail things."}]}]},
+    ]}
+
+    def resolve(self, import_name, catalog=None):
+        return resolve_import(import_name, catalog or self.CATALOG, self.FOCAL)
+
+    def by_slug(self, import_name):
+        return {match["git_slug"]: match for match in self.resolve(import_name)}
+
+    def test_exact_match(self):
+        self.assertEqual([(m["git_slug"], m["package"]) for m in self.resolve("com.org.train.api")],
+                         [("org-train-main", "com.org.train.api")])
+
+    def test_prefix_match_with_dot(self):
+        self.assertEqual(self.resolve("com.org.train.api.Routes"), [
+            {"git_repo": TRAIN, "git_slug": "org-train-main", "package": "com.org.train.api",
+             "purpose": "HTTP routes.", "runtime": "Java 17"}])
+
+    def test_wildcard_import(self):
+        self.assertEqual([(m["git_slug"], m["package"]) for m in self.resolve("com.org.train.api.*")],
+                         [("org-train-main", "com.org.train.api")])
+
+    def test_longest_package_wins(self):
+        self.assertEqual([m["package"] for m in self.resolve("com.org.train.api.Routes")],
+                         ["com.org.train.api"])
+
+    def test_tie_returns_both_sorted_by_slug(self):
+        matches = self.resolve("com.org.train.Train")
+        self.assertEqual([m["git_slug"] for m in matches], ["org-rail-main", "org-train-main"])
+        self.assertEqual({m["package"] for m in matches}, {"com.org.train"})
+
+    def test_string_prefix_that_is_not_a_path_prefix_does_not_match(self):
+        # Review Focus 1.
+        self.assertEqual(self.resolve("com.org.trainer.Core"), [])
+        self.assertEqual(self.resolve("trainer.core", one_repo_catalog(
+            [{"package": "train", "files": [{"file_path": "train/core.py"}]}])), [])
+
+    def test_slash_and_double_colon_separators(self):
+        catalog = one_repo_catalog([
+            {"package": "lib/train", "files": [{"file_path": "lib/train/car.go"}]},
+            {"package": "train", "files": [{"file_path": "src/car.rs"}]}])
+        self.assertEqual([m["package"] for m in self.resolve("lib/train/car", catalog)], ["lib/train"])
+        self.assertEqual([m["package"] for m in self.resolve("train::car", catalog)], ["train"])
+
+    def test_own_package_never_matches(self):
+        self.assertEqual(self.resolve("com.org.timetable.Model"), [])
+
+    def test_relative_import_never_resolves(self):
+        self.assertEqual(self.resolve("..train"), [])
+
+    def test_empty_import_never_resolves(self):
+        self.assertEqual(self.resolve(""), [])
+
+    def test_no_match(self):
+        self.assertEqual(self.resolve("org.junit.Test"), [])
+
+    def test_matching_is_case_sensitive(self):
+        self.assertEqual(self.resolve("com.org.Train.api"), [])
+
+    def test_file_purpose_used_when_last_segment_names_a_file(self):
+        matches = self.by_slug("com.org.train.Car")
+        self.assertEqual(matches["org-train-main"]["purpose"], "Models a car.")
+        self.assertEqual(matches["org-rail-main"]["purpose"], "Rail things.")
+
+    def test_package_purpose_joins_first_three_files(self):
+        self.assertEqual(self.by_slug("com.org.train.*")["org-train-main"]["purpose"],
+                         "Models a car.; Models a train.")
+        catalog = one_repo_catalog([{"package": "pkg", "files": [
+            {"file_path": "pkg/d.py", "purpose": "D."}, {"file_path": "pkg/a.py", "purpose": "A."},
+            {"file_path": "pkg/b.py"}, {"file_path": "pkg/c.py", "purpose": "C."}]}])
+        self.assertEqual(self.resolve("pkg", catalog)[0]["purpose"], "A.; C.")
+
+    def test_purpose_is_one_line_and_at_most_200_chars(self):
+        text = "Line one.\n  Line\ttwo.  " + "x" * 300
+        catalog = one_repo_catalog([{"package": "pkg", "files": [{"file_path": "pkg/a.py", "purpose": text}]}])
+        purpose = self.resolve("pkg.a", catalog)[0]["purpose"]
+        self.assertEqual(purpose, ("Line one. Line two. " + "x" * 300)[:200])
+        self.assertEqual(len(purpose), 200)
+
+    def test_runtime_joined(self):
+        self.assertEqual(self.by_slug("com.org.train.Train")["org-train-main"]["runtime"], "Java 17")
+        catalog = one_repo_catalog([{"package": "pkg", "files": [{"file_path": "pkg/a.py"}]}],
+                                   ["Python 3.12", "pip 24"])
+        self.assertEqual(self.resolve("pkg", catalog)[0]["runtime"], "Python 3.12 / pip 24")
+
+    def test_unknown_purpose_and_runtime_are_empty(self):
+        match = self.resolve("lib.x", one_repo_catalog([{"package": "lib", "files": [{"file_path": "lib/x.py"}]}]))[0]
+        self.assertEqual((match["purpose"], match["runtime"]), ("", ""))
+
+
+class TestFormatAnnotation(unittest.TestCase):
+    TRAIN_MATCH = {"git_repo": TRAIN, "git_slug": "org-train-main",
+                   "package": "com.org.train", "purpose": "Models a train.", "runtime": "Java 17"}
+
+    def test_full(self):
+        self.assertEqual(
+            format_annotation([self.TRAIN_MATCH]),
+            "(provided by repository https://github.com/org/train, slug org-train-main; "
+            "purpose: Models a train.; runtime: Java 17)")
+
+    def test_omits_empty_purpose_and_runtime(self):
+        self.assertEqual(format_annotation([dict(self.TRAIN_MATCH, purpose="", runtime="")]),
+                         "(provided by repository https://github.com/org/train, slug org-train-main)")
+        self.assertEqual(format_annotation([dict(self.TRAIN_MATCH, purpose="")]),
+                         "(provided by repository https://github.com/org/train, slug org-train-main; "
+                         "runtime: Java 17)")
+
+    def test_two_matches_are_two_groups_separated_by_a_space(self):
+        rail = {"git_repo": RAIL, "git_slug": "org-rail-main", "package": "com.org.train",
+                "purpose": "Rail things.", "runtime": ""}
+        self.assertEqual(
+            format_annotation([rail, self.TRAIN_MATCH]),
+            "(provided by repository https://github.com/org/rail, slug org-rail-main; purpose: Rail things.) "
+            "(provided by repository https://github.com/org/train, slug org-train-main; "
+            "purpose: Models a train.; runtime: Java 17)")
+
+    def test_no_matches_is_empty_string(self):
+        self.assertEqual(format_annotation([]), "")
 
 
 if __name__ == "__main__":
