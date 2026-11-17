@@ -6,6 +6,8 @@ The [PR container images workflow](../../.github/workflows/pr-images.yml) runs
 when a pull request is opened, reopened, or updated with new commits. It builds
 the PR head commit for Linux AMD64, discovering every immediate subdirectory of
 `resources/images` that contains a `Containerfile`, including `pipeline-tools`.
+It also builds `console-app` from `ui/Dockerfile` and `console-plugin` from
+`console-plugin/Dockerfile`.
 Every eligible image is built, regardless of which files changed.
 
 Builds run in parallel without Quay credentials. Each image is saved as a workflow
@@ -18,6 +20,8 @@ quay.io/ai-shadowman/data-generation:pr123
 quay.io/ai-shadowman/data-indexing:pr123
 quay.io/ai-shadowman/data-analysis:pr123
 quay.io/ai-shadowman/pipeline-tools:pr123
+quay.io/ai-shadowman/console-app:pr123
+quay.io/ai-shadowman/console-plugin:pr123
 ```
 
 Configure these repository secrets under **Settings → Secrets and variables →
@@ -44,12 +48,14 @@ New image directories are discovered automatically and use the repository root a
 the build context so every image can copy and pre-install the local
 `workflows/examples/code_understanding` package alongside its pinned
 `requirements.txt`.
+The console app also uses the repository root as its build context; the console
+plugin uses `console-plugin` as its build context.
 
 ## Tagged release builds (GitHub Actions)
 
 The [release container images workflow](../../.github/workflows/release-images.yml)
 runs when a Git tag is pushed. It checks that the tagged commit belongs to
-`main`'s history, then builds and pushes the four images for Linux AMD64 using
+`main`'s history, then builds and pushes all six images for Linux AMD64 using
 the existing `QUAY_USERNAME` and `QUAY_TOKEN` secrets. Each image uses the exact
 Git tag, for example:
 
@@ -58,6 +64,8 @@ quay.io/ai-shadowman/data-generation:v1.0.4
 quay.io/ai-shadowman/data-indexing:v1.0.4
 quay.io/ai-shadowman/data-analysis:v1.0.4
 quay.io/ai-shadowman/pipeline-tools:v1.0.4
+quay.io/ai-shadowman/console-app:v1.0.4
+quay.io/ai-shadowman/console-plugin:v1.0.4
 ```
 
 Tags must be valid container image tags. Images build and push independently;
