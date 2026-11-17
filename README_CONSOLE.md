@@ -42,8 +42,9 @@ The console consists of two components that work together:
 
    # Optional overrides (defaults shown)
    CONSOLE_APP_IMAGE_NAME=console-app
+   CONSOLE_APP_IMAGE_TAG=latest
    CONSOLE_PLUGIN_IMAGE_NAME=console-plugin
-   CONSOLE_IMAGE_TAG=latest
+   CONSOLE_PLUGIN_IMAGE_TAG=latest
    ```
 
 ---

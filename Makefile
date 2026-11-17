@@ -23,8 +23,9 @@ PIPELINE_RUN_ID     	?=
 PROJECT_SLUG        	?=
 PROJECT_WORKSPACE   	?=
 CONSOLE_APP_IMAGE_NAME    ?= console-app
+CONSOLE_APP_IMAGE_TAG     ?= latest
 CONSOLE_PLUGIN_IMAGE_NAME ?= console-plugin
-CONSOLE_IMAGE_TAG         ?= latest
+CONSOLE_PLUGIN_IMAGE_TAG  ?= latest
 CONSOLE_ROUTE_ENABLED     ?= false
 CONSOLE_ROUTE_HOST        ?=
 
@@ -145,7 +146,7 @@ build-images:
 
 build-console-app-image:
 	@set -a && . $(ENV_FILE) && set +a && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	echo "==> Building console application image: $$CONSOLE_IMG..." && \
 	podman build -f ui/Dockerfile -t "$$CONSOLE_IMG" . && \
 	echo "==> Pushing console application image: $$CONSOLE_IMG..." && \
@@ -153,7 +154,7 @@ build-console-app-image:
 
 build-console-plugin-image:
 	@set -a && . $(ENV_FILE) && set +a && \
-	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	echo "==> Building console plugin image: $$PLUGIN_IMG..." && \
 	podman build -f console-plugin/Dockerfile -t "$$PLUGIN_IMG" console-plugin && \
 	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
@@ -161,7 +162,7 @@ build-console-plugin-image:
 
 push-console-plugin-image:
 	@set -a && . $(ENV_FILE) && set +a && \
-	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
 	podman push "$$PLUGIN_IMG"
 
@@ -464,7 +465,7 @@ _deploy-console-app-manifests:
 deploy-console-app:
 	@set -a && . $(ENV_FILE) && set +a && \
 	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
 
 port-forward-console-app:
@@ -475,7 +476,7 @@ port-forward-console-app:
 oc-deploy-console-app:
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
-	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	APP_TAG="$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
@@ -517,15 +518,16 @@ _deploy-console-plugin-manifests:
 deploy-console-plugin:
 	@set -a && . $(ENV_FILE) && set +a && \
 	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
-	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
-	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
+	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
 
 oc-deploy-console-plugin:
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
+	APP_TAG="$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	PLUGIN_NAME="$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}" && \
-	APP_TAG="$${CONSOLE_IMAGE_TAG:-$(CONSOLE_IMAGE_TAG)}" && \
+	PLUGIN_TAG="$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	echo "==> Ensuring OpenShift binary BuildConfig $$APP_NAME exists in $$KFP_NAMESPACE..." && \
 	oc get bc "$$APP_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$APP_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
@@ -537,11 +539,11 @@ oc-deploy-console-plugin:
 	oc get bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" >/dev/null 2>&1 || \
 		oc new-build --name="$$PLUGIN_NAME" --binary --strategy=docker -n "$$KFP_NAMESPACE" && \
 	oc patch bc "$$PLUGIN_NAME" -n "$$KFP_NAMESPACE" --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"$$PLUGIN_NAME:$$APP_TAG\"}}}}" && \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"$$PLUGIN_NAME:$$PLUGIN_TAG\"}}}}" && \
 	echo "==> Building $$PLUGIN_NAME in-cluster from console-plugin/..." && \
 	oc start-build "$$PLUGIN_NAME" --from-dir=console-plugin --follow -n "$$KFP_NAMESPACE" && \
 	CONSOLE_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$APP_NAME:$$APP_TAG" && \
-	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$APP_TAG" && \
+	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$PLUGIN_TAG" && \
 	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
 
 enable-console-plugin:
