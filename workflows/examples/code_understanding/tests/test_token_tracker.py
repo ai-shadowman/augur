@@ -362,6 +362,33 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
             self.assertEqual(result, "# Migration Report Content")
             mock_run.assert_called_once()
 
+    def run_analysis(self, **kwargs):
+        from pipelines.base.analysis import AnalysisPipeline
+        mock_loader = MagicMock()
+        mock_analyzer = MagicMock(token_tracker=None)
+        mock_analyzer.generate_migration_report = AsyncMock(return_value="# Migration Report Content")
+
+        with patch('loaders.default_asset_loader.DefaultAssetLoader', return_value=mock_loader), \
+             patch('utils.graphrag_utils.DependencyAnalyzer', return_value=mock_analyzer), \
+             patch('utils.duration_tracker.find_all_telemetry_files', return_value=[]), \
+             patch('utils.duration_tracker.DurationTracker.get_instance', return_value=None), \
+             patch('utils.code_metrics_tracker.CodeMetricsTracker.get_instance', return_value=None), \
+             patch.dict(os.environ, {'GIT_REPO': ''}):
+            AnalysisPipeline.run.__wrapped__(AnalysisPipeline(), "graphrag", multi_repo=True, **kwargs)
+        return mock_loader.log_results
+
+    def test_analysis_tags_carry_scan_mode_when_given(self):
+        log_results = self.run_analysis(scan_mode="single-multi-repo")
+        log_results.assert_called_once()
+        self.assertEqual(log_results.call_args.kwargs["tags"]["scan_mode"], "single-multi-repo")
+
+    def test_analysis_tags_have_no_scan_mode_key_by_default(self):
+        log_results = self.run_analysis()
+        log_results.assert_called_once()
+        # Exactly today's tags: no scan_mode key.
+        self.assertEqual(log_results.call_args.kwargs["tags"],
+                         {"git_slug": "multi-repo", "multi_repo": "True", "category": "analysis"})
+
     def test_multi_repo_token_table_placed_at_end(self):
         """Verify that in multi-repo mode, the LLM token summary table is placed at the very end of the report."""
         import asyncio

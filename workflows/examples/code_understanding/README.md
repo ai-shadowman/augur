@@ -53,6 +53,17 @@ integration. Enabling the previously skipped sections increases the number of
 LLM queries for multi-repository reports from three to twelve and supplies more
 context to later queries.
 
+The single multi-repository mode (`scripts/run_pipelines.sh --single-multi-repo`)
+runs the multi-repository scan, then a deep scan of the repository named by
+`GIT_REPO`, which must be one of the listed repositories. Before the deep scan,
+each import in the focal repository that a sibling repository provides is
+annotated with that repository's URL, slug, purpose and runtime. Only imports
+are resolved; declared build dependencies, such as `pom.xml` entries, are not.
+Results for the focal repository are stored on the single-repository paths, so
+this run and a plain single-repository run of the same repository replace each
+other's results. The catalog of all listed repositories, `repo_catalog.json`, is
+logged with the multi-repository metadata.
+
 Exact target versions, CVEs, supported upgrade paths, and support-status claims
 require supplied reference evidence. Without it, the prompts recommend a
 direction, mark verification tasks, and use `null` for unknown JSON scalar

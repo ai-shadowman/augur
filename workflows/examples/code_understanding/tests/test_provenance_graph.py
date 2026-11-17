@@ -19,9 +19,9 @@ REPO = "https://github.com/celery/celery.git"
 SLUG = "celery-v2-5-5"
 
 
-def corpus(paths, runtime=None, slug=SLUG):
+def corpus(paths, runtime=None, slug=SLUG, multi_repo=False):
     return Corpus(files=[
-        CorpusFile(path=p, git_repo=REPO, git_slug=slug, multi_repo=False, runtime=runtime)
+        CorpusFile(path=p, git_repo=REPO, git_slug=slug, multi_repo=multi_repo, runtime=runtime)
         for p in paths
     ])
 
@@ -518,10 +518,11 @@ class TestGroundRepository(unittest.TestCase):
 class TestBelongsTo(unittest.TestCase):
     """The edge the prompt used to ask for, emitted from the join instead."""
 
-    def ground(self, rows, edges=()):
+    def ground(self, rows, edges=(), slug=SLUG, multi_repo=False):
         report = GroundingReport()
         entities, relationships = graph.ground_repository(
-            corpus(["celery/app/base.py"]), entity_frame(rows), edge_frame(edges), report,
+            corpus(["celery/app/base.py"], slug=slug, multi_repo=multi_repo),
+            entity_frame(rows), edge_frame(edges), report,
         )
         return entities, relationships, report
 
@@ -571,6 +572,62 @@ class TestBelongsTo(unittest.TestCase):
         ])
         self.assertEqual(report.belongs_to_added, 1)
         self.assertEqual(relationships.at[0, "weight"], graph.BELONGS_TO_WEIGHT)
+
+    SIBLING = ("ORG-TIMETABLE-MAIN::COM.ORG.TIMETABLE.CLIENT", "MODULE", "The timetable client.")
+
+    def test_other_repository_module_gets_no_belongs_to(self):
+        entities, relationships, _ = self.ground([
+            ("ORG-TRAIN-MAIN", "REPOSITORY", "The train service."),
+            ("CELERY/APP/BASE.PY", "MODULE", "Base."),
+            self.SIBLING,
+        ], slug="org-train-main")
+        edges = set(zip(relationships["source"], relationships["target"]))
+        self.assertNotIn((self.SIBLING[0], "ORG-TRAIN-MAIN"), edges)
+        self.assertIn(("CELERY/APP/BASE.PY", "ORG-TRAIN-MAIN"), edges)
+        row = entities[entities["title"] == self.SIBLING[0]]
+        self.assertEqual(
+            [tuple(r) for r in row[["title", "type", "description"]].itertuples(index=False)],
+            [self.SIBLING],
+        )
+
+    def test_own_slug_prefixed_module_still_gets_belongs_to(self):
+        _, relationships, _ = self.ground([
+            ("ORG-TRAIN-MAIN", "REPOSITORY", "The train service."),
+            ("org-train-main::PKG.MOD", "MODULE", "Own module, prefixed."),
+            ("::PKG.OTHER", "MODULE", "An empty prefix names no other repository."),
+        ], slug="org-train-main")
+        targets = relationships[relationships["target"] == "ORG-TRAIN-MAIN"]
+        self.assertEqual(sorted(targets["source"]), ["::PKG.OTHER", "org-train-main::PKG.MOD"])
+
+    def test_belongs_to_count_excludes_other_repository_modules(self):
+        _, relationships, report = self.ground([
+            ("ORG-TRAIN-MAIN", "REPOSITORY", "The train service."),
+            ("CELERY/APP/BASE.PY", "MODULE", "Base."),
+            self.SIBLING,
+        ], slug="org-train-main")
+        self.assertEqual(report.belongs_to_added, 1)
+        self.assertEqual(report.belongs_to_added, len(relationships))
+
+    def test_multi_repo_corpus_links_other_repository_module_as_before(self):
+        _, relationships, report = self.ground([
+            ("ORG-TRAIN-MAIN", "REPOSITORY", "The train service."),
+            ("CELERY/APP/BASE.PY", "MODULE", "Base."),
+            self.SIBLING,
+        ], slug="org-train-main", multi_repo=True)
+        edges = set(zip(relationships["source"], relationships["target"]))
+        self.assertIn((self.SIBLING[0], "ORG-TRAIN-MAIN"), edges)
+        self.assertEqual(report.belongs_to_added, 2)
+
+    def test_language_namespaces_still_get_belongs_to(self):
+        # Ruby and C++ write "::" themselves; a slug always contains "-", these never do.
+        _, relationships, report = self.ground([
+            ("ORG-TRAIN-MAIN", "REPOSITORY", "The train service."),
+            ("MYAPP::UTILS", "MODULE", "A Ruby module."),
+            ("BOOST::ASIO", "PACKAGE", "A C++ namespace."),
+        ], slug="org-train-main")
+        targets = relationships[relationships["target"] == "ORG-TRAIN-MAIN"]
+        self.assertEqual(sorted(targets["source"]), ["BOOST::ASIO", "MYAPP::UTILS"])
+        self.assertEqual(report.belongs_to_added, 2)
 
 
 class TestGround(unittest.TestCase):

@@ -13,7 +13,8 @@ from utils.otel_utils import enable_telemetry
 
 @enable_telemetry
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
-                            git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
+                            git_repo: str = "", git_branch: str = "", multi_repo: bool = False,
+                            scan_mode: str = ""):
     """Generates a GraphRAG index from the provided codebase."""
     import shutil, traceback, nest_asyncio
     from loaders.default_asset_loader import DefaultAssetLoader
@@ -26,6 +27,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
     git_repo = git_repo or os.getenv("GIT_REPO", "")
     git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
     git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+    scan_tags = {"scan_mode": scan_mode} if scan_mode else {}
 
     status = "fail"
 
@@ -168,6 +170,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                     for base_t in ["durations", "tokens", "project_metrics", "benchmark_results"]
                     for suffix in [".json", ".txt", "_metadata.txt"]
                 }
+                excluded_files.add("repo_catalog.json")
                 # Multi-repo artifacts and reused inputs can contain nested telemetry.
                 # Let removal failures stop indexing rather than ingesting those files.
                 for root, _, files in os.walk(f"{graphrag_source_path}/input"):
@@ -279,7 +282,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
                                          artifact_path=artifact_path,
                                          tags={"git_slug": str(git_slug or "multi-repo"),
                                                "category": "indexing",
-                                               "multi_repo": str(multi_repo)})
+                                               "multi_repo": str(multi_repo), **scan_tags})
 
         status = "success"
 
@@ -314,7 +317,7 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
             content=json.dumps(result),
 
-            tags={"git_slug": git_slug, "category": "indexing", "multi_repo": multi_repo},
+            tags={"git_slug": git_slug, "category": "indexing", "multi_repo": multi_repo, **scan_tags},
 
         )
 
@@ -406,7 +409,7 @@ class IndexingPipeline:
 
     @enable_telemetry
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
-            multi_repo: bool = False):
+            multi_repo: bool = False, scan_mode: str = ""):
         """Generates a GraphRAG index and returns a status dict."""
         import traceback
         import os
@@ -416,7 +419,7 @@ class IndexingPipeline:
             generate_graphrag_index(codebase_path=codebase_path,
                                     graphrag_source_path=graphrag_source_path,
                                     git_repo=git_repo, git_branch=git_branch,
-                                    multi_repo=multi_repo)
+                                    multi_repo=multi_repo, scan_mode=scan_mode)
 
             logging.info("GraphRAG index generation complete.")
 
