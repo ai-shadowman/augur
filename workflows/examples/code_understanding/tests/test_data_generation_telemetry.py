@@ -529,7 +529,8 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
              patch("utils.code_metrics_tracker.CodeMetricsTracker.get_instance", return_value=None), \
              patch("loaders.default_asset_loader.DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS", "results/repo-datasets", create=True), \
              patch("loaders.default_asset_loader.DefaultAssetLoader.log_results") as log_results, \
-             patch("pipelines.graphrag.run_graphrag", side_effect=inspect_input):
+             patch("pipelines.graphrag.run_graphrag", side_effect=inspect_input), \
+             patch.dict(os.environ, {"GIT_REPO": ""}):
             generate_graphrag_index.__wrapped__(
                 str(self.codebase), str(self.graphrag), multi_repo=True, **kwargs,
             )

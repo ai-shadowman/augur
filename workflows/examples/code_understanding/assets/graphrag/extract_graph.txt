@@ -31,13 +31,15 @@ BELONGS_TO edge are added from the header after extraction. Report what the code
      If a manifest or build file declares a version, add a sentence "Version: <spec>." to
      the description, using the spec exactly as declared.
   If unsure between b and c, use library. Never leave entity_type blank.
-- An import line in the header may end with one or more annotations of the form
-  "(provided by repository <url>, slug <slug>; purpose: <text>; runtime: <text>)". Such an
-  import is application code of ANOTHER repository, not a library. Type it module, name it
-  <slug>::<imported name> using the slug from the annotation whatever multi_repo says, and
-  put the purpose and runtime in its description. Relate the importing module to it with
-  CROSS_REPO_IMPORTS. Never emit the same import as a library as well. If there are several
-  annotations, emit one such entity per annotation. An import line with no annotation is
+- An import line in the header, or an imports_N value in a metadata document, may end with
+  one or more annotations of the form
+  "(provided by repository <url>, slug <slug>; purpose: <text>; runtime: <text>)", where the
+  purpose and runtime parts may be missing. Such an import is application code of ANOTHER
+  repository, not a library. Type it module, name it <slug>::<imported name> using the slug
+  from the annotation whatever multi_repo says, and put the purpose and runtime, when given,
+  in its description. Relate the importing module to it with CROSS_REPO_IMPORTS. Never emit
+  the same import as a library as well. If there are several annotations, emit one such
+  entity per annotation. An import line with no annotation is
   unaffected by this rule.
 - entity_description: Comprehensive description of the entity's role, responsibilities, and key behaviors. Always refer to the entity using its exact original casing as found in the source (e.g. write "game.py" not "GAME.PY" if the source file is named game.py).
 

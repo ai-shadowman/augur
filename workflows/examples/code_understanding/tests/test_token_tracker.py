@@ -372,7 +372,8 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
              patch('utils.graphrag_utils.DependencyAnalyzer', return_value=mock_analyzer), \
              patch('utils.duration_tracker.find_all_telemetry_files', return_value=[]), \
              patch('utils.duration_tracker.DurationTracker.get_instance', return_value=None), \
-             patch('utils.code_metrics_tracker.CodeMetricsTracker.get_instance', return_value=None):
+             patch('utils.code_metrics_tracker.CodeMetricsTracker.get_instance', return_value=None), \
+             patch.dict(os.environ, {'GIT_REPO': ''}):
             AnalysisPipeline.run.__wrapped__(AnalysisPipeline(), "graphrag", multi_repo=True, **kwargs)
         return mock_loader.log_results
 

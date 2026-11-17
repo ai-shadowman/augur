@@ -1,3 +1,4 @@
+import ast
 import importlib
 import json
 import os
@@ -120,6 +121,11 @@ class TestReadFlatMetadata(RealYaml):
         path = write_meta(self.tmp.name, "A_metadata.txt",
                           file_path="A.py", language=None, package="", purpose="", imports_0=None)
         self.assertEqual(read_flat_metadata(path), {"file_path": "A.py"})
+
+    def test_non_string_scalars_are_coerced_to_str(self):
+        path = write_meta(self.tmp.name, "A_metadata.txt", file_path="A.py", package=12, purpose=True, imports_0=5)
+        self.assertEqual(read_flat_metadata(path),
+                         {"file_path": "A.py", "package": "12", "purpose": "True", "imports": ["5"]})
 
     def test_file_without_file_path_is_none(self):
         path = write_meta(self.tmp.name, "A_metadata.txt", language="java", package="com.a")
@@ -327,6 +333,23 @@ class TestResolveImport(unittest.TestCase):
     def test_own_package_never_matches(self):
         self.assertEqual(self.resolve("com.org.timetable.Model"), [])
 
+    def focal_and_sibling(self, focal_package, sibling_package):
+        repos = [(TIMETABLE, self.FOCAL, focal_package), (TRAIN, "org-train-main", sibling_package)]
+        return {"repos": [{"git_repo": url, "git_branch": "main", "git_slug": slug,
+                           "packages": [{"package": package, "files": [{"file_path": "src/X.java"}]}]}
+                          for url, slug, package in repos]}
+
+    def test_own_package_vetoes_a_shorter_sibling_package(self):
+        self.assertEqual(self.resolve("com.org.timetable.Model",
+                                      self.focal_and_sibling("com.org.timetable", "com.org")), [])
+
+    def test_own_package_vetoes_an_equal_sibling_package(self):
+        self.assertEqual(self.resolve("app.models", self.focal_and_sibling("app", "app")), [])
+
+    def test_longer_sibling_package_still_beats_own_package(self):
+        matches = self.resolve("com.org.train.Train", self.focal_and_sibling("com.org", "com.org.train"))
+        self.assertEqual([(m["git_slug"], m["package"]) for m in matches], [("org-train-main", "com.org.train")])
+
     def test_relative_import_never_resolves(self):
         self.assertEqual(self.resolve("..train"), [])
 
@@ -508,6 +531,17 @@ class TestAnnotateFocalRepo(RealYaml):
         self.assertEqual(data["imports_1"], "java.util.List")
         self.assertEqual((data["file_path"], data["package"]), ("src/Model.java", "com.org.timetable"))
 
+    def test_annotated_copy_parses_as_single_repo(self):
+        # The provenance _belongs_to skip relies on the annotated copy reading as multi_repo false.
+        from provenance.corpus import parse_header
+
+        write_meta(self.source, "src/Model_metadata.txt", file_path="src/Model.java", git_repo="U", git_slug="S",
+                   multi_repo="true", imports_0="com.org.train.Train")
+        self.annotate()
+        for name in ("Model.txt", "Model_metadata.txt"):
+            with self.subTest(name=name):
+                self.assertIs(parse_header((self.dest / "src" / name).read_text(encoding="utf-8")).multi_repo, False)
+
     def test_metadata_without_code_file_is_still_rewritten(self):
         import yaml
 
@@ -605,6 +639,66 @@ class TestExtractGraphPromptRule(unittest.TestCase):
         self.assertIn("An import line with no annotation is\n  unaffected by this rule.", self.PROMPT)
         rule = self.PROMPT[self.PROMPT.index("(provided by repository <url>"):]
         self.assertIn("CROSS_REPO_IMPORTS", rule[:700])
+
+
+class TestPrepareFocalCodebase(RealYaml):
+    LIST = [{"git_repo": TRAIN, "git_branch": "main"}, {"git_repo": TIMETABLE}]
+
+    def setUp(self):
+        # Slugs first: utils.code_utils loads numpy, which cannot be reloaded once RealYaml's scope drops it.
+        train, focal = (generate_slug_from_repo(repo, "main") for repo in (TRAIN, TIMETABLE))
+        super().setUp()
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.parent, self.dest = tmp / "target", tmp / "target-single-multi" / "focal"
+        focal = self.parent / focal
+        write_meta(self.parent / train, "src/Train_metadata.txt",
+                   file_path="src/Train.java", language="java", package="com.org.train", purpose="Models a train.")
+        write_meta(focal, "src/Model_metadata.txt", file_path="src/Model.java", language="java",
+                   package="com.org.timetable", imports_0="com.org.train.Train", imports_1="java.util.List")
+        (focal / "src" / "Model.txt").write_text(TestAnnotateFocalRepo.HEADER + TestAnnotateFocalRepo.REST,
+                                                 encoding="utf-8")
+        self.enterContext(patch("loaders.default_asset_loader.DefaultAssetLoader"))
+
+    def prepare(self, git_repo):
+        from utils.repo_catalog import prepare_focal_codebase
+
+        return prepare_focal_codebase(git_repo, "main", self.LIST, str(self.parent), str(self.dest))
+
+    def test_writes_catalog_and_annotated_copy_and_returns_counts(self):
+        self.assertEqual(self.prepare(TIMETABLE), {"files": 1, "resolved_imports": 1, "unresolved_imports": 1})
+        self.assertTrue((self.parent / "repo_catalog.json").is_file())
+        self.assertIn(f"- [import] com.org.train.Train (provided by repository {TRAIN}, slug ",
+                      (self.dest / "src" / "Model.txt").read_text(encoding="utf-8"))
+
+    def test_unlisted_focal_fails_before_anything_is_written(self):
+        with self.assertRaises(ValueError):
+            self.prepare(RAIL)
+        self.assertFalse((self.parent / "repo_catalog.json").exists())
+        self.assertFalse(self.dest.exists())
+
+
+class TestOrchestratorWiring(unittest.TestCase):
+    SRC = (Path(__file__).resolve().parents[1] / "pipelines/orchestrator.py").read_text()
+
+    def test_pipeline_is_defined_and_registered(self):
+        tree = ast.parse(self.SRC)
+        self.assertIn("single_multi_repo_pipeline",
+                      [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)])
+        self.assertIn('"single_multi_repo"', self.SRC)
+        self.assertIn('name="single-multi-repo-pipeline"', self.SRC)
+
+    def test_existing_pipelines_are_still_registered(self):
+        for key in ('"single_repo"', '"multi_repo"', '"data_generation"', '"indexing"', '"analysis"'):
+            self.assertIn(key, self.SRC)
+
+
+class TestRunScriptFlag(unittest.TestCase):
+    SH = (Path(__file__).resolve().parents[1] / "scripts/run_pipelines.sh").read_text()
+
+    def test_flag_and_pipeline_name(self):
+        self.assertIn('--single-multi-repo) MODE="single_multi"', self.SH)
+        self.assertIn('trigger_pipeline "single_multi_repo"', self.SH)
+        self.assertIn('MODE="multi"\n', self.SH)  # default unchanged
 
 
 if __name__ == "__main__":

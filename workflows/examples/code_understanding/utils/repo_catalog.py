@@ -54,12 +54,12 @@ def read_flat_metadata(path: str) -> dict | None:
         logger.warning("Skipping metadata without a file_path: %s", path)
         return None
 
-    meta = {key: data[key] for key in _SCALAR_FIELDS if data.get(key) not in (None, "")}
+    meta = {key: str(data[key]) for key in _SCALAR_FIELDS if data.get(key) not in (None, "")}
     lists: dict[str, list[tuple[int, object]]] = {}
     for key, value in data.items():
         match = _LIST_KEY.match(str(key))
         if match and value not in (None, ""):
-            lists.setdefault(match.group(1), []).append((int(match.group(2)), value))
+            lists.setdefault(match.group(1), []).append((int(match.group(2)), str(value)))
     for name in ("imports", "classes"):
         if name in lists:
             meta[name] = [value for _, value in sorted(lists[name], key=lambda pair: pair[0])]
@@ -177,18 +177,24 @@ def _purpose(import_name: str, files: list[dict]) -> str:
 
 
 def resolve_import(import_name: str, catalog: dict, focal_slug: str) -> list[dict]:
-    """Sibling packages providing ``import_name``: the longest matching package, one match per repository."""
+    """Sibling packages providing ``import_name``: the longest matching package, one match per repository.
+
+    The focal repository's own package wins ties and longer matches: the import is then internal, so ``[]``.
+    """
     if not import_name or import_name.startswith("."):
         return []
-    candidates = [(repo, package) for repo in catalog["repos"] if repo["git_slug"] != focal_slug
+    candidates = [(repo, package) for repo in catalog["repos"]
                   for package in repo.get("packages", [])
                   if import_name == package["package"]
                   or any(import_name.startswith(package["package"] + sep) for sep in _SEPARATORS)]
     longest = max((len(package["package"]) for _, package in candidates), default=0)
+    best = [(repo, package) for repo, package in candidates if len(package["package"]) == longest]
+    if any(repo["git_slug"] == focal_slug for repo, _ in best):
+        return []
     return sorted(({"git_repo": repo["git_repo"], "git_slug": repo["git_slug"], "package": package["package"],
                     "purpose": _purpose(import_name, package["files"]),
                     "runtime": " / ".join(repo.get("runtime_stack", []))}
-                   for repo, package in candidates if len(package["package"]) == longest),
+                   for repo, package in best),
                   key=lambda match: match["git_slug"])
 
 
@@ -264,4 +270,15 @@ def annotate_focal_repo(source_dir: str, dest_dir: str, catalog: dict, focal_slu
         counts["files"] += 1
         counts["resolved_imports"] += len(annotations)
         counts["unresolved_imports"] += len(imports) - len(annotations)
+    return counts
+
+
+def prepare_focal_codebase(git_repo: str, git_branch: str, git_repos: list[dict],
+                           parent_target_path: str, dest_dir: str) -> dict:
+    """Save the catalog of every listed repository and write the annotated focal copy to ``dest_dir``."""
+    focal_slug = require_focal_in_list(git_repo, git_branch, git_repos)
+    catalog = build_repo_catalog(parent_target_path, git_repos)
+    save_repo_catalog(catalog, parent_target_path)
+    counts = annotate_focal_repo(f"{parent_target_path}/{focal_slug}", dest_dir, catalog, focal_slug)
+    logger.info("Annotated focal repository %s: %s", focal_slug, counts)
     return counts

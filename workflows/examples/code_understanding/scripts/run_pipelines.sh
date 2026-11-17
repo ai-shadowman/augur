@@ -6,6 +6,7 @@
 #   ./run_pipelines.sh --single-repo   # trigger single-repo pipeline run
 #   ./run_pipelines.sh                 # trigger multi-repo pipeline run (default)
 #   ./run_pipelines.sh --multi-repo    # trigger multi-repo pipeline run
+#   ./run_pipelines.sh --single-multi-repo  # trigger single multi-repo pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
 #
 # Environment variables:
 #   KFP_NAMESPACE         Kubernetes namespace (KFP_HOST is derived from this)
@@ -24,6 +25,8 @@ Usage: $(basename "$0") [OPTION]...
 Options:
   --single-repo   Trigger single-repo pipeline run (GIT_REPO required)
   --multi-repo    Trigger multi-repo pipeline run (default)
+  --single-multi-repo
+                  Trigger single multi-repo pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
   -h, --help      Show this help message
 
 Environment variables:
@@ -123,6 +126,7 @@ for arg in "$@"; do
     case "$arg" in
         --single-repo) MODE="single" ;;
         --multi-repo)  MODE="multi" ;;
+        --single-multi-repo) MODE="single_multi" ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "Error: Unknown argument: $arg" >&2; usage; exit 1 ;;
     esac
@@ -134,6 +138,13 @@ if [[ "$MODE" == "single" ]]; then
         exit 1
     fi
     trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
+        "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
+elif [[ "$MODE" == "single_multi" ]]; then
+    if [[ -z "$GIT_REPO" ]]; then
+        echo "Error: GIT_REPO must be set and non-empty for --single-multi-repo." >&2
+        exit 1
+    fi
+    trigger_pipeline "single_multi_repo" "single_multi_repo_${TIMESTAMP}" \
         "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
 else
     trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}" \

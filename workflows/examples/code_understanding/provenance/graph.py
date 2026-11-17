@@ -308,7 +308,7 @@ def ground_repository(corpus: Corpus, entities, relationships, report: Grounding
         report.created.append(title)
 
     report.repository = title
-    relationships = _belongs_to(frame, relationships, title, report)
+    relationships = _belongs_to(frame, relationships, title, report, corpus.multi_repo)
     return frame, relationships
 
 
@@ -400,7 +400,9 @@ def ground_symbols(entities, relationships, report: GroundingReport, documents, 
     return frame, rewrite_edges(relationships, renames, report)
 
 
-def _belongs_to(entities, relationships, repository: str, report: GroundingReport):
+def _belongs_to(
+    entities, relationships, repository: str, report: GroundingReport, multi_repo: bool = True,
+):
     """Emit the ``BELONGS_TO`` edges the prompt used to ask for.
 
     This is a join, not a judgement: the membership of an entity in the only
@@ -412,6 +414,13 @@ def _belongs_to(entities, relationships, repository: str, report: GroundingRepor
     wanted = {
         str(t) for t, k in zip(entities["title"].astype(str), types, strict=False)
         if k in BELONGS_TO_TYPES and str(t) != repository
+        # In a single-repo index "<slug>::<name>" is another repository's module.
+        # Slugs always contain "-"; language namespaces (MYAPP::UTILS) never do.
+        and (multi_repo or not (
+            "::" in str(t)
+            and "-" in (prefix := str(t).split("::", 1)[0])
+            and prefix.lower() != repository.lower()
+        ))
     }
     if not wanted:
         return relationships
