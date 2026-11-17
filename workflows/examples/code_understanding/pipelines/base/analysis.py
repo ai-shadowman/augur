@@ -31,7 +31,7 @@ class AnalysisPipeline:
 
     @enable_telemetry
     def run(self, graphrag_source_path: str, git_repo: str = "", git_branch: str = "",
-            multi_repo: bool = False):
+            multi_repo: bool = False, scan_mode: str = ""):
         """Generates a migration report from the GraphRAG index and returns the result."""
         import asyncio
         from loaders.default_asset_loader import DefaultAssetLoader
@@ -161,7 +161,8 @@ class AnalysisPipeline:
                 multi_repo=multi_repo,
             ),
             content=report,
-            tags={"git_slug": str(git_slug or "multi-repo"), "multi_repo": str(multi_repo), "category": "analysis"},
+            tags={"git_slug": str(git_slug or "multi-repo"), "multi_repo": str(multi_repo), "category": "analysis",
+                  **({"scan_mode": scan_mode} if scan_mode else {})},
         )
 
         return report
@@ -291,11 +292,12 @@ class AnalysisPipeline:
 
 def write_migration_report(graphrag_source_path: str, report_path: str,
                            git_repo: str = "", git_branch: str = "",
-                           multi_repo: bool = False):
+                           multi_repo: bool = False, scan_mode: str = ""):
     """Run the migration report and write the result to report_path."""
     import os
     migration_report = AnalysisPipeline().run(graphrag_source_path, git_repo=git_repo,
-                                              git_branch=git_branch, multi_repo=multi_repo)
+                                              git_branch=git_branch, multi_repo=multi_repo,
+                                              scan_mode=scan_mode)
     if dirname := os.path.dirname(report_path):
         os.makedirs(dirname, exist_ok=True)
     with open(report_path, "w") as f:

@@ -24,7 +24,7 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @dsl.component(base_image=ANALYSIS_BASE_IMAGE, install_kfp_package=False)
 def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Markdown],
                                   git_repo: str = "", git_branch: str = "",
-                                  multi_repo: bool = False):
+                                  multi_repo: bool = False, scan_mode: str = ""):
 
     import logging
     import os
@@ -37,7 +37,8 @@ def generate_migration_report_op(graphrag_dir: Input[Dataset], report: Output[Ma
 
     with read_from_input_artifact(graphrag_dir) as tmp_graphrag:
         write_migration_report(tmp_graphrag, report.path, git_repo=git_repo,
-                               git_branch=git_branch, multi_repo=multi_repo)
+                               git_branch=git_branch, multi_repo=multi_repo,
+                               scan_mode=scan_mode)
 
     try:
         from utils.duration_tracker import DurationTracker
@@ -97,10 +98,12 @@ def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
+    scan_mode: str = "",
 ):
 
     generate_migration_report_op(graphrag_dir=graphrag_dir, git_repo=git_repo,
-                                 git_branch=git_branch, multi_repo=multi_repo)
+                                 git_branch=git_branch, multi_repo=multi_repo,
+                                 scan_mode=scan_mode)
 
 
 ##############################################################################

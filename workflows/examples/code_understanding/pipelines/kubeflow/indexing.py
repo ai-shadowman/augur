@@ -24,7 +24,8 @@ _AGENTMESH_INSTALLABLE_URL = get_pip_installable_git_url(
 @dsl.component(base_image=INDEXING_BASE_IMAGE, install_kfp_package=False)
 def graphrag_indexing_op(codebase_dir: Input[Dataset],
                           graphrag_dir: Output[Dataset], result: Output[Metrics],
-                          git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
+                          git_repo: str = "", git_branch: str = "", multi_repo: bool = False,
+                          scan_mode: str = ""):
 
     import logging
     import os
@@ -45,6 +46,7 @@ def graphrag_indexing_op(codebase_dir: Input[Dataset],
                 git_repo=git_repo,
                 git_branch=git_branch,
                 multi_repo=multi_repo,
+                scan_mode=scan_mode,
             )
             result.log_metric("success", 1)
         finally:
@@ -241,6 +243,7 @@ def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     multi_repo: bool = False,
+    scan_mode: str = "",
 ) -> Dataset:
 
     task = graphrag_indexing_op(
@@ -248,6 +251,7 @@ def _run_pipeline(
         git_repo=git_repo,
         git_branch=git_branch,
         multi_repo=multi_repo,
+        scan_mode=scan_mode,
     )
 
     graphrag_evaluation_op(

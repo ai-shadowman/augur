@@ -518,7 +518,7 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
         self.codebase.mkdir()
         (self.graphrag / "input").mkdir(parents=True)
 
-    def run_indexing(self, inspect_input):
+    def run_indexing(self, inspect_input, **kwargs):
         from pipelines.base.indexing import generate_graphrag_index
 
         with patch("utils.graphrag_utils.DependencyAnalyzer.prepare_settings"), \
@@ -528,11 +528,12 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
              patch("utils.token_tracker.TokenCostTracker.get_instance", return_value=None), \
              patch("utils.code_metrics_tracker.CodeMetricsTracker.get_instance", return_value=None), \
              patch("loaders.default_asset_loader.DefaultAssetLoader.RESULTS_PATH_PREFIX_REPO_DATASETS", "results/repo-datasets", create=True), \
-             patch("loaders.default_asset_loader.DefaultAssetLoader.log_results"), \
+             patch("loaders.default_asset_loader.DefaultAssetLoader.log_results") as log_results, \
              patch("pipelines.graphrag.run_graphrag", side_effect=inspect_input):
             generate_graphrag_index.__wrapped__(
-                str(self.codebase), str(self.graphrag), multi_repo=True,
+                str(self.codebase), str(self.graphrag), multi_repo=True, **kwargs,
             )
+        return log_results
 
     def test_root_and_nested_telemetry_are_absent_when_indexing_starts(self):
         names = (
@@ -579,6 +580,22 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
         self.run_indexing(inspect_input)
         self.assertEqual(observed, [
             "Main_metadata.txt", "utils/repo_catalog.txt", "utils/repo_catalog_metadata.txt",
+        ])
+
+    def test_indexing_tags_carry_scan_mode_when_given(self):
+        (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
+        log_results = self.run_indexing(lambda root: None, scan_mode="single-multi-repo")
+        self.assertEqual(log_results.call_count, 2)
+        for call in log_results.call_args_list:
+            self.assertEqual(call.kwargs["tags"]["scan_mode"], "single-multi-repo")
+
+    def test_indexing_tags_have_no_scan_mode_key_by_default(self):
+        (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
+        log_results = self.run_indexing(lambda root: None)
+        # Exactly today's tags: no scan_mode key on either call.
+        self.assertEqual([call.kwargs["tags"] for call in log_results.call_args_list], [
+            {"git_slug": "multi-repo", "category": "indexing", "multi_repo": "True"},
+            {"git_slug": None, "category": "indexing", "multi_repo": True},
         ])
 
     def test_stale_nested_telemetry_is_removed_from_reused_input(self):
