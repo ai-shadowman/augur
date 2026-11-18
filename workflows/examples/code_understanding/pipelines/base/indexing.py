@@ -13,19 +13,29 @@ from utils.otel_utils import enable_telemetry
 
 @enable_telemetry
 def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
-                            git_repo: str = "", git_branch: str = "", multi_repo: bool = False):
+                            git_repo: str = "", git_branch: str = "", multi_repo: bool = False,
+                            pipeline_run_id: str = "", project_slug: str = ""):
     """Generates a GraphRAG index from the provided codebase."""
+    if pipeline_run_id:
+        return
+
     import shutil, traceback, nest_asyncio
     from loaders.default_asset_loader import DefaultAssetLoader
     from pipelines.base.data_generation import generate_git_slug
     from utils.graphrag_utils import DependencyAnalyzer
     from pipelines.graphrag import run_graphrag
+    from utils.pipeline_utils import sanitize_slug
 
     nest_asyncio.apply()
 
     git_repo = git_repo or os.getenv("GIT_REPO", "")
     git_branch = git_branch or os.getenv("GIT_BRANCH", "main")
-    git_slug = generate_git_slug(git_repo, git_branch) if git_repo else None
+    clean_project_slug = sanitize_slug(project_slug)
+    git_slug = (
+        clean_project_slug
+        if (multi_repo and clean_project_slug)
+        else (generate_git_slug(git_repo, git_branch) if git_repo else None)
+    )
 
     status = "fail"
 
@@ -321,8 +331,10 @@ def generate_graphrag_index(codebase_path: str, graphrag_source_path: str,
 
 @enable_telemetry
 def evaluate_graphrag_index(graphrag_source_path: str, git_repo: str, git_branch: str,
-                            multi_repo: bool = False):
+                            multi_repo: bool = False, pipeline_run_id: str = ""):
     """Evaluates a GraphRAG index using DefaultCustomEvaluator.evaluate_with_dataset."""
+    if pipeline_run_id:
+        return None
     import os
     from pipelines.base.data_generation import generate_git_slug
     from eval.default_custom_evaluator import DefaultCustomEvaluator
@@ -406,7 +418,7 @@ class IndexingPipeline:
 
     @enable_telemetry
     def run(self, codebase_path: str, graphrag_source_path: str, git_repo: str, git_branch: str,
-            multi_repo: bool = False):
+            multi_repo: bool = False, project_slug: str = ""):
         """Generates a GraphRAG index and returns a status dict."""
         import traceback
         import os
@@ -416,7 +428,8 @@ class IndexingPipeline:
             generate_graphrag_index(codebase_path=codebase_path,
                                     graphrag_source_path=graphrag_source_path,
                                     git_repo=git_repo, git_branch=git_branch,
-                                    multi_repo=multi_repo)
+                                    multi_repo=multi_repo,
+                                    project_slug=project_slug)
 
             logging.info("GraphRAG index generation complete.")
 
@@ -450,17 +463,32 @@ class IndexingPipeline:
         return {"codebase_path": codebase_path, "graphrag_source_path": graphrag_source_path,
                 "status": "success", "fail_message": ""}
 
-    def run_multi_repo(self, parent_target_path: str, graphrag_source_path: str = None):
+    def run_multi_repo(
+        self,
+        parent_target_path: str,
+        graphrag_source_path: str = None,
+        pipeline_run_id: str = "",
+        project_slug: str = "",
+    ):
         """Runs GraphRAG indexing and evaluation across the combined multi-repo codebase."""
+        if pipeline_run_id:
+            return
+
         import os
         from loaders.default_asset_loader import DefaultAssetLoader
         from utils.loader_utils import download_code_metadata_directories
+        from utils.pipeline_utils import generate_multi_repo_slug
+
+        git_repos = DefaultAssetLoader().load_run_repos()
+        resolved_slug = generate_multi_repo_slug(git_repos, project_slug=project_slug)
 
         if graphrag_source_path is None:
-            graphrag_source_path = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
-
-        repo_list_env = os.getenv("GIT_REPO_LIST_CONTENTS")
-        git_repos = json.loads(repo_list_env) if repo_list_env else (DefaultAssetLoader().download("repos/repo_list.json") or [])
+            base_source = os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source")
+            graphrag_source_path = (
+                os.path.join(base_source, resolved_slug)
+                if resolved_slug and resolved_slug != "multi-repo"
+                else base_source
+            )
 
         download_code_metadata_directories(git_repos, parent_target_path)
 
@@ -470,6 +498,7 @@ class IndexingPipeline:
             git_repo="",
             git_branch="",
             multi_repo=True,
+            project_slug=resolved_slug,
         )
 
         if result.get("status") != "success":

@@ -69,58 +69,14 @@ upload_pipeline() {
     local yaml_size
     yaml_size="$(du -sh "$yaml" | cut -f1)"
     echo "Uploading $pipeline_name ($yaml_size) to $KFP_HOST..."
+    KFP_HOST="$KFP_HOST" \
     KFP_UPLOAD_YAML="$yaml" \
     KFP_UPLOAD_NAME="$pipeline_name" \
-    python3 <<PYEOF
-import os, sys, json
-from datetime import datetime
-
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import kfp_server_api.configuration as _kfp_conf
-_kfp_conf.Configuration.verify_ssl = property(lambda self: False, lambda self, v: None)
-import kfp
-import traceback
-
-host          = "$KFP_HOST"
-yaml_path     = os.environ["KFP_UPLOAD_YAML"]
-pipeline_name = os.environ["KFP_UPLOAD_NAME"]
-
-with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
-    token = f.read().strip()
-
-client = kfp.Client(host=host, existing_token=token)
-
-try:
-    pipeline = client.upload_pipeline(
-        pipeline_package_path=yaml_path,
-        pipeline_name=pipeline_name,
-    )
-    print(f"  Uploaded pipeline id: {pipeline.pipeline_id}")
-except Exception as e:
-    error_msg = str(e)
-    if "already exist" in error_msg.lower() or "409" in error_msg:
-        filt = json.dumps({
-            "predicates": [{"key": "display_name", "operation": "EQUALS",
-                            "string_value": pipeline_name}]
-        })
-        resp = client.list_pipelines(filter=filt, page_size=1)
-        items = resp.pipelines or []
-        if not items:
-            print(f"  Pipeline '{pipeline_name}' not found after 409", file=sys.stderr)
-            sys.exit(1)
-        pipeline_id  = items[0].pipeline_id
-        version_name = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        version = client.upload_pipeline_version(
-            pipeline_package_path=yaml_path,
-            pipeline_version_name=version_name,
-            pipeline_id=pipeline_id,
-        )
-        print(f"  Uploaded version id: {version.pipeline_version_id}")
-    else:
-        print(f"  Upload failed: {e}", file=sys.stderr)
-        traceback.print_exc()
-        sys.exit(1)
+    PYTHONPATH="$CODE_UNDERSTANDING_DIR:${PYTHONPATH:-}" \
+    python3 - <<'PYEOF'
+import os
+from services.upload_pipeline import upload_pipeline
+upload_pipeline(os.environ["KFP_UPLOAD_YAML"], os.environ["KFP_UPLOAD_NAME"])
 PYEOF
     echo "  OK: $pipeline_name uploaded."
 }

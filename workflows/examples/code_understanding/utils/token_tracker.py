@@ -9,6 +9,10 @@ from utils.request_timing import timing_span, response_usage, record_callback_ti
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("LITELLM_TELEMETRY", "False")
+os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
+
 try:
     import litellm
     HAS_LITELLM = True
@@ -1040,12 +1044,25 @@ class TokenCostTracker:
                         asset_tags = {"git_slug": str(git_slug or "multi-repo"), "type": "tokens"}
                         if target_stage:
                             asset_tags["stage"] = target_stage
-                        content = DefaultAssetLoader().download(
-                            asset_file,
-                            download_dir=temp_dir,
-                            experiment_name=MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT,
-                            asset_tags=asset_tags,
-                        )
+                        loader = DefaultAssetLoader()
+                        exp_name = getattr(loader._loader, "RESULT_ASSET_EXPERIMENT", MlFlowAssetLoader.RESULT_ASSET_EXPERIMENT)
+                        from utils.pipeline_utils import get_pipeline_run_id
+                        p_run_id = get_pipeline_run_id()
+                        content = None
+                        if p_run_id:
+                            content = loader.download(
+                                asset_file,
+                                download_dir=temp_dir,
+                                experiment_name=exp_name,
+                                asset_tags={**asset_tags, "pipeline_run_id": p_run_id},
+                            )
+                        if content is None:
+                            content = loader.download(
+                                asset_file,
+                                download_dir=temp_dir,
+                                experiment_name=exp_name,
+                                asset_tags=asset_tags,
+                            )
                         loaded_from_content = False
                         if isinstance(content, dict) and "records" in content:
                             other = TokenCostTracker.from_dict(content)

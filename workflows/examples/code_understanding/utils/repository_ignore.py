@@ -8,7 +8,19 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pathspec import GitIgnoreSpec
+try:
+    from pathspec import GitIgnoreSpec
+except ImportError:
+    class GitIgnoreSpec:  # type: ignore[no-redef]
+        def __init__(self, patterns=()):
+            self.patterns = list(patterns)
+
+        @classmethod
+        def from_lines(cls, lines):
+            return cls()
+
+        def match_file(self, file: str) -> bool:
+            return False
 
 
 AUGURIGNORE_FILENAME = ".augurignore"

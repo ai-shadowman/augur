@@ -23,7 +23,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Discover Containerfiles
+      - name: Discover images
         id: images
         shell: bash
         run: |
@@ -32,7 +32,18 @@ jobs:
           import os
           from pathlib import Path
 
-          images = []
+          images = [
+              {
+                  'image': 'console-app',
+                  'context': '.',
+                  'file': 'ui/Dockerfile',
+              },
+              {
+                  'image': 'console-plugin',
+                  'context': 'console-plugin',
+                  'file': 'console-plugin/Dockerfile',
+              },
+          ]
           for containerfile in sorted(Path('resources/images').glob('*/Containerfile')):
               directory = containerfile.parent
               images.append({
@@ -40,8 +51,6 @@ jobs:
                   'context': '.',
                   'file': str(containerfile),
               })
-          if not images:
-              raise SystemExit('No eligible Containerfiles found in resources/images')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps({'include': images}) + '\n')
           PY

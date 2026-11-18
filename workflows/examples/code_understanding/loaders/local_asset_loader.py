@@ -10,7 +10,8 @@ from .asset_loader import AssetLoader
 class LocalAssetLoader(AssetLoader):
     """Loads an asset from the local assets directory."""
 
-    def __init__(self):
+    def __init__(self, namespace: str | None = None, workspace: str | None = None):
+        super().__init__(namespace=namespace, workspace=workspace)
         self.asset_base_uri = self._ASSETS_DIR
 
     def download(self, asset_file_path: str, download_dir: str = None, **kwargs):
@@ -53,16 +54,39 @@ class LocalAssetLoader(AssetLoader):
 
             os.makedirs(download_dir, exist_ok=True)
             shutil.copytree(source_dir, download_dir, dirs_exist_ok=True)
+            return True
         except Exception as e:
             logging.error(f"Error downloading asset directory {asset_dir_path}: {e}")
             raise e
+
+    def load_results(
+        self,
+        download_dir: str,
+        artifact_path: str = None,
+        tags: dict = None,
+        git_slug: str | None = None,
+    ):
+        """No-op. Local results are already on disk and require no download step."""
+        pass
 
     def log_results(self, results_path: str, artifact_path: str = None, tags: dict = None,
                     content: str = None):
         """Writes content to results_path if provided. No remote logging step."""
         if content is not None and not os.path.isdir(results_path):
+            if os.path.dirname(results_path):
+                os.makedirs(os.path.dirname(results_path), exist_ok=True)
             with open(results_path, "w") as f:
                 f.write(content)
+
+    def register_static_asset(
+        self,
+        results_path: str,
+        artifact_path: str = None,
+        tags: dict = None,
+        content: str = None,
+    ):
+        """Delegates to log_results; no experiment distinction for local storage."""
+        self.log_results(results_path, artifact_path, tags, content)
 
     def upload_all_assets(self, assets_dir: str):
         """No-op. Local assets are already on disk and require no upload step."""
@@ -71,6 +95,15 @@ class LocalAssetLoader(AssetLoader):
     def upload_prompt(self, prompt_path: str):
         """No-op. Local prompts are read directly from disk."""
         pass
+
+    def load_skill(self, name: str) -> tuple[str, dict]:
+        """Loads a skill from assets/prompts/skills/<name>.txt."""
+        skill_path = os.path.join(self._PROMPTS_DIR, "skills", f"{name}.txt")
+        if not os.path.exists(skill_path):
+            raise FileNotFoundError(f"Skill not found: {skill_path}")
+        with open(skill_path, "r") as f:
+            raw = f.read()
+        return self._get_prompt_body_and_metadata(raw)
 
     def download_prompt(self, prompt_path: str, **kwargs) -> tuple[str, dict]:
         """Reads a prompt template from the local assets directory and renders it with Jinja2."""
@@ -82,6 +115,35 @@ class LocalAssetLoader(AssetLoader):
 
         body, meta = self._get_prompt_body_and_metadata(raw)
         return Template(body).render(**kwargs), meta
+
+    def register_enrichments(
+        self,
+        repo_dir: str | None = None,
+        git_slug: str | None = None,
+        enrichment_files: dict | None = None,
+    ) -> str:
+        """Ensures the enrichments directory exists. No remote upload for local storage."""
+        if repo_dir is None:
+            return "Logged enrichments (local no-op)"
+        enrichments_dir = os.path.join(repo_dir, ".enrichments")
+        os.makedirs(enrichments_dir, exist_ok=True)
+        return f"Logged enrichments from {enrichments_dir}"
+
+    def log_repos(self, run_repos: list) -> None:
+        """No-op. Local mode has no backing store; register_enrichments is in-memory only."""
+        pass
+
+    def load_run_repos(self, run_id: str | None = None) -> list:
+        """Returns the repo list from GIT_REPO_LIST_CONTENTS (local mode has no backing store)."""
+        return json.loads(os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]")
+
+    def load_catalog_repos(self) -> list:
+        """Returns the repo catalog from the local asset store, falling back to GIT_REPO_LIST_CONTENTS."""
+        return (
+            self.download("repos/repo_list.json")
+            or self.download("repos/repo_list1.json")
+            or json.loads(os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]")
+        )
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of .txt files directly under the prefixed prompts directory."""

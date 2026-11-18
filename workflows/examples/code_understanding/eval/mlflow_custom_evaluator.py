@@ -1,37 +1,65 @@
 import asyncio
 import logging
+import math
 import os
+import ssl
 import tempfile
+from urllib.parse import urlparse
 
 import mlflow
 import pandas as pd
 import requests
 from mlflow.metrics.genai import faithfulness, answer_relevance, answer_similarity, answer_correctness
 
+from .basic_custom_evaluator import BasicCustomEvaluator
 from .custom_evaluator import CustomEvaluator, _DEFAULT_EVAL_DATASET, build_repo_context
 from utils.graphrag_utils import DependencyAnalyzer
 from utils.eval_utils import load_evaluation_results
+from utils.pipeline_utils import (
+    is_mlflow_tracking_request as _is_mlflow_tracking_request,
+    patch_mlflow_session_forwarded_token as _patch_session_forwarded_token,
+    resolve_mlflow_prefix,
+)
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-_SESSION_PATCHED = False
+_TLS_PATCHED = False
 
 
-def _patch_session_forwarded_token():
-    """Patches requests.Session.send once to attach X-Forwarded-Access-Token."""
-    global _SESSION_PATCHED
-    if _SESSION_PATCHED:
+def _is_tls_verification_disabled() -> bool:
+    """Return True when TLS verification is disabled via environment configuration."""
+    return (
+        os.getenv("ENABLE_TLS_VERIFICATION", "true").strip().lower() in ("false", "0", "no")
+        or os.getenv("GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY", "false").strip().lower() in ("true", "1", "yes")
+    )
+
+
+def _configure_tls():
+    """Configures SSL/TLS verification for MLflow, OpenAI/httpx/aiohttp, and LiteLLM when disabled."""
+    global _TLS_PATCHED
+    if not _is_tls_verification_disabled():
         return
-    _orig_send = requests.Session.send
 
-    def _send_with_forwarded_token(self, request, **kwargs):
-        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-        if token:
-            request.headers["X-Forwarded-Access-Token"] = token
-        return _orig_send(self, request, **kwargs)
+    os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+    os.environ["PYTHONHTTPSVERIFY"] = "0"
 
-    requests.Session.send = _send_with_forwarded_token
-    _SESSION_PATCHED = True
+    if not _TLS_PATCHED:
+        _orig_create_default_context = ssl.create_default_context
+
+        def _unverified_context(*args, **kwargs):
+            ctx = _orig_create_default_context(*args, **kwargs)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
+        ssl.create_default_context = _unverified_context
+        _TLS_PATCHED = True
+
+    try:
+        import litellm
+        litellm.ssl_verify = False
+    except Exception:
+        pass
 
 
 class MlFlowCustomEvaluator(CustomEvaluator):
@@ -39,14 +67,31 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
     Uses GROUND_TRUTH_LLM to generate a reference answer and JUDGE_LLM as
     the evaluator model for MLflow's built-in faithfulness, answer_relevance,
-    and answer_similarity metrics.
+    and answer_similarity metrics. Falls back to BasicCustomEvaluator (LiteLLM
+    judge scoring) if mlflow.evaluate() returns all-NaN scores.
     """
 
-    _EXPERIMENT_NAME = f"{os.environ.get('MLFLOW_WORKSPACE', 'demo')}/code-refactoring/evaluations"
+    _EXPERIMENT_NAME = f"{resolve_mlflow_prefix()}/code-refactoring/evaluations"
     _RUN_NAME = "code-understanding-eval"
     _SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    _METRIC_SCORE_COLS = {
+        "faithfulness": ("faithfulness/v1/score", "faithfulness/v1/justification"),
+        "answer_relevance": ("answer_relevance/v1/score", "answer_relevance/v1/justification"),
+        "answer_similarity": ("answer_similarity/v1/score", "answer_similarity/v1/justification"),
+        "answer_correctness": ("answer_correctness/v1/score", "answer_correctness/v1/justification"),
+    }
 
-    def __init__(self):
+    def __init__(self, namespace: str | None = None, workspace: str | None = None):
+        self._EXPERIMENT_NAME = f"{resolve_mlflow_prefix(namespace=namespace, workspace=workspace)}/code-refactoring/evaluations"
+        _configure_tls()
+
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+        if tracking_uri:
+            try:
+                mlflow.set_tracking_uri(tracking_uri)
+            except Exception as e:
+                logging.debug(f"Failed to set MLflow tracking URI: {e}")
+
         if not os.environ.get("MLFLOW_TRACKING_TOKEN") and os.path.exists(self._SA_TOKEN_PATH):
             try:
                 with open(self._SA_TOKEN_PATH) as f:
@@ -68,17 +113,70 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
     def _judge_model_uri(self) -> str:
         """Returns the MLflow judge model URI, using an OpenAI-compatible endpoint."""
+        _configure_tls()
         judge_id = os.getenv("JUDGE_LLM_ID")
         judge_api_base = os.getenv("JUDGE_LLM_API_BASE")
         judge_token = os.getenv("JUDGE_LLM_TOKEN")
 
         if judge_api_base:
-            os.environ.setdefault("OPENAI_API_BASE", judge_api_base)
+            os.environ["OPENAI_API_BASE"] = judge_api_base
+            os.environ["OPENAI_BASE_URL"] = judge_api_base
 
         if judge_token:
-            os.environ.setdefault("OPENAI_API_KEY", judge_token)
+            os.environ["OPENAI_API_KEY"] = judge_token
+        elif not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = "EMPTY"
 
         return f"openai:/{judge_id}"
+
+    @classmethod
+    def _has_valid_dataframe_scores(cls, df: pd.DataFrame | None) -> bool:
+        """Return True if df contains at least one non-NaN numeric score across the /v1/score columns."""
+        if df is None or df.empty:
+            return False
+        score_cols = [cols[0] for cols in cls._METRIC_SCORE_COLS.values() if cols[0] in df.columns]
+        if not score_cols:
+            return False
+        return any(pd.to_numeric(df[col], errors="coerce").notna().any() for col in score_cols)
+
+    @classmethod
+    def _has_valid_metric_scores(cls, metrics: dict | None) -> bool:
+        """Return True if a single-sample metrics dict contains at least one valid numeric score."""
+        if not metrics or not isinstance(metrics, dict):
+            return False
+        for k, v in metrics.items():
+            if ("/v1/" in k or k in cls._METRIC_SCORE_COLS) and isinstance(v, (int, float)):
+                if not math.isnan(float(v)):
+                    return True
+        return False
+
+    def _apply_basic_judge_fallback_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Populates /v1/score and /v1/justification columns on df using BasicCustomEvaluator."""
+        logging.warning(
+            "mlflow.evaluate() returned all-NaN scores; falling back to BasicCustomEvaluator (LiteLLM judge scoring)..."
+        )
+        basic_eval = BasicCustomEvaluator()
+        try:
+            from utils.token_tracker import TokenCostTracker
+            TokenCostTracker.get_instance().set_category("Evaluation (Judge)")
+        except Exception:
+            pass
+
+        scored_rows = [
+            basic_eval.score_answer(
+                question=str(row.get("inputs", row.get("question", ""))),
+                reference=str(row.get("targets", row.get("reference", ""))),
+                actual=str(row.get("predictions", row.get("answer", ""))),
+            )
+            for _, row in df.iterrows()
+        ]
+        scored_df = pd.DataFrame(scored_rows, index=df.index)
+        for metric_key, (score_col, just_col) in self._METRIC_SCORE_COLS.items():
+            if metric_key in scored_df.columns:
+                df[score_col] = scored_df[metric_key]
+            if "reasoning" in scored_df.columns:
+                df[just_col] = scored_df["reasoning"]
+        return df
 
     def _ground_truth_answer(self, input: str, graphrag_source_dir: str = "") -> str:
         """Generates a reference answer using GROUND_TRUTH_LLM via LiteLLM.
@@ -161,28 +259,51 @@ class MlFlowCustomEvaluator(CustomEvaluator):
             if mlflow.active_run():
                 mlflow.end_run()
 
-            with mlflow.start_run(
-                experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
-            ):
+            metrics = {}
+            try:
+                with mlflow.start_run(
+                    experiment_id=experiment.experiment_id, run_name=self._RUN_NAME
+                ):
+                    results = mlflow.evaluate(
+                        data=eval_data,
+                        predictions="predictions",
+                        targets="targets",
+                        extra_metrics=[
+                            faithfulness(model=judge_model),
+                            answer_relevance(model=judge_model),
+                            answer_similarity(model=judge_model),
+                        ],
+                    )
+                metrics = dict(results.metrics or {})
+            except Exception as eval_err:
+                logging.warning(f"mlflow.evaluate() failed for single sample: {eval_err}")
 
-                results = mlflow.evaluate(
-                    data=eval_data,
-                    predictions="predictions",
-                    targets="targets",
-                    extra_metrics=[
-                        faithfulness(model=judge_model),
-                        answer_relevance(model=judge_model),
-                        answer_similarity(model=judge_model),
-                    ],
+            if not self._has_valid_metric_scores(metrics):
+                logging.warning(
+                    "mlflow.evaluate() returned all-NaN scores for single sample; falling back to BasicCustomEvaluator..."
                 )
-
-            metrics = results.metrics
+                try:
+                    from utils.token_tracker import TokenCostTracker
+                    TokenCostTracker.get_instance().set_category("Evaluation (Judge)")
+                except Exception:
+                    pass
+                basic_scores = BasicCustomEvaluator().score_answer(
+                    question=input,
+                    reference=reference_answer,
+                    actual=actual_answer,
+                )
+                for metric_key, (score_col, _) in self._METRIC_SCORE_COLS.items():
+                    if metric_key in basic_scores and basic_scores[metric_key] is not None:
+                        metrics[score_col] = basic_scores[metric_key]
+                        metrics[metric_key] = basic_scores[metric_key]
+                if basic_scores.get("reasoning") is not None:
+                    metrics["reasoning"] = basic_scores["reasoning"]
 
             metrics["question"] = input
             metrics["actual_answer"] = actual_answer
             metrics["reference_answer"] = reference_answer
 
-            logging.info(f"MLflow evaluation complete: {results.metrics}")
+            logging.info(f"MLflow evaluation complete: {metrics}")
 
             return metrics
 
@@ -277,28 +398,32 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         slug = git_slug or code_utils.generate_slug_from_repo(git_repo, git_branch)
 
-        _eval_tags = {"category": "evaluation", "git_slug": slug}
+        _eval_tags = {"category": "evaluation", "git_slug": slug, "multi_repo": str(multi_repo)}
 
         if mlflow.active_run():
             mlflow.end_run()
 
-        with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
+        eval_results = None
+        try:
+            with mlflow.start_run(experiment_id=experiment.experiment_id, tags=_eval_tags):
 
-            results = mlflow.evaluate(
-                data=eval_data,
-                predictions="predictions",
-                targets="targets",
-                extra_metrics=[
-                    faithfulness(model=judge_model),
-                    answer_relevance(model=judge_model),
-                    answer_similarity(model=judge_model),
-                    answer_correctness(model=judge_model),
-                ],
-            )
+                results = mlflow.evaluate(
+                    data=eval_data,
+                    predictions="predictions",
+                    targets="targets",
+                    extra_metrics=[
+                        faithfulness(model=judge_model),
+                        answer_relevance(model=judge_model),
+                        answer_similarity(model=judge_model),
+                        answer_correctness(model=judge_model),
+                    ],
+                )
 
-            eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
+                eval_results = load_evaluation_results(results, self._EXPERIMENT_NAME, _eval_tags)
 
-        logging.info(f"MLflow batch evaluation complete: {results.metrics}")
+            logging.info(f"MLflow batch evaluation complete: {results.metrics}")
+        except Exception as eval_err:
+            logging.warning(f"mlflow.evaluate() failed during batch evaluation: {eval_err}")
 
         if eval_results is not None:
 
@@ -310,7 +435,10 @@ class MlFlowCustomEvaluator(CustomEvaluator):
 
         else:
 
-            logging.info("MLflow eval_results_table not available; metric scores will not be captured.")
+            logging.info("MLflow eval_results_table not available; metric scores will not be captured from MLflow.")
+
+        if not self._has_valid_dataframe_scores(df):
+            df = self._apply_basic_judge_fallback_df(df)
 
         df["answer"] = df["predictions"]
 

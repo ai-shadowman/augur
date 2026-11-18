@@ -12,6 +12,7 @@ models:
     api_key: ${GRAPHRAG_LLM_TOKEN}
     model: ${GRAPHRAG_LLM_ID}
     model_provider: ${GRAPHRAG_LLM_PROVIDER_SETTINGS_XML}
+    encoding_model: cl100k_base
     model_supports_json: true
     max_tokens: 8192
     concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}

@@ -1,0 +1,20 @@
+[
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/code-understanding",
+      "component": { "$codeRef": "CodeUnderstandingPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "code-understanding-admin",
+      "name": "%plugin__code-understanding-console~Code Understanding%",
+      "href": "/code-understanding",
+      "perspective": "admin",
+      "section": "home"
+    }
+  }
+]

@@ -23,7 +23,15 @@ CODE_METADATA_DIR = ".code_metadata"
 
 def _load_mappings():
     """Loads language mappings from the language_mappings.json file."""
-    return DefaultAssetLoader().download("mappings/language_mappings.json")
+    try:
+        mappings = DefaultAssetLoader().download("mappings/language_mappings.json")
+        if mappings:
+            return mappings
+    except Exception:
+        pass
+    from loaders.local_asset_loader import LocalAssetLoader
+
+    return LocalAssetLoader().download("mappings/language_mappings.json")
 
 def _extract_git_owner_and_repo(git_url: str):
     """

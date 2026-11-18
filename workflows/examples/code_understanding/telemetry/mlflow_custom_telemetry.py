@@ -3,14 +3,18 @@ import logging
 import os
 import types
 from typing import Any, Dict, Optional
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("LITELLM_TELEMETRY", "False")
+os.environ.setdefault("DISABLE_LITELLM_VERSION_CHECK", "True")
+
 import mlflow
 import litellm
-import requests
 from .custom_telemetry import CustomTelemetry
+from utils.pipeline_utils import patch_mlflow_session_forwarded_token as _patch_session_forwarded_token
 
 logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 
-_SESSION_PATCHED = False
 _OTEL_SPAN_PATCHED = False
 _CURRENT_KFP_ATTRS: Dict[str, str] = {}
 
@@ -199,23 +203,6 @@ def _install_otel_span_hooks() -> None:
         _OTEL_SPAN_PATCHED = True
     except Exception as e:
         logging.debug(f"MlFlowCustomTelemetry: failed to install OTel span hooks: {e}")
-
-
-def _patch_session_forwarded_token():
-    """Patches requests.Session.send once to attach X-Forwarded-Access-Token."""
-    global _SESSION_PATCHED
-    if _SESSION_PATCHED:
-        return
-    _orig_send = requests.Session.send
-
-    def _send_with_forwarded_token(self, request, **kwargs):
-        token = os.environ.get("MLFLOW_TRACKING_TOKEN")
-        if token:
-            request.headers["X-Forwarded-Access-Token"] = token
-        return _orig_send(self, request, **kwargs)
-
-    requests.Session.send = _send_with_forwarded_token
-    _SESSION_PATCHED = True
 
 
 class MlFlowCustomTelemetry(CustomTelemetry):

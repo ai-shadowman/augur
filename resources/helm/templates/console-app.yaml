@@ -1,0 +1,133 @@
+{{- if .Values.console.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-understanding-console
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      app: code-understanding-console
+  template:
+    metadata:
+      labels:
+        app: code-understanding-console
+    spec:
+      serviceAccountName: pipeline-upload-job
+      containers:
+        - name: console
+          image: {{ required "console.image is required when console.enabled=true" .Values.console.image | quote }}
+          imagePullPolicy: {{ .Values.console.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: KFP_NAMESPACE
+              value: "{{ .Values.namespace }}"
+            - name: MLFLOW_WORKSPACE
+              value: "{{ .Values.namespace }}"
+            - name: KFP_HOST
+              value: "https://ds-pipeline-dspa.{{ .Values.namespace }}.svc.cluster.local:8443"
+            - name: AGENTMESH_REPO_URL
+              value: "{{ .Values.repoUrl | default .Values.augurRepoUrl }}"
+            - name: AGENTMESH_REPO_REF
+              value: "{{ .Values.repoRef | default .Values.augurRepoBranch }}"
+            - name: AGENTMESH_JOB_REPO_REF
+              value: "{{ .Values.repoRef | default .Values.augurRepoBranch }}"
+            - name: AUGUR_GIT_REPO_URL
+              value: "{{ .Values.augurRepoUrl | default .Values.repoUrl }}"
+            - name: AUGUR_GIT_REPO_BRANCH
+              value: "{{ .Values.augurRepoBranch | default .Values.repoRef }}"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TIKTOKEN_CACHE_DIR
+              value: "/opt/app-root/src/tiktoken_cache"
+            - name: LITELLM_LOCAL_MODEL_COST_MAP
+              value: "True"
+            - name: LITELLM_TELEMETRY
+              value: "False"
+            - name: DISABLE_LITELLM_VERSION_CHECK
+              value: "True"
+            - name: UV_OFFLINE
+              value: "1"
+            - name: PIP_NO_INDEX
+              value: "1"
+            {{- if .Values.console.route.enabled }}
+            - name: REQUIRE_OPENSHIFT_AUTH
+              value: "true"
+            {{- end }}
+            {{- if not .Values.tls.enableVerification }}
+            - name: GRAPHRAG_LOCAL_QUERY_SKIP_TLS_VERIFY
+              value: "true"
+            - name: MLFLOW_TRACKING_INSECURE_TLS
+              value: "true"
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: code-understanding-env
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-understanding-console
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console
+spec:
+  selector:
+    app: code-understanding-console
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if .Values.console.route.enabled }}
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: code-understanding-console
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: code-understanding-console
+  annotations:
+    haproxy.router.openshift.io/timeout: 30m
+spec:
+  {{- with .Values.console.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: code-understanding-console
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+{{- end }}
+{{- end }}
