@@ -933,35 +933,85 @@ function jobCard(job) {
   </article>`;
 }
 
+async function deleteRepo(repo) {
+  const key = repoKey(repo);
+  const idx = state.repos.findIndex((r) => repoKey(r) === key);
+  if (idx < 0) return;
+  const removed = state.repos[idx];
+  const wasSelected = state.selected.has(key);
+  state.repos.splice(idx, 1);
+  state.selected.delete(key);
+  renderRepos();
+  try {
+    const qs = new URLSearchParams({
+      git_repo: removed.git_repo,
+      git_branch: removed.git_branch || "main",
+    });
+    await api(`/api/v2/repositories?${qs.toString()}`, { method: "DELETE" });
+  } catch (e) {
+    if (!state.repos.some((r) => repoKey(r) === key)) {
+      state.repos.splice(Math.min(idx, state.repos.length), 0, removed);
+    }
+    if (wasSelected) state.selected.add(key);
+    renderRepos();
+    banner(String(e.message || e), true);
+  }
+}
+
 function renderRepos() {
-  $("repo-list").innerHTML = state.repos.map((r) => {
+  if (!state.repos.length) {
+    $("repo-list").innerHTML = `<div class="cu-muted" style="padding:0.75rem 0.9rem">No repositories configured.</div>`;
+    renderSelection();
+    return;
+  }
+  $("repo-list").innerHTML = state.repos.map((r, idx) => {
     const key = repoKey(r);
+    const checkId = `repo-check-${idx}`;
     const slug = (shortName(r.git_repo) || "").replace(/\.git$/, "");
     const indexed = state.indexes.some((i) => !i.multi_repo && (i.git_slug || "").includes(slug));
     const chips = [
       `<span class="cu-chip">${esc(r.git_branch)}</span>`,
       indexed ? '<span class="cu-chip indexed">indexed</span>' : "",
+      `<button type="button" class="cu-repo-delete" data-key="${esc(key)}" title="Delete repository" aria-label="Delete ${esc(slug || r.git_repo)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`,
     ].join("");
-    return `<label class="cu-repo">
-      <input class="cu-check" type="checkbox" data-key="${esc(key)}" ${state.selected.has(key) ? "checked" : ""}/>
-      <span class="cu-repo-body">
+    return `<div class="cu-repo">
+      <input class="cu-check" id="${checkId}" type="checkbox" data-key="${esc(key)}" ${state.selected.has(key) ? "checked" : ""}/>
+      <label class="cu-repo-body" for="${checkId}">
         <span class="cu-repo-title">${esc(slug || r.git_repo)}</span>
         <span class="cu-repo-url-row">
           <span class="cu-repo-url">${esc(r.git_repo)}</span>
           <a class="cu-repo-link" href="${esc(r.git_repo)}" target="_blank" rel="noopener noreferrer" title="Open repository"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></a>
         </span>
-      </span>
+      </label>
       <span class="cu-chips">${chips}</span>
-    </label>`;
+    </div>`;
   }).join("");
-  $("repo-list").querySelectorAll("input").forEach((el) => {
+  $("repo-list").querySelectorAll("input.cu-check").forEach((el) => {
     el.addEventListener("change", () => {
       if (el.checked) state.selected.add(el.dataset.key); else state.selected.delete(el.dataset.key);
       renderSelection();
     });
   });
+  $("repo-list").querySelectorAll(".cu-repo").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("input, a, button, label")) return;
+      const cb = row.querySelector("input.cu-check");
+      if (cb) {
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event("change"));
+      }
+    });
+  });
   $("repo-list").querySelectorAll(".cu-repo-link").forEach((link) => {
     link.addEventListener("click", (e) => e.stopPropagation());
+  });
+  $("repo-list").querySelectorAll(".cu-repo-delete").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = state.repos.find((r) => repoKey(r) === btn.dataset.key);
+      if (target) deleteRepo(target);
+    });
   });
   renderSelection();
 }

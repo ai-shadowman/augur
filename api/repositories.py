@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 _CODE_UNDERSTANDING_DIR = str(
@@ -17,7 +17,7 @@ if _CODE_UNDERSTANDING_DIR not in sys.path:
     sys.path.insert(0, _CODE_UNDERSTANDING_DIR)
 
 from services.get_catalog_repos import get_catalog_repos as fetch_catalog_repos  # noqa: E402
-from services.update_repos import log_repos as _log_repos  # noqa: E402
+from services.update_repos import delete_repo as _delete_repo, log_repos as _log_repos  # noqa: E402
 try:
     from ui.cluster import get_active_namespace, get_active_workspace
 except ImportError:
@@ -100,5 +100,25 @@ def post_repositories(body: UpdateReposRequest, request: Request) -> list[RepoIt
         _log_repos(repo_dicts, namespace=ns, workspace=ws)
     except Exception as exc:
         logger.exception("Failed to log repository list")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return get_repositories(request)
+
+
+@router.delete("", response_model=list[RepoItem], response_model_exclude_none=True)
+def delete_repository(
+    request: Request,
+    git_repo: str = Query(..., min_length=1, description="Git repository URL"),
+    git_branch: str = Query(default="main", description="Branch to remove"),
+) -> list[RepoItem]:
+    """Remove a repository from the catalog and return the updated catalog."""
+    repo_url = (git_repo or "").strip()
+    if not repo_url:
+        raise HTTPException(status_code=422, detail="git_repo is required.")
+    ns = get_active_namespace(request)
+    ws = get_active_workspace(request)
+    try:
+        _delete_repo(repo_url, (git_branch or "main").strip() or "main", namespace=ns, workspace=ws)
+    except Exception as exc:
+        logger.exception("Failed to delete repository from catalog")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return get_repositories(request)

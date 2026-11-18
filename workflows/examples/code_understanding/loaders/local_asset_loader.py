@@ -145,6 +145,12 @@ class LocalAssetLoader(AssetLoader):
             or json.loads(os.getenv("GIT_REPO_LIST_CONTENTS", "[]") or "[]")
         )
 
+    def delete_repo(self, git_repo: str, git_branch: str = "main") -> list:
+        """Filters repo from catalog in memory (local mode has no mutable backing store)."""
+        from .mlflow_asset_loader import _remove_from_repo_catalog
+
+        return _remove_from_repo_catalog(self.load_catalog_repos() or [], git_repo, git_branch)
+
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of .txt files directly under the prefixed prompts directory."""
         prompt_dir = os.path.join(self._PROMPTS_DIR, prompt_prefix)

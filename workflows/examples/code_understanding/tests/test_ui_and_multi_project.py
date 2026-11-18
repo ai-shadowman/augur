@@ -83,6 +83,12 @@ if importlib.util.find_spec("fastapi") is None and "fastapi" not in sys.modules:
                 return fn
             return _dec
 
+        def delete(self, path: str, **kwargs):
+            def _dec(fn):
+                self.routes.append(("DELETE", self.prefix + path, fn))
+                return fn
+            return _dec
+
     class FastAPI(APIRouter):
         def __init__(self, **kwargs):
             super().__init__()
@@ -1281,6 +1287,60 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertEqual(resolved[0]["git_token"], private_entry["git_token"])
         self.assertEqual(resolved[1]["git_username"], "")
         self.assertEqual(resolved[1]["git_token"], blank_user_entry["git_token"])
+
+    def test_delete_repository_ui_api_and_catalog_flow(self):
+        from fastapi import HTTPException, Request
+        import api.repositories as api_repositories
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader, _remove_from_repo_catalog
+
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn(".cu-repo-delete", html)
+        self.assertIn("cu-repo-delete", js)
+        self.assertIn('method: "DELETE"', js)
+
+        base = [
+            {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable", "git_branch": "main"},
+            {"git_repo": "https://github.com/dbrletic/cron-job-creator", "git_branch": "master"},
+        ]
+        remaining = _remove_from_repo_catalog(
+            base,
+            "https://github.com/kfrankli/northpolesouthern-timetable.git/",
+            "main",
+        )
+        self.assertEqual(remaining, [base[1]])
+
+        loader = MlFlowAssetLoader(namespace="team-ns", workspace="default")
+        with mock.patch.object(loader, "load_catalog_repos", return_value=base), \
+             mock.patch.object(loader, "register_enrichments") as mock_reg:
+            after_del = loader.delete_repo("https://github.com/kfrankli/northpolesouthern-timetable", "main")
+        self.assertEqual(after_del, [base[1]])
+        mock_reg.assert_called_once_with(enrichment_files={"repos/repo_list.json": [base[1]]})
+
+        # Deleting the last repo leaves [] in enrichments; load_catalog_repos must return [] without falling back
+        with mock.patch.object(loader, "download", side_effect=lambda p, *a, **kw: [] if p == "repos/repo_list.json" else base):
+            self.assertEqual(loader.load_catalog_repos(), [])
+
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        with mock.patch.object(api_repositories, "_delete_repo", return_value=[base[1]]) as mock_del, \
+             mock.patch.object(api_repositories, "fetch_catalog_repos", return_value=[base[1]]):
+            resp = api_repositories.delete_repository(
+                req,
+                git_repo="https://github.com/kfrankli/northpolesouthern-timetable",
+                git_branch="main",
+            )
+            mock_del.assert_called_once_with(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+            self.assertEqual(len(resp), 1)
+            self.assertEqual(resp[0].git_repo, base[1]["git_repo"])
+
+            with self.assertRaises(HTTPException) as bad_ctx:
+                api_repositories.delete_repository(req, git_repo="   ", git_branch="main")
+            self.assertEqual(bad_ctx.exception.status_code, 422)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,7 @@
     body.dark .cu-bubble-dl-btn:hover { background: #2a2a2a; }
     body.dark .cu-btn-icon { border-color: #555; }
     body.dark .cu-btn-icon:hover { border-color: #ccc; color: #e0e0e0; }
+    body.dark .cu-repo-delete:hover { color: #ff6b6b; background: #3a1a1a; }
     body.dark .cu-run-list-actions button { border-color: #555; }
     body.dark .cu-run-list-actions button:hover { border-color: #ccc; color: #e0e0e0; }
     body.dark .cu-paginator { border-top-color: #3a3a3a; }
@@ -415,7 +416,7 @@
     .cu-toggle-group--sm label { padding: .3rem .7rem; font-size: .8rem; }
     .cu-toggle-group--sm label:has(input:checked) { background: #e06060; color: #fff; }
     body.dark .cu-toggle-group--sm label:has(input:checked) { background: #ff6b6b; color: #fff; }
-    .cu-repo-body { min-width: 0; }
+    .cu-repo-body { min-width: 0; cursor: pointer; }
     .cu-repo-title {
       display: block;
       font-weight: 600;
@@ -435,7 +436,21 @@
     }
     .cu-repo-link { flex-shrink: 0; display: inline-flex; color: var(--cu-gray); text-decoration: none; line-height: 0; }
     .cu-repo-link:hover { color: #0066cc; }
-    .cu-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+    .cu-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; justify-content: flex-end; }
+    .cu-repo-delete {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      border-radius: 4px;
+      padding: 0.2rem;
+      margin-left: 0.1rem;
+      color: var(--cu-gray);
+      cursor: pointer;
+      line-height: 0;
+    }
+    .cu-repo-delete:hover { color: var(--cu-red); background: #fce8e8; }
     .cu-chip {
       display: inline-flex;
       align-items: center;

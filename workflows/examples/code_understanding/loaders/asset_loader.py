@@ -178,6 +178,10 @@ class AssetLoader(ABC):
     def load_catalog_repos(self) -> list:
         """Downloads the full repo catalog, trying enrichments first and falling back to static assets."""
 
+    def delete_repo(self, git_repo: str, git_branch: str = "main") -> list:
+        """Removes a repository from the catalog and returns the updated catalog."""
+        raise NotImplementedError
+
     @abstractmethod
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts with the given prefix.

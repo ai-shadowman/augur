@@ -113,5 +113,8 @@ class DefaultAssetLoader(AssetLoader):
     def load_catalog_repos(self) -> list:
         return self._loader.load_catalog_repos()
 
+    def delete_repo(self, git_repo: str, git_branch: str = "main") -> list:
+        return self._loader.delete_repo(git_repo, git_branch)
+
     def num_prompts(self, *args, **kwargs):
         return self._loader.num_prompts(*args, **kwargs)

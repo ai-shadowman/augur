@@ -95,6 +95,16 @@ def _merge_repo_catalog(base: list, incoming: list) -> list[dict]:
     return merged
 
 
+def _remove_from_repo_catalog(base: list, git_repo: str, git_branch: str = "main") -> list[dict]:
+    """Return a copy of *base* without entries matching ``(git_repo, git_branch)``."""
+    target = _repo_identity({"git_repo": git_repo, "git_branch": git_branch})
+    return [
+        dict(raw)
+        for raw in (base or [])
+        if isinstance(raw, dict) and raw.get("git_repo") and _repo_identity(raw) != target
+    ]
+
+
 class MlFlowAssetLoader(AssetLoader):
     """Loads an asset from the MLflow artifacts registry."""
 
@@ -709,7 +719,11 @@ class MlFlowAssetLoader(AssetLoader):
         # shortcut: process-local lock, upgrade to optimistic MLflow tag CAS if scaling >1 replica
         with _REPO_CATALOG_LOCK:
             try:
-                base = self.download("repos/repo_list.json") or self.download("repos/repo_list1.json") or []
+                base = self.download("repos/repo_list.json")
+                if base is None:
+                    base = self.download("repos/repo_list1.json")
+                if base is None:
+                    base = []
                 catalog_repos = _merge_repo_catalog(base, run_repos)
                 self.register_enrichments(enrichment_files={"repos/repo_list.json": catalog_repos})
             except Exception:
@@ -753,8 +767,10 @@ class MlFlowAssetLoader(AssetLoader):
 
     def load_catalog_repos(self) -> list:
         """Downloads the full repo catalog from MLflow, trying enrichments first and falling back to static assets."""
-        repos = self.download("repos/repo_list.json") or self.download("repos/repo_list1.json")
-        if repos:
+        repos = self.download("repos/repo_list.json")
+        if repos is None:
+            repos = self.download("repos/repo_list1.json")
+        if repos is not None:
             return repos
         from .local_asset_loader import LocalAssetLoader
 
@@ -762,6 +778,14 @@ class MlFlowAssetLoader(AssetLoader):
             namespace=getattr(self, "namespace", None),
             workspace=getattr(self, "workspace", None),
         ).load_catalog_repos()
+
+    def delete_repo(self, git_repo: str, git_branch: str = "main") -> list:
+        """Removes the matching repository from repos/repo_list.json in MLflow enrichments."""
+        with _REPO_CATALOG_LOCK:
+            base = self.load_catalog_repos() or []
+            remaining = _remove_from_repo_catalog(base, git_repo, git_branch)
+            self.register_enrichments(enrichment_files={"repos/repo_list.json": remaining})
+            return remaining
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts in the MLflow registry matching the given prefix."""
