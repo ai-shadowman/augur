@@ -568,3 +568,8 @@ enable-console-plugin:
 	echo "    https://$$CONSOLE_HOST/code-understanding" && \
 	echo "    Application launcher: Code Understanding" && \
 	echo ""
+
+.PHONY: list-commands
+list-commands:
+	@echo "==> Available commands:"
+	@awk -F: '/^[a-zA-Z0-9][a-zA-Z0-9_-]*:$$/ || /^[a-zA-Z0-9][a-zA-Z0-9_-]*:[^=]/ { print "  " $$1 }' "$(firstword $(MAKEFILE_LIST))"
