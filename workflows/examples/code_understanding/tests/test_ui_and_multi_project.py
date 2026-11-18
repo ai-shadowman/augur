@@ -1296,7 +1296,9 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
         js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn(".cu-repo-delete", html)
+        self.assertIn(".cu-repo-delete svg { pointer-events: none; }", html)
         self.assertIn("cu-repo-delete", js)
+        self.assertIn('title="Delete"', js)
         self.assertIn('method: "DELETE"', js)
 
         base = [
