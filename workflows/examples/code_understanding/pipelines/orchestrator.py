@@ -36,6 +36,8 @@ else:
 def single_repo_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
+    git_username: str = os.getenv("GIT_USERNAME", ""),
+    git_token: str = os.getenv("GIT_TOKEN", ""),
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
     multi_repo: bool = False,
@@ -46,6 +48,8 @@ def single_repo_pipeline(
         dg = DataGenerationPipeline.run(
             git_repo=git_repo,
             git_branch=git_branch,
+            git_username=git_username,
+            git_token=git_token,
             multi_repo=multi_repo,
             pipeline_run_id=pipeline_run_id,
             project_workspace=project_workspace,
@@ -86,6 +90,8 @@ def single_repo_pipeline(
                 source_path=source_path,
                 target_path=target_path,
                 multi_repo=multi_repo,
+                git_username=git_username,
+                git_token=git_token,
             )
             IndexingPipeline().run(
                 codebase_path=target_path,

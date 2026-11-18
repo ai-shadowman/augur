@@ -23,12 +23,20 @@ def clone_from_repo(repo_url,
                     git_token: str = os.environ.get('GIT_TOKEN',"")):
     """Clones the given git repo to the specified destination."""
     from git import Repo
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import quote, urlparse, urlunparse
 
     updated_repo_url = repo_url
-    if git_username and git_token:
+    enc_token = ""
+    if git_token:
         parsed = urlparse(repo_url)
-        updated_repo_url = urlunparse(parsed._replace(netloc=f"{git_username}:{git_token}@{parsed.netloc}"))
+        enc_token = quote(git_token, safe="")
+        if git_username:
+            auth = f"{quote(git_username, safe='')}:{enc_token}"
+        elif "gitlab" in parsed.netloc.lower():
+            auth = f"oauth2:{enc_token}"
+        else:
+            auth = enc_token
+        updated_repo_url = urlunparse(parsed._replace(netloc=f"{auth}@{parsed.netloc}"))
 
     try:
 
@@ -38,7 +46,11 @@ def clone_from_repo(repo_url,
 
     except Exception as e:
 
-        err_msg = str(e).replace(git_token, '***') if git_token else str(e)
+        err_msg = str(e)
+        if git_token:
+            err_msg = err_msg.replace(git_token, "***")
+        if enc_token:
+            err_msg = err_msg.replace(enc_token, "***")
         logging.error(f"Error cloning repository: {err_msg}")
 
         raise e
@@ -77,6 +89,28 @@ def prepare_environment(source_path: str,
 
         cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
         with cm_clone:
+            if not git_token and git_repo:
+                try:
+                    from loaders.default_asset_loader import DefaultAssetLoader
+
+                    norm_url = git_repo.strip().rstrip("/").removesuffix(".git")
+                    norm_branch = (git_branch or "main").strip() or "main"
+                    for item in DefaultAssetLoader().load_catalog_repos() or []:
+                        if not isinstance(item, dict) or not item.get("git_repo"):
+                            continue
+                        item_url = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
+                        item_branch = str(item.get("git_branch") or "main").strip() or "main"
+                        if item_url == norm_url and item_branch == norm_branch:
+                            if item.get("git_token"):
+                                git_username = git_username or str(item.get("git_username") or "")
+                                git_token = str(item["git_token"])
+                                break
+                except Exception:
+                    logging.debug("Catalog credential lookup skipped in prepare_environment", exc_info=True)
+            if not git_token:
+                git_username = git_username or os.environ.get("GIT_USERNAME", "")
+                git_token = os.environ.get("GIT_TOKEN", "")
+
             clone_from_repo(git_repo,
                             source_path,
                             branch=git_branch,
@@ -749,7 +783,8 @@ class DataGenerationPipeline:
 
     @enable_telemetry
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
-            multi_repo: bool = False, override_concurrency: int = 0):
+            multi_repo: bool = False, override_concurrency: int = 0,
+            git_username: str = "", git_token: str = ""):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback
 
@@ -791,7 +826,8 @@ class DataGenerationPipeline:
                         override_concurrency=override_concurrency,
                     )
                     prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
+                                        git_repo=git_repo, git_branch=git_branch,
+                                        git_username=git_username, git_token=git_token)
                     if target_path and bench_result:
                         from utils.llm_benchmark import save_benchmark_result
                         save_benchmark_result(bench_result, target_path)
@@ -825,7 +861,8 @@ class DataGenerationPipeline:
                     override_concurrency=override_concurrency,
                 )
                 prepare_environment(source_path=source_path, target_path=target_path,
-                                    git_repo=git_repo, git_branch=git_branch)
+                                    git_repo=git_repo, git_branch=git_branch,
+                                    git_username=git_username, git_token=git_token)
                 if target_path and bench_result:
                     from utils.llm_benchmark import save_benchmark_result
                     save_benchmark_result(bench_result, target_path)
@@ -947,8 +984,26 @@ class DataGenerationPipeline:
             except Exception:
                 repos = []
 
+        catalog_creds: dict[tuple[str, str], tuple[str, str]] = {}
+        if repos and any(not r.get("git_token") for r in repos if isinstance(r, dict)):
+            try:
+                for item in DefaultAssetLoader().load_catalog_repos() or []:
+                    if isinstance(item, dict) and item.get("git_repo") and item.get("git_token"):
+                        u = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
+                        b = str(item.get("git_branch") or "main").strip() or "main"
+                        catalog_creds[(u, b)] = (str(item.get("git_username") or ""), str(item["git_token"]))
+            except Exception:
+                pass
+
         for repo in repos:
             repo.setdefault("git_branch", "main")
+            if not repo.get("git_token") and repo.get("git_repo"):
+                key = (
+                    str(repo["git_repo"]).strip().rstrip("/").removesuffix(".git"),
+                    str(repo.get("git_branch") or "main").strip() or "main",
+                )
+                if key in catalog_creds:
+                    repo["git_username"], repo["git_token"] = catalog_creds[key]
             repo.setdefault("git_username", "")
             repo.setdefault("git_token", "")
 
@@ -998,7 +1053,9 @@ class DataGenerationPipeline:
             result = self.run(git_repo=git_repo, git_branch=git_branch,
                               source_path=source_path, target_path=target_path,
                               multi_repo=True,
-                              override_concurrency=best_concurrency)
+                              override_concurrency=best_concurrency,
+                              git_username=git_data.get("git_username", ""),
+                              git_token=git_data.get("git_token", ""))
             pipeline_results.append(result)
 
         try:

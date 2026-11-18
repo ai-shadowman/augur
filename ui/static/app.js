@@ -1483,9 +1483,21 @@ function closeAddRepo() {
   $("add-repo-modal").classList.add("hidden");
   $("custom-url").value = "";
   $("custom-branch").value = "main";
+  $("custom-private").checked = false;
+  $("private-repo-fields").classList.add("hidden");
+  $("custom-username").value = "";
+  $("custom-token").value = "";
   $("add-repo-error").classList.add("hidden");
   $("add-repo-error").textContent = "";
 }
+$("custom-private").addEventListener("change", () => {
+  const isPrivate = $("custom-private").checked;
+  $("private-repo-fields").classList.toggle("hidden", !isPrivate);
+  if (!isPrivate) {
+    $("custom-username").value = "";
+    $("custom-token").value = "";
+  }
+});
 $("open-add-repo").onclick = () => {
   $("add-repo-modal").classList.remove("hidden");
   $("custom-url").focus();
@@ -1499,6 +1511,9 @@ document.addEventListener("keydown", (e) => {
 $("add-custom").onclick = async () => {
   const git_repo = $("custom-url").value.trim();
   const git_branch = $("custom-branch").value.trim() || "main";
+  const isPrivate = $("custom-private").checked;
+  const git_username = $("custom-username").value.trim();
+  const git_token = $("custom-token").value.trim();
   if (!git_repo) {
     $("add-repo-error").textContent = "Repository URL is required.";
     $("add-repo-error").classList.remove("hidden");
@@ -1509,16 +1524,26 @@ $("add-custom").onclick = async () => {
     $("add-repo-error").classList.remove("hidden");
     return;
   }
+  if (isPrivate && !git_token) {
+    $("add-repo-error").textContent = "Git Token is required for a private repository.";
+    $("add-repo-error").classList.remove("hidden");
+    return;
+  }
   $("add-repo-error").classList.add("hidden");
+  const entry = isPrivate
+    ? { git_repo, git_branch, git_username, git_token }
+    : { git_repo, git_branch };
   const key = `${git_repo}|${git_branch}`;
-  if (!state.repos.some((r) => repoKey(r) === key)) state.repos.push({ git_repo, git_branch });
+  const existingIdx = state.repos.findIndex((r) => repoKey(r) === key);
+  if (existingIdx >= 0) state.repos[existingIdx] = entry;
+  else state.repos.push(entry);
   state.selected.add(key);
   closeAddRepo();
   renderRepos();
   api("/api/v2/repositories", {
     method: "POST",
-    body: JSON.stringify({ repos: [{ git_repo, git_branch }] }),
-  }).catch(() => {});
+    body: JSON.stringify({ repos: [entry] }),
+  }).catch((e) => banner(String(e.message || e), true));
 };
 function closeAnalyzeModal() {
   $("analyze-modal").classList.add("hidden");

@@ -38,6 +38,47 @@ def submit_pipeline_run(
     clean_ws = sanitize_slug(workspace or "")
     ws_param = clean_ws if (clean_ws and clean_ws.lower() != "default") else ""
 
+    if repos:
+        catalog_creds: dict[tuple[str, str], tuple[str, str]] = {}
+        try:
+            from services.get_catalog_repos import get_catalog_repos
+
+            for item in get_catalog_repos(namespace=namespace, workspace=workspace) or []:
+                if (
+                    isinstance(item, dict)
+                    and item.get("git_repo")
+                    and item.get("git_token")
+                ):
+                    norm_url = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
+                    norm_branch = str(item.get("git_branch") or "main").strip() or "main"
+                    catalog_creds[(norm_url, norm_branch)] = (
+                        str(item.get("git_username") or ""),
+                        str(item["git_token"]),
+                    )
+        except Exception:
+            logger.debug("Could not load catalog credentials for pipeline submission", exc_info=True)
+
+        enriched: list[dict[str, str]] = []
+        for r in repos:
+            entry_copy: dict[str, str] = {
+                "git_repo": r["git_repo"],
+                "git_branch": r.get("git_branch") or git_branch,
+            }
+            user = (r.get("git_username") or "").strip()
+            tok = (r.get("git_token") or "").strip()
+            if not tok:
+                key = (
+                    entry_copy["git_repo"].strip().rstrip("/").removesuffix(".git"),
+                    entry_copy["git_branch"].strip() or "main",
+                )
+                if key in catalog_creds:
+                    user, tok = catalog_creds[key]
+            if tok:
+                entry_copy["git_username"] = user
+                entry_copy["git_token"] = tok
+            enriched.append(entry_copy)
+        repos = enriched
+
     if len(repos) == 1:
         entry = repos[0]
         repo_url = entry["git_repo"]
@@ -55,7 +96,7 @@ def submit_pipeline_run(
         }
         try:
             log_repos(
-                [{"git_repo": repo_url, "git_branch": branch}],
+                [entry],
                 namespace=namespace,
                 workspace=workspace,
             )

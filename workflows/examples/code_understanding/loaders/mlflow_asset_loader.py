@@ -57,6 +57,44 @@ from utils.artifact_measurement import measure_payload, upload_identity
 _REPO_CATALOG_LOCK = threading.Lock()
 
 
+def _repo_identity(entry: dict) -> tuple[str, str]:
+    url = str(entry.get("git_repo", "")).strip().rstrip("/").removesuffix(".git")
+    branch = str(entry.get("git_branch") or "main").strip() or "main"
+    return (url, branch)
+
+
+def _merge_repo_catalog(base: list, incoming: list) -> list[dict]:
+    """Merge incoming repo dicts into base keyed by (git_repo, git_branch), preserving credentials."""
+    merged: list[dict] = []
+    index_by_key: dict[tuple[str, str], int] = {}
+    for raw in (base or []):
+        if not isinstance(raw, dict) or not raw.get("git_repo"):
+            continue
+        entry = dict(raw)
+        key = _repo_identity(entry)
+        index_by_key[key] = len(merged)
+        merged.append(entry)
+    for raw in (incoming or []):
+        if not isinstance(raw, dict) or not raw.get("git_repo"):
+            continue
+        key = _repo_identity(raw)
+        if key in index_by_key:
+            existing = merged[index_by_key[key]]
+            existing["git_repo"] = raw["git_repo"]
+            existing["git_branch"] = raw.get("git_branch") or existing.get("git_branch") or "main"
+            if raw.get("git_token"):
+                existing["git_username"] = str(raw.get("git_username") or "")
+                existing["git_token"] = raw["git_token"]
+        else:
+            entry = {"git_repo": raw["git_repo"], "git_branch": raw.get("git_branch") or "main"}
+            if raw.get("git_token"):
+                entry["git_username"] = str(raw.get("git_username") or "")
+                entry["git_token"] = raw["git_token"]
+            index_by_key[key] = len(merged)
+            merged.append(entry)
+    return merged
+
+
 class MlFlowAssetLoader(AssetLoader):
     """Loads an asset from the MLflow artifacts registry."""
 
@@ -664,7 +702,6 @@ class MlFlowAssetLoader(AssetLoader):
         repos/repo_list.json, then under category: repositories.
         """
         import tempfile
-        from utils.loader_utils import merge_json_enrichment
         from utils.pipeline_utils import get_pipeline_run_id
 
         pipeline_run_id = get_pipeline_run_id(allow_generate=True)
@@ -672,8 +709,8 @@ class MlFlowAssetLoader(AssetLoader):
         # shortcut: process-local lock, upgrade to optimistic MLflow tag CAS if scaling >1 replica
         with _REPO_CATALOG_LOCK:
             try:
-                base = self.download("repos/repo_list.json") or []
-                catalog_repos = merge_json_enrichment(base, run_repos)
+                base = self.download("repos/repo_list.json") or self.download("repos/repo_list1.json") or []
+                catalog_repos = _merge_repo_catalog(base, run_repos)
                 self.register_enrichments(enrichment_files={"repos/repo_list.json": catalog_repos})
             except Exception:
                 logging.warning("Failed to update repo catalog enrichment", exc_info=True)

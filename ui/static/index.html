@@ -72,7 +72,7 @@
     body.dark .cu-note { background: #3a1a1a; }
     body.dark .cu-alert-warning { background: #2a2510; }
     body.dark .cu-check { background: #2a2a2a; border-color: #888; }
-    body.dark .cu-check:checked { background: #fff; border-color: #fff; }
+    body.dark .cu-check:checked { background-color: #8a8d90; border-color: #aaa; }
     body.dark .cu-radio { background: #2a2a2a; border-color: #888; }
     body.dark .cu-brand { border-bottom-color: #3a3a3a; }
     body.dark .cu-breadcrumb li + li::before { border-color: #a0a0a0; }
@@ -784,6 +784,8 @@
       border-top: 1px solid var(--cu-border);
     }
     .cu-form-label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+    .cu-check-row { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; cursor: pointer; user-select: none; }
+    #private-repo-fields { display: flex; flex-direction: column; gap: 1rem; }
 
     .cu-ns-row { margin-bottom: 0; }
     .cu-ns-combo { display: block; }
@@ -948,6 +950,22 @@
         <div class="cu-form-group">
           <label class="cu-form-label" for="custom-branch">Branch</label>
           <input class="cu-field" id="custom-branch" value="main" />
+        </div>
+        <div class="cu-form-group">
+          <label class="cu-check-row" for="custom-private">
+            <input type="checkbox" class="cu-check" id="custom-private" />
+            <span>Private Repo</span>
+          </label>
+        </div>
+        <div id="private-repo-fields" class="hidden">
+          <div class="cu-form-group">
+            <label class="cu-form-label" for="custom-username">Username</label>
+            <input class="cu-field" id="custom-username" autocomplete="off" />
+          </div>
+          <div class="cu-form-group">
+            <label class="cu-form-label" for="custom-token">Git Token <span class="cu-required">*</span></label>
+            <input class="cu-field" id="custom-token" type="password" autocomplete="new-password" />
+          </div>
         </div>
       </div>
       <div class="cu-modal-footer">

@@ -1088,6 +1088,200 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertEqual(runs_env["runs"][0]["status"], "Running")
         self.assertEqual(runs_env["runs"][0]["current_stage"], "Analysis")
 
+    def test_private_repository_ui_api_catalog_and_pipeline_flow(self):
+        import json
+        from fastapi import HTTPException, Request
+        import api.repositories as api_repositories
+        from api.pipeline_service import submit_pipeline_run
+        from loaders.mlflow_asset_loader import _merge_repo_catalog
+        import services.get_catalog_repos as get_catalog_mod
+        import services.trigger_run as trigger_run_mod
+        import services.update_repos as update_repos_mod
+
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="custom-private"', html)
+        self.assertIn('id="private-repo-fields"', html)
+        self.assertIn('id="custom-username"', html)
+        self.assertIn('<label class="cu-form-label" for="custom-username">Username</label>', html)
+        self.assertIn('id="custom-token"', html)
+        self.assertIn('type="password"', html)
+        self.assertIn("git_username", js)
+        self.assertIn("git_token", js)
+
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        private_entry = {
+            "git_repo": "https://github.com/kfrankli/northpolesouthern-timetable-private",
+            "git_branch": "main",
+            "git_username": "shadowman",
+            "git_token": "github_pat_11AA4AIPK24UCISqMdc9Gz",
+        }
+        blank_user_entry = {
+            "git_repo": "https://github.com/kfrankli/northpolesouthern-blank-user-private",
+            "git_branch": "main",
+            "git_username": "",
+            "git_token": "github_pat_11AA4AIPK24UCISqMdc9Gz",
+        }
+
+        with mock.patch.object(
+            api_repositories,
+            "fetch_catalog_repos",
+            return_value=[private_entry, blank_user_entry],
+        ), mock.patch.object(api_repositories, "_log_repos") as mock_log:
+            resp = api_repositories.post_repositories(
+                api_repositories.UpdateReposRequest(
+                    repos=[
+                        api_repositories.RepoItem(**private_entry),
+                        api_repositories.RepoItem(
+                            git_repo=blank_user_entry["git_repo"],
+                            git_branch="main",
+                            git_username="   ",
+                            git_token=blank_user_entry["git_token"],
+                        ),
+                    ]
+                ),
+                req,
+            )
+            mock_log.assert_called_once_with(
+                [private_entry, blank_user_entry],
+                namespace="team-ns",
+                workspace="default",
+            )
+            self.assertEqual(resp[0].git_username, "shadowman")
+            self.assertIsNone(resp[0].git_token)
+            self.assertEqual(resp[1].git_username, "")
+            self.assertIsNone(resp[1].git_token)
+
+            envelope = api_repositories.get_catalog_repositories_envelope(req)
+            self.assertNotIn("git_token", envelope["repos"][0])
+            self.assertEqual(envelope["repos"][1]["git_username"], "")
+            self.assertNotIn("git_token", envelope["repos"][1])
+
+            with self.assertRaises(HTTPException) as bad_ctx:
+                api_repositories.post_repositories(
+                    api_repositories.UpdateReposRequest(
+                        repos=[
+                            api_repositories.RepoItem(
+                                git_repo="https://github.com/o/priv",
+                                git_branch="main",
+                                git_username="shadowman",
+                            )
+                        ]
+                    ),
+                    req,
+                )
+            self.assertEqual(bad_ctx.exception.status_code, 422)
+
+        merged = _merge_repo_catalog(
+            [{"git_repo": "https://github.com/kfrankli/northpolesouthern-train", "git_branch": "main"}],
+            [private_entry, blank_user_entry],
+        )
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged[1], private_entry)
+        self.assertEqual(merged[2], blank_user_entry)
+        # Subsequent credential-less run log does not duplicate or wipe credentials (even when git_username == "")
+        merged_after_run = _merge_repo_catalog(
+            merged,
+            [
+                {"git_repo": private_entry["git_repo"], "git_branch": "main"},
+                {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
+            ],
+        )
+        self.assertEqual(len(merged_after_run), 3)
+        self.assertEqual(merged_after_run[1]["git_token"], private_entry["git_token"])
+        self.assertEqual(merged_after_run[2]["git_username"], "")
+        self.assertEqual(merged_after_run[2]["git_token"], blank_user_entry["git_token"])
+
+        fake_client = mock.MagicMock()
+        fake_client.list_pipelines.return_value = mock.MagicMock(
+            pipelines=[mock.MagicMock(pipeline_id="p-1")]
+        )
+        fake_client.list_pipeline_versions.return_value = mock.MagicMock(
+            total_size=1,
+            pipeline_versions=[mock.MagicMock(pipeline_version_id="v-1", created_at="2026-01-01")],
+        )
+        fake_client.create_experiment.return_value = mock.MagicMock(experiment_id="e-1")
+        fake_client.run_pipeline.return_value = mock.MagicMock(run_id="run-priv-1")
+
+        with mock.patch.object(trigger_run_mod, "create_client", return_value=fake_client), \
+             mock.patch.object(get_catalog_mod, "get_catalog_repos", return_value=merged), \
+             mock.patch.object(update_repos_mod, "log_repos") as mock_pipe_log:
+            submit_pipeline_run(
+                repos=[
+                    {"git_repo": private_entry["git_repo"], "git_branch": "main"},
+                    {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
+                    {"git_repo": "https://github.com/kfrankli/northpolesouthern-train", "git_branch": "main"},
+                ],
+                namespace="team-ns",
+            )
+        runnable = json.loads(fake_client.run_pipeline.call_args.kwargs["params"]["runnable_repos"])
+        self.assertEqual(runnable[0], private_entry)
+        self.assertEqual(runnable[1], blank_user_entry)
+        self.assertNotIn("git_token", runnable[2])
+        mock_pipe_log.assert_called_once()
+
+        # Verify clone_from_repo handles non-empty username, blank username (GitHub & GitLab), and URL encoding
+        import pipelines.base.data_generation as base_dg
+
+        fake_git = types.ModuleType("git")
+        cloned_urls: list[str] = []
+
+        class _FakeRepo:
+            @staticmethod
+            def clone_from(url, dest, branch="main"):
+                cloned_urls.append(url)
+
+        fake_git.Repo = _FakeRepo
+        with mock.patch.dict(sys.modules, {"git": fake_git}):
+            base_dg.clone_from_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable-private",
+                "/tmp/dest",
+                branch="main",
+                git_username="user@example.com",
+                git_token="tok#secret",
+            )
+            base_dg.clone_from_repo(
+                "https://github.com/kfrankli/northpolesouthern-blank-user-private",
+                "/tmp/dest2",
+                branch="main",
+                git_username="",
+                git_token="tok#secret",
+            )
+            base_dg.clone_from_repo(
+                "https://gitlab.com/kfrankli/northpolesouthern-blank-user-private",
+                "/tmp/dest3",
+                branch="main",
+                git_username="",
+                git_token="tok#secret",
+            )
+        self.assertEqual(
+            cloned_urls[0],
+            "https://user%40example.com:tok%23secret@github.com/kfrankli/northpolesouthern-timetable-private",
+        )
+        self.assertEqual(
+            cloned_urls[1],
+            "https://tok%23secret@github.com/kfrankli/northpolesouthern-blank-user-private",
+        )
+        self.assertEqual(
+            cloned_urls[2],
+            "https://oauth2:tok%23secret@gitlab.com/kfrankli/northpolesouthern-blank-user-private",
+        )
+
+        # Verify get_repo_list backfills credentials from catalog when runnable_repos omits them (including blank username)
+        fake_loader = mock.MagicMock()
+        fake_loader.load_catalog_repos.return_value = [private_entry, blank_user_entry]
+        with mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_loader):
+            resolved = base_dg.DataGenerationPipeline.get_repo_list(
+                json.dumps([
+                    {"git_repo": private_entry["git_repo"], "git_branch": "main"},
+                    {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
+                ])
+            )
+        self.assertEqual(resolved[0]["git_username"], "shadowman")
+        self.assertEqual(resolved[0]["git_token"], private_entry["git_token"])
+        self.assertEqual(resolved[1]["git_username"], "")
+        self.assertEqual(resolved[1]["git_token"], blank_user_entry["git_token"])
+
 
 if __name__ == "__main__":
     unittest.main()
