@@ -1009,6 +1009,22 @@
       </div>
     </div>
   </div>
+  <div id="delete-repo-modal" class="cu-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="delete-repo-title">
+    <div class="cu-modal">
+      <div class="cu-modal-header">
+        <h3 id="delete-repo-title">Delete Repository</h3>
+        <button type="button" class="cu-modal-close" id="delete-repo-close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="cu-modal-body">
+        <div id="delete-repo-target" style="font-size:0.9rem"></div>
+        <p class="cu-muted" style="margin:0;font-size:0.85rem">This removes the repository and deletes its single-repository pipeline runs, indexes, and reports. Shared multi-repository runs are kept.</p>
+      </div>
+      <div class="cu-modal-footer">
+        <button type="button" class="cu-btn cu-btn-link" id="delete-repo-cancel">Cancel</button>
+        <button type="button" class="cu-btn cu-btn-primary" id="delete-repo-confirm">Delete</button>
+      </div>
+    </div>
+  </div>
   <div id="chat-slider-overlay" class="cu-slider-overlay hidden"></div>
   <div id="chat-slider" class="cu-slider">
     <div class="cu-slider-header">

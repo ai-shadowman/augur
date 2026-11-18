@@ -74,7 +74,7 @@ async function runMermaid(container) {
 
 const state = {
   repos: [], selected: new Set(), indexes: [], queryable: [],
-  defaultKey: null, poll: null, chat: [], thinking: null,
+  defaultKey: null, poll: null, pollRunId: null, chat: [], thinking: null,
   animateLatest: false, allRuns: [], runPage: 0, selectedRunId: null,
   runsRefreshTimer: null,
   namespace: (() => { try { return sessionStorage.getItem("cu-namespace") || ""; } catch { return ""; } })(),
@@ -933,21 +933,52 @@ function jobCard(job) {
   </article>`;
 }
 
+let pendingDeleteRepo = null;
+
+function openDeleteRepoModal(repo) {
+  if (state.thinking && state.thinking.kind === "delete") return;
+  pendingDeleteRepo = repo;
+  const branch = repo.git_branch || "main";
+  $("delete-repo-target").innerHTML =
+    `<strong>${esc(shortName(repo.git_repo) || repo.git_repo)} @ ${esc(branch)}</strong>` +
+    `<div class="cu-muted" style="font-size:0.82rem;margin-top:0.2rem;word-break:break-all">${esc(repo.git_repo)}</div>`;
+  $("delete-repo-modal").classList.remove("hidden");
+}
+
+function closeDeleteRepoModal() {
+  $("delete-repo-modal").classList.add("hidden");
+  pendingDeleteRepo = null;
+}
+
 async function deleteRepo(repo) {
   const key = repoKey(repo);
   const idx = state.repos.findIndex((r) => repoKey(r) === key);
   if (idx < 0) return;
   const removed = state.repos[idx];
   const wasSelected = state.selected.has(key);
+  let nextThinking = state.thinking && state.thinking.kind !== "delete" ? state.thinking : null;
   state.repos.splice(idx, 1);
   state.selected.delete(key);
   renderRepos();
+  banner("");
+  setThinking({
+    kind: "delete",
+    label: "Deleting repository",
+    status: "Removing repository, pipeline runs, and MLflow records…",
+  });
   try {
     const qs = new URLSearchParams({
       git_repo: removed.git_repo,
       git_branch: removed.git_branch || "main",
     });
     await api(`/api/v2/repositories?${qs.toString()}`, { method: "DELETE" });
+    await load();
+    if (state.pollRunId && !state.allRuns.some((r) => r.run_id === state.pollRunId)) {
+      if (state.poll) clearInterval(state.poll);
+      state.poll = null;
+      state.pollRunId = null;
+      if (nextThinking && nextThinking.kind === "pipeline") nextThinking = null;
+    }
   } catch (e) {
     if (!state.repos.some((r) => repoKey(r) === key)) {
       state.repos.splice(Math.min(idx, state.repos.length), 0, removed);
@@ -955,6 +986,8 @@ async function deleteRepo(repo) {
     if (wasSelected) state.selected.add(key);
     renderRepos();
     banner(String(e.message || e), true);
+  } finally {
+    setThinking(nextThinking);
   }
 }
 
@@ -1010,7 +1043,7 @@ function renderRepos() {
       e.preventDefault();
       e.stopPropagation();
       const target = state.repos.find((r) => repoKey(r) === btn.dataset.key);
-      if (target) deleteRepo(target);
+      if (target) openDeleteRepoModal(target);
     });
   });
   renderSelection();
@@ -1337,13 +1370,15 @@ function pollQuery(queryId) {
 
 async function pollV2(runId) {
   if (state.poll) clearInterval(state.poll);
+  state.pollRunId = runId;
   let tickInFlight = false;
   const tick = async () => {
-    if (tickInFlight) return;
+    if (tickInFlight || state.pollRunId !== runId) return;
     tickInFlight = true;
     try {
       const snap = await api(`/api/v2/pipelines/runs/${runId}`);
-      if (state.thinking) {
+      if (state.pollRunId !== runId) return;
+      if (state.thinking && state.thinking.kind !== "delete") {
         const stagePart = snap.current_stage ? ` · ${snap.current_stage}` : "";
         setThinking({
           ...state.thinking,
@@ -1351,6 +1386,7 @@ async function pollV2(runId) {
         });
       }
       await load();
+      if (state.pollRunId !== runId) return;
       if (snap.status === "running" || snap.status === "pending") {
         const matched = state.allRuns.find((r) => r.run_id === runId);
         if (matched && snap.current_stage && matched.current_stage !== snap.current_stage) {
@@ -1362,6 +1398,7 @@ async function pollV2(runId) {
       if (["succeeded", "skipped", "failed", "cancelled", "running"].includes(snap.status)) {
         clearInterval(state.poll);
         state.poll = null;
+        state.pollRunId = null;
         setThinking(null);
         if (snap.status === "succeeded" || snap.status === "skipped") {
           banner("Pipeline completed successfully.");
@@ -1373,8 +1410,10 @@ async function pollV2(runId) {
         }
       }
     } catch (e) {
+      if (state.pollRunId !== runId) return;
       clearInterval(state.poll);
       state.poll = null;
+      state.pollRunId = null;
       setThinking(null);
       banner(String(e.message || e), true);
     } finally {
@@ -1555,8 +1594,17 @@ $("open-add-repo").onclick = () => {
 $("add-repo-close").onclick = closeAddRepo;
 $("add-repo-cancel").onclick = closeAddRepo;
 $("add-repo-modal").addEventListener("click", (e) => { if (e.target === $("add-repo-modal")) closeAddRepo(); });
+$("delete-repo-close").addEventListener("click", closeDeleteRepoModal);
+$("delete-repo-cancel").addEventListener("click", closeDeleteRepoModal);
+$("delete-repo-modal").addEventListener("click", (e) => { if (e.target === $("delete-repo-modal")) closeDeleteRepoModal(); });
+$("delete-repo-confirm").addEventListener("click", async () => {
+  const target = pendingDeleteRepo;
+  closeDeleteRepoModal();
+  if (target) await deleteRepo(target);
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("add-repo-modal").classList.contains("hidden")) closeAddRepo();
+  if (e.key === "Escape" && !$("delete-repo-modal").classList.contains("hidden")) closeDeleteRepoModal();
 });
 $("add-custom").onclick = async () => {
   const git_repo = $("custom-url").value.trim();

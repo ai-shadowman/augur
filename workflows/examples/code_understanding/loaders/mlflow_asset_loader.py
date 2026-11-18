@@ -63,6 +63,24 @@ def _repo_identity(entry: dict) -> tuple[str, str]:
     return (url, branch)
 
 
+def _repo_slug(git_repo: str, git_branch: str = "main") -> str:
+    branch = (git_branch or "main").strip() or "main"
+    if not (git_repo or "").strip():
+        return ""
+    try:
+        from utils.code_utils import generate_slug_from_repo
+
+        return generate_slug_from_repo(git_repo, branch)
+    except Exception:
+        from urllib.parse import urlparse
+
+        path = urlparse(git_repo.strip()).path.strip("/").removesuffix(".git")
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            return f"{parts[-2]}-{parts[-1]}-{branch}"[:255]
+        return f"{parts[0]}-{branch}"[:255] if parts else ""
+
+
 def _merge_repo_catalog(base: list, incoming: list) -> list[dict]:
     """Merge incoming repo dicts into base keyed by (git_repo, git_branch), preserving credentials."""
     merged: list[dict] = []
@@ -786,6 +804,134 @@ class MlFlowAssetLoader(AssetLoader):
             remaining = _remove_from_repo_catalog(base, git_repo, git_branch)
             self.register_enrichments(enrichment_files={"repos/repo_list.json": remaining})
             return remaining
+
+    def purge_repo_records(
+        self,
+        git_repo: str,
+        git_branch: str = "main",
+        kfp_run_ids: list[str] | None = None,
+    ) -> int:
+        """Soft-deletes single-repo MLflow runs and traces for ``(git_repo, git_branch)``."""
+        from utils.pipeline_utils import resolve_mlflow_prefix
+
+        git_slug = _repo_slug(git_repo, git_branch)
+        if not git_slug:
+            return 0
+
+        prefix = resolve_mlflow_prefix(namespace=self.namespace, workspace=self.workspace)
+        eval_exp = f"{prefix}/code-refactoring/evaluations"
+        ns_ws = (self.namespace or os.environ.get("MLFLOW_WORKSPACE") or "").strip()
+        telemetry_exp = os.environ.get("MLFLOW_EXPERIMENT_NAME") or (
+            f"{ns_ws}/AIP-default" if ns_ws else "AIP-default"
+        )
+        exp_names = list(
+            dict.fromkeys(
+                [
+                    self.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                    self.RESULT_ASSET_EXPERIMENT,
+                    eval_exp,
+                    telemetry_exp,
+                ]
+            )
+        )
+
+        safe_slug = escape_mlflow_filter_value(git_slug)
+        filters = [f"tags.\"git_slug\" = '{safe_slug}'"]
+        clean_run_ids = list(
+            dict.fromkeys(r.strip() for r in (kfp_run_ids or []) if isinstance(r, str) and r.strip())
+        )
+        for rid in clean_run_ids:
+            safe_rid = escape_mlflow_filter_value(rid)
+            filters.append(f"tags.\"pipeline_run_id\" = '{safe_rid}'")
+            filters.append(f"tags.\"kfp_run_id\" = '{safe_rid}'")
+
+        client = MlflowClient()
+        active_exp_ids: list[str] = []
+        telemetry_exp_id: str | None = None
+        for exp_name in exp_names:
+            exp = client.get_experiment_by_name(exp_name)
+            if not exp or getattr(exp, "lifecycle_stage", None) != "active":
+                continue
+            exp_id = str(exp.experiment_id)
+            active_exp_ids.append(exp_id)
+            if exp_name == telemetry_exp:
+                telemetry_exp_id = exp_id
+
+        if not active_exp_ids:
+            return 0
+
+        matched_runs: dict[str, object] = {}
+        for flt in filters:
+            page_token: str | None = None
+            seen_tokens: set[str] = set()
+            while True:
+                search_kwargs: dict[str, object] = {
+                    "experiment_ids": active_exp_ids,
+                    "filter_string": flt,
+                    "max_results": 1000,
+                }
+                if page_token:
+                    search_kwargs["page_token"] = page_token
+                runs = client.search_runs(**search_kwargs)
+                for run in (runs or []):
+                    rid = getattr(getattr(run, "info", None), "run_id", None)
+                    if isinstance(rid, str) and rid:
+                        matched_runs[rid] = run
+                next_token = getattr(runs, "token", None)
+                if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+                    break
+                seen_tokens.add(next_token)
+                page_token = next_token
+
+        deleted_count = 0
+        for run_id, run in matched_runs.items():
+            tags = getattr(getattr(run, "data", None), "tags", None) or {}
+            if str(tags.get("multi_repo", "")).strip().lower() in ("true", "1", "yes"):
+                continue
+            slug_tag = str(tags.get("git_slug") or "").strip()
+            if tags.get("category") == "enrichments" and not slug_tag:
+                continue
+            if slug_tag and slug_tag != git_slug:
+                continue
+            client.delete_run(run_id)
+            deleted_count += 1
+
+        if (
+            telemetry_exp_id
+            and clean_run_ids
+            and hasattr(client, "search_traces")
+            and hasattr(client, "delete_traces")
+        ):
+            for rid in clean_run_ids:
+                safe_rid = escape_mlflow_filter_value(rid)
+                try:
+                    traces = client.search_traces(
+                        experiment_ids=[telemetry_exp_id],
+                        filter_string=f"tags.`kfp.run_id` = '{safe_rid}'",
+                    )
+                    trace_ids = [
+                        tid
+                        for t in (traces or [])
+                        if isinstance(
+                            (
+                                tid := getattr(getattr(t, "info", None), "trace_id", None)
+                                or getattr(getattr(t, "info", None), "request_id", None)
+                            ),
+                            str,
+                        )
+                        and tid
+                    ]
+                    if trace_ids:
+                        client.delete_traces(experiment_id=telemetry_exp_id, trace_ids=trace_ids)
+                except Exception:
+                    logging.debug(
+                        "Skipping trace cleanup in experiment %s for run %s",
+                        telemetry_exp_id,
+                        rid,
+                        exc_info=True,
+                    )
+
+        return deleted_count
 
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts in the MLflow registry matching the given prefix."""

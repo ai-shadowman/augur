@@ -110,7 +110,7 @@ def delete_repository(
     git_repo: str = Query(..., min_length=1, description="Git repository URL"),
     git_branch: str = Query(default="main", description="Branch to remove"),
 ) -> list[RepoItem]:
-    """Remove a repository from the catalog and return the updated catalog."""
+    """Remove a repository from the catalog, purge its single-repo KFP/MLflow records, and return the updated catalog."""
     repo_url = (git_repo or "").strip()
     if not repo_url:
         raise HTTPException(status_code=422, detail="git_repo is required.")

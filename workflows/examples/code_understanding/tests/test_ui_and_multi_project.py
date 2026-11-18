@@ -1289,17 +1289,26 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertEqual(resolved[1]["git_token"], blank_user_entry["git_token"])
 
     def test_delete_repository_ui_api_and_catalog_flow(self):
+        import json
         from fastapi import HTTPException, Request
         import api.repositories as api_repositories
         from loaders.mlflow_asset_loader import MlFlowAssetLoader, _remove_from_repo_catalog
+        import services.update_repos as update_repos_mod
 
         html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
         js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        rbac_yaml = (_REPO_ROOT / "resources" / "helm" / "templates" / "pipeline-rbac.yaml").read_text(encoding="utf-8")
         self.assertIn(".cu-repo-delete", html)
         self.assertIn(".cu-repo-delete svg { pointer-events: none; }", html)
+        self.assertIn('id="delete-repo-modal"', html)
+        self.assertIn('id="delete-repo-confirm"', html)
         self.assertIn("cu-repo-delete", js)
         self.assertIn('title="Delete"', js)
+        self.assertIn("openDeleteRepoModal", js)
         self.assertIn('method: "DELETE"', js)
+        self.assertIn("- delete", rbac_yaml)
+        self.assertNotIn("- update", rbac_yaml)
+        self.assertNotIn("- patch", rbac_yaml)
 
         base = [
             {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable", "git_branch": "main"},
@@ -1322,6 +1331,180 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         # Deleting the last repo leaves [] in enrichments; load_catalog_repos must return [] without falling back
         with mock.patch.object(loader, "download", side_effect=lambda p, *a, **kw: [] if p == "repos/repo_list.json" else base):
             self.assertEqual(loader.load_catalog_repos(), [])
+
+        # Verify KFP purge terminates active single-repo runs, deletes single-repo runs, and skips multi-repo/other runs
+        def _kfp_run(run_id, display_name, state, params):
+            return types.SimpleNamespace(
+                run_id=run_id,
+                display_name=display_name,
+                state=state,
+                runtime_config=types.SimpleNamespace(parameters=params),
+            )
+
+        fake_kfp = mock.MagicMock()
+        fake_kfp.get_experiment.return_value = types.SimpleNamespace(experiment_id="exp-1")
+        fake_kfp.list_runs.side_effect = [
+            types.SimpleNamespace(
+                runs=[
+                    _kfp_run(
+                        "kfp-active-1",
+                        "single_repo_timetable",
+                        "RUNNING",
+                        {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable.git", "git_branch": "main"},
+                    ),
+                    _kfp_run(
+                        "kfp-multi-keep",
+                        "multi_repo_combined",
+                        "SUCCEEDED",
+                        {"runnable_repos": json.dumps(base)},
+                    ),
+                ],
+                next_page_token="p2",
+            ),
+            types.SimpleNamespace(
+                runs=[
+                    _kfp_run(
+                        "kfp-done-2",
+                        "single_repo_timetable_old",
+                        "SUCCEEDED",
+                        {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable", "git_branch": "main"},
+                    ),
+                    _kfp_run(
+                        "kfp-other-repo",
+                        "single_repo_cron",
+                        "SUCCEEDED",
+                        {"git_repo": "https://github.com/dbrletic/cron-job-creator", "git_branch": "master"},
+                    ),
+                ],
+                next_page_token="",
+            ),
+        ]
+        with mock.patch("utils.service_utils.create_client", return_value=fake_kfp):
+            deleted_kfp_ids = update_repos_mod.purge_kfp_runs_for_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+        self.assertEqual(deleted_kfp_ids, ["kfp-active-1", "kfp-done-2"])
+        fake_kfp.terminate_run.assert_called_once_with("kfp-active-1")
+        self.assertEqual(
+            [c.args[0] for c in fake_kfp.delete_run.call_args_list],
+            ["kfp-active-1", "kfp-done-2"],
+        )
+
+        # Verify MLflow soft-delete removes single-repo runs + traces while keeping multi-repo and global catalog runs
+        def _mlf_run(run_id, tags):
+            return types.SimpleNamespace(
+                info=types.SimpleNamespace(run_id=run_id),
+                data=types.SimpleNamespace(tags=tags),
+            )
+
+        slug = "kfrankli-northpolesouthern-timetable-main"
+        fake_mlf = mock.MagicMock()
+        exp_map = {
+            "team-ns/code-refactoring/assets/result-directories": types.SimpleNamespace(
+                experiment_id="10", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/assets/results": types.SimpleNamespace(
+                experiment_id="11", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/evaluations": types.SimpleNamespace(
+                experiment_id="12", lifecycle_stage="active"
+            ),
+            "team-ns/AIP-default": types.SimpleNamespace(
+                experiment_id="13", lifecycle_stage="active"
+            ),
+        }
+        fake_mlf.get_experiment_by_name.side_effect = lambda name: exp_map.get(name)
+
+        def _search_runs(experiment_ids, filter_string="", **kwargs):
+            self.assertEqual(experiment_ids, ["10", "11", "12", "13"])
+            if slug in filter_string:
+                return [
+                    _mlf_run("mlf-idx-1", {"category": "indexing", "git_slug": slug, "multi_repo": "False"}),
+                    _mlf_run("mlf-multi-skip", {"category": "indexing", "git_slug": slug, "multi_repo": "True"}),
+                    _mlf_run("mlf-eval-1", {"category": "evaluation", "git_slug": slug, "multi_repo": "False"}),
+                ]
+            if "kfp-done-2" in filter_string:
+                return [
+                    _mlf_run("mlf-global-enrich-keep", {"category": "enrichments", "pipeline_run_id": "kfp-done-2"}),
+                    _mlf_run("mlf-run-repos-1", {"category": "repositories", "pipeline_run_id": "kfp-done-2"}),
+                    _mlf_run("mlf-other-slug-keep", {"category": "analysis", "git_slug": "dbrletic-cron-job-creator-master"}),
+                ]
+            return []
+
+        fake_mlf.search_runs.side_effect = _search_runs
+        fake_mlf.search_traces.side_effect = lambda experiment_ids, filter_string="": (
+            [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-1", request_id=None))]
+            if experiment_ids == ["13"] and "kfp-active-1" in filter_string
+            else []
+        )
+
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=fake_mlf):
+            deleted_mlf_count = loader.purge_repo_records(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                kfp_run_ids=deleted_kfp_ids,
+            )
+        self.assertEqual(deleted_mlf_count, 3)
+        self.assertEqual(fake_mlf.search_runs.call_count, 5)
+        self.assertEqual(fake_mlf.search_traces.call_count, 2)
+        self.assertEqual(
+            {c.args[0] for c in fake_mlf.delete_run.call_args_list},
+            {"mlf-idx-1", "mlf-run-repos-1", "mlf-eval-1"},
+        )
+        fake_mlf.delete_traces.assert_called_once_with(experiment_id="13", trace_ids=["tr-1"])
+
+        # Verify services.update_repos.delete_repo runs KFP + MLflow purge BEFORE catalog removal and surfaces errors
+        call_order: list[str] = []
+        fake_default_loader = mock.MagicMock()
+        fake_default_loader.purge_repo_records.side_effect = lambda *a, **kw: call_order.append("mlflow") or 2
+        fake_default_loader.delete_repo.side_effect = lambda *a, **kw: call_order.append("catalog") or [base[1]]
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_default_loader), \
+             mock.patch.object(
+                 update_repos_mod,
+                 "purge_kfp_runs_for_repo",
+                 side_effect=lambda *a, **kw: call_order.append("kfp") or ["kfp-1"],
+             ) as mock_kfp_purge:
+            svc_remaining = update_repos_mod.delete_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+        self.assertEqual(svc_remaining, [base[1]])
+        self.assertEqual(call_order, ["kfp", "mlflow", "catalog"])
+        mock_kfp_purge.assert_called_once_with(
+            "https://github.com/kfrankli/northpolesouthern-timetable",
+            "main",
+            namespace="team-ns",
+            workspace="default",
+        )
+        fake_default_loader.purge_repo_records.assert_called_once_with(
+            "https://github.com/kfrankli/northpolesouthern-timetable",
+            "main",
+            kfp_run_ids=["kfp-1"],
+        )
+
+        # Failed KFP purge must raise and leave catalog entry intact so the user can retry
+        failing_loader = mock.MagicMock()
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=failing_loader), \
+             mock.patch.object(
+                 update_repos_mod,
+                 "purge_kfp_runs_for_repo",
+                 side_effect=RuntimeError("403 Forbidden"),
+             ):
+            with self.assertRaises(RuntimeError):
+                update_repos_mod.delete_repo(
+                    "https://github.com/kfrankli/northpolesouthern-timetable",
+                    "main",
+                    namespace="team-ns",
+                    workspace="default",
+                )
+        failing_loader.delete_repo.assert_not_called()
 
         req = Request(cookies={"cu_namespace": "team-ns"})
         with mock.patch.object(api_repositories, "_delete_repo", return_value=[base[1]]) as mock_del, \
