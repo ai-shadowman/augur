@@ -649,7 +649,7 @@ class TestPrepareFocalCodebase(RealYaml):
         train, focal = (generate_slug_from_repo(repo, "main") for repo in (TRAIN, TIMETABLE))
         super().setUp()
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.parent, self.dest = tmp / "target", tmp / "target-single-multi" / "focal"
+        self.parent, self.dest = tmp / "target", tmp / "target-single-repo-with-context" / "focal"
         focal = self.parent / focal
         write_meta(self.parent / train, "src/Train_metadata.txt",
                    file_path="src/Train.java", language="java", package="com.org.train", purpose="Models a train.")
@@ -682,10 +682,10 @@ class TestOrchestratorWiring(unittest.TestCase):
 
     def test_pipeline_is_defined_and_registered(self):
         tree = ast.parse(self.SRC)
-        self.assertIn("single_multi_repo_pipeline",
+        self.assertIn("single_repo_with_context_pipeline",
                       [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)])
-        self.assertIn('"single_multi_repo"', self.SRC)
-        self.assertIn('name="single-multi-repo-pipeline"', self.SRC)
+        self.assertIn('"single_repo_with_context"', self.SRC)
+        self.assertIn('name="single-repo-with-context-pipeline"', self.SRC)
 
     def test_existing_pipelines_are_still_registered(self):
         for key in ('"single_repo"', '"multi_repo"', '"data_generation"', '"indexing"', '"analysis"'):
@@ -696,8 +696,8 @@ class TestRunScriptFlag(unittest.TestCase):
     SH = (Path(__file__).resolve().parents[1] / "scripts/run_pipelines.sh").read_text()
 
     def test_flag_and_pipeline_name(self):
-        self.assertIn('--single-multi-repo) MODE="single_multi"', self.SH)
-        self.assertIn('trigger_pipeline "single_multi_repo"', self.SH)
+        self.assertIn('--single-repo-with-context) MODE="single_repo_with_context"', self.SH)
+        self.assertIn('trigger_pipeline "single_repo_with_context"', self.SH)
         self.assertIn('MODE="multi"\n', self.SH)  # default unchanged
 
 

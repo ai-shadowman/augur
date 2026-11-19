@@ -6,11 +6,11 @@
 #   ./run_pipelines.sh --single-repo   # trigger single-repo pipeline run
 #   ./run_pipelines.sh                 # trigger multi-repo pipeline run (default)
 #   ./run_pipelines.sh --multi-repo    # trigger multi-repo pipeline run
-#   ./run_pipelines.sh --single-multi-repo  # trigger single multi-repo pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
+#   ./run_pipelines.sh --single-repo-with-context  # trigger single-repo-with-context pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
 #
 # Environment variables:
 #   KFP_NAMESPACE         Kubernetes namespace (KFP_HOST is derived from this)
-#   GIT_REPO              Git repository URL to analyse (required for --single-repo)
+#   GIT_REPO              Git repository URL to analyse (required for --single-repo and --single-repo-with-context)
 #   GIT_BRANCH            Git branch to clone (default: main)
 #   PARENT_SOURCE_PATH                 Parent source path (default: source)
 #   PARENT_TARGET_PATH                 Parent target path (default: target)
@@ -25,13 +25,13 @@ Usage: $(basename "$0") [OPTION]...
 Options:
   --single-repo   Trigger single-repo pipeline run (GIT_REPO required)
   --multi-repo    Trigger multi-repo pipeline run (default)
-  --single-multi-repo
-                  Trigger single multi-repo pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
+  --single-repo-with-context
+                  Trigger single-repo-with-context pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)
   -h, --help      Show this help message
 
 Environment variables:
   KFP_NAMESPACE  Kubernetes namespace, used to derive KFP_HOST (required)
-  GIT_REPO       Git repository URL to analyse (required for --single-repo)
+  GIT_REPO       Git repository URL to analyse (required for --single-repo and --single-repo-with-context)
   GIT_BRANCH     Git branch to clone (default: main)
   PARENT_SOURCE_PATH                Parent source path (default: source)
   PARENT_TARGET_PATH                Parent target path (default: target)
@@ -126,7 +126,7 @@ for arg in "$@"; do
     case "$arg" in
         --single-repo) MODE="single" ;;
         --multi-repo)  MODE="multi" ;;
-        --single-multi-repo) MODE="single_multi" ;;
+        --single-repo-with-context) MODE="single_repo_with_context" ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "Error: Unknown argument: $arg" >&2; usage; exit 1 ;;
     esac
@@ -139,12 +139,12 @@ if [[ "$MODE" == "single" ]]; then
     fi
     trigger_pipeline "single_repo" "single_repo_${TIMESTAMP}" \
         "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
-elif [[ "$MODE" == "single_multi" ]]; then
+elif [[ "$MODE" == "single_repo_with_context" ]]; then
     if [[ -z "$GIT_REPO" ]]; then
-        echo "Error: GIT_REPO must be set and non-empty for --single-multi-repo." >&2
+        echo "Error: GIT_REPO must be set and non-empty for --single-repo-with-context." >&2
         exit 1
     fi
-    trigger_pipeline "single_multi_repo" "single_multi_repo_${TIMESTAMP}" \
+    trigger_pipeline "single_repo_with_context" "single_repo_with_context_${TIMESTAMP}" \
         "{\"git_repo\": \"$GIT_REPO\", \"git_branch\": \"$GIT_BRANCH\", \"parent_source_path\": \"$SOURCE_PATH\", \"parent_target_path\": \"$TARGET_PATH\"}"
 else
     trigger_pipeline "multi_repo" "multi_repo_${TIMESTAMP}" \

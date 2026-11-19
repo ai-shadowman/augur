@@ -53,7 +53,7 @@ integration. Enabling the previously skipped sections increases the number of
 LLM queries for multi-repository reports from three to twelve and supplies more
 context to later queries.
 
-The single multi-repository mode (`scripts/run_pipelines.sh --single-multi-repo`)
+The single repository with context mode (`scripts/run_pipelines.sh --single-repo-with-context`)
 runs the multi-repository scan, then a deep scan of the repository named by
 `GIT_REPO`, which must be one of the listed repositories. Before the deep scan,
 each import in the focal repository that a sibling repository provides is

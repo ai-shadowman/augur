@@ -378,9 +378,9 @@ class TestDependencyAnalyzerIntegration(unittest.TestCase):
         return mock_loader.log_results
 
     def test_analysis_tags_carry_scan_mode_when_given(self):
-        log_results = self.run_analysis(scan_mode="single-multi-repo")
+        log_results = self.run_analysis(scan_mode="single-repo-with-context")
         log_results.assert_called_once()
-        self.assertEqual(log_results.call_args.kwargs["tags"]["scan_mode"], "single-multi-repo")
+        self.assertEqual(log_results.call_args.kwargs["tags"]["scan_mode"], "single-repo-with-context")
 
     def test_analysis_tags_have_no_scan_mode_key_by_default(self):
         log_results = self.run_analysis()

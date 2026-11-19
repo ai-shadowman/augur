@@ -1,4 +1,4 @@
-# Single Multi-Repo Scan Implementation Plan
+# Single Repo With Context Scan Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, PyYAML, Kubeflow Pipelines (`kfp`), GraphRAG, MLflow asset loader, `unittest`-style tests run with pytest.
 
-**Spec:** `docs/superpowers/specs/2026-11-16-single-multi-repo-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-16-single-repo-with-context-design.md`
 
 All code paths below are relative to `workflows/examples/code_understanding/`. Run every command from that directory.
 
@@ -20,7 +20,7 @@ All code paths below are relative to `workflows/examples/code_understanding/`. R
 - Output of the existing single-repo and multi-repo modes must not change. Every new parameter defaults to a value that reproduces today's behavior exactly.
 - No new LLM calls for the catalog or the annotation, and no LLM data generation re-run for the focal repository.
 - No new dependencies.
-- Names fixed by the spec: flag `--single-multi-repo`; compile-map key and KFP display name `single_multi_repo`; `@dsl.pipeline` name `single-multi-repo-pipeline`; catalog file `repo_catalog.json`; tag `scan_mode` with value `single-multi-repo`; catalog tag `repo-catalog: true`.
+- Names fixed by the spec: flag `--single-repo-with-context`; compile-map key and KFP display name `single_repo_with_context`; `@dsl.pipeline` name `single-repo-with-context-pipeline`; catalog file `repo_catalog.json`; tag `scan_mode` with value `single-repo-with-context`; catalog tag `repo-catalog: true`.
 - Only imports are resolved. Declared build dependencies (`pom.xml` and the like) are out of scope.
 - Test command (the system Python has no pytest):
 
@@ -44,11 +44,11 @@ Below, `$PYTEST <paths>` means that command with those paths. On the full suite,
 |---|---|
 | Create `utils/repo_catalog.py` | Catalog rollup, import resolution, focal annotation, focal validation, catalog storage. No pipeline or KFP imports at module top. |
 | Create `tests/test_repo_catalog.py` | Unit tests for all of the above. |
-| Create `pipelines/kubeflow/single_multi_repo.py` | Two KFP components: validate the focal repository, and build catalog plus annotated focal copy. |
+| Create `pipelines/kubeflow/single_repo_with_context.py` | Two KFP components: validate the focal repository, and build catalog plus annotated focal copy. |
 | Modify `pipelines/base/indexing.py` | Exclude `repo_catalog` from index input; optional `scan_mode` tag. |
 | Modify `pipelines/base/analysis.py` | Optional `scan_mode` tag. |
 | Modify `pipelines/kubeflow/indexing.py`, `pipelines/kubeflow/analysis.py` | Pass `scan_mode` through. |
-| Modify `pipelines/orchestrator.py` | `single_multi_repo_pipeline` and its compile-map entry. |
+| Modify `pipelines/orchestrator.py` | `single_repo_with_context_pipeline` and its compile-map entry. |
 | Modify `assets/graphrag/extract_graph.txt` | One rule for annotated imports. |
 | Modify `scripts/run_pipelines.sh`, `README.md` | The new flag and its documentation. |
 
@@ -63,7 +63,7 @@ Below, `$PYTEST <paths>` means that command with those paths. On the full suite,
 **Interfaces:**
 - Consumes: `utils.code_utils.generate_slug_from_repo(git_repo, git_branch) -> str`; `provenance.facts.read(path: Path) -> RepoFacts` (fields used: `runtime: str | None`, `packages` with `.name` and `.version`); `provenance.pipeline.FACTS_FILENAME` (`"provenance.json"`). Import these inside the functions, not at module top.
 - Produces:
-  - `CATALOG_FILENAME = "repo_catalog.json"`, `SCAN_MODE = "single-multi-repo"`
+  - `CATALOG_FILENAME = "repo_catalog.json"`, `SCAN_MODE = "single-repo-with-context"`
   - `require_focal_in_list(git_repo: str, git_branch: str, git_repos: list[dict]) -> str` returns the focal slug; raises `ValueError` if `git_repo` is empty or the slug is not among the list's slugs. List items are `{"git_repo": ..., "git_branch": ...}`; a missing `git_branch` means `"main"`.
   - `read_flat_metadata(path: str) -> dict | None` parses one `_metadata.txt` and regroups flattened keys: returns `{"file_path", "language", "package", "purpose", "imports": [...], "classes": [...]}` with empty strings and `None` dropped. Returns `None` when the file is unreadable, is not a YAML mapping, or has no `file_path`.
   - `build_repo_catalog(parent_target_path: str, git_repos: list[dict]) -> dict`
@@ -390,8 +390,8 @@ Expected: all pass.
 
 ```python
 def test_indexing_tags_carry_scan_mode_when_given(self):
-    # generate_graphrag_index(..., scan_mode="single-multi-repo")
-    # every log_results call's tags["scan_mode"] == "single-multi-repo"
+    # generate_graphrag_index(..., scan_mode="single-repo-with-context")
+    # every log_results call's tags["scan_mode"] == "single-repo-with-context"
 def test_indexing_tags_have_no_scan_mode_key_by_default(self):
     # for every log_results call: "scan_mode" not in tags
 def test_analysis_tags_carry_scan_mode_when_given(self):
@@ -475,7 +475,7 @@ Expected: all pass.
 ### Task 7: Local pipeline, Kubeflow pipeline, and run flag
 
 **Files:**
-- Create: `pipelines/kubeflow/single_multi_repo.py`
+- Create: `pipelines/kubeflow/single_repo_with_context.py`
 - Modify: `pipelines/orchestrator.py`
 - Modify: `scripts/run_pipelines.sh`
 - Modify: `README.md`
@@ -485,15 +485,15 @@ Expected: all pass.
 - Consumes: everything in `utils/repo_catalog.py`; `IndexingPipeline.run(..., scan_mode=)` and `AnalysisPipeline.run(..., scan_mode=)` from Task 5; `utils.loader_utils.download_code_metadata_directories(git_repos, parent_target_path)`; `utils.kubeflow_utils.write_to_output_artifact`.
 - Produces:
   - `utils.repo_catalog.prepare_focal_codebase(git_repo: str, git_branch: str, git_repos: list[dict], parent_target_path: str, dest_dir: str) -> dict`: calls `require_focal_in_list`, `build_repo_catalog`, `save_repo_catalog`, then `annotate_focal_repo(f"{parent_target_path}/{focal_slug}", dest_dir, catalog, focal_slug)`; logs the counts at INFO; returns the counts. Both variants call this one function.
-  - `pipelines/kubeflow/single_multi_repo.py`: `validate_focal_repo_op(git_repo: str, git_branch: str)` and `annotate_focal_repo_op(git_repo: str, git_branch: str, parent_target_path: str, codebase_dir: Output[Dataset])`.
-  - `pipelines/orchestrator.py`: `single_multi_repo_pipeline(git_repo, git_branch, parent_source_path, parent_target_path)` with the same parameter defaults as `single_repo_pipeline` (no `multi_repo` parameter), decorated `@dsl.pipeline(name="single-multi-repo-pipeline")`, and `"single_multi_repo": single_multi_repo_pipeline` in the `compile_all_and_exit` map.
+  - `pipelines/kubeflow/single_repo_with_context.py`: `validate_focal_repo_op(git_repo: str, git_branch: str)` and `annotate_focal_repo_op(git_repo: str, git_branch: str, parent_target_path: str, codebase_dir: Output[Dataset])`.
+  - `pipelines/orchestrator.py`: `single_repo_with_context_pipeline(git_repo, git_branch, parent_source_path, parent_target_path)` with the same parameter defaults as `single_repo_pipeline` (no `multi_repo` parameter), decorated `@dsl.pipeline(name="single-repo-with-context-pipeline")`, and `"single_repo_with_context": single_repo_with_context_pipeline` in the `compile_all_and_exit` map.
 
-**Local branch** of `single_multi_repo_pipeline` (the `else` of `uses_kfp()`), in this order:
+**Local branch** of `single_repo_with_context_pipeline` (the `else` of `uses_kfp()`), in this order:
 
 1. Load `git_repos` exactly as `multi_repo_pipeline` does.
 2. `focal_slug = require_focal_in_list(git_repo, git_branch, git_repos)`. This is the fail-before-any-work check.
 3. The three calls `multi_repo_pipeline` makes: `DataGenerationPipeline().run_multi_repo(git_repos)`, `IndexingPipeline().run_multi_repo(parent_target_path=parent_target_path)`, `AnalysisPipeline().run_multi_repo()`.
-4. `annotated_path = f"{parent_target_path}-single-multi/{focal_slug}"`, a sibling of `parent_target_path` and never inside it, so the overview index cannot pick it up on a later run. `prepare_focal_codebase(git_repo, git_branch, git_repos, parent_target_path, annotated_path)`.
+4. `annotated_path = f"{parent_target_path}-single-repo-with-context/{focal_slug}"`, a sibling of `parent_target_path` and never inside it, so the overview index cannot pick it up on a later run. `prepare_focal_codebase(git_repo, git_branch, git_repos, parent_target_path, annotated_path)`.
 5. `graphrag_source_path = os.path.join(os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), focal_slug)`, as `single_repo_pipeline` builds it.
 6. `IndexingPipeline().run(codebase_path=annotated_path, graphrag_source_path=graphrag_source_path, git_repo=git_repo, git_branch=git_branch, multi_repo=False, scan_mode=SCAN_MODE)`. The base `run` returns a status dict and does not raise: if `result.get("status") != "success"`, raise `RuntimeError` with its `fail_message`.
 7. `AnalysisPipeline().run(graphrag_source_path=graphrag_source_path, git_repo=git_repo, git_branch=git_branch, multi_repo=False, scan_mode=SCAN_MODE)`.
@@ -523,9 +523,9 @@ The two components:
 
 **`scripts/run_pipelines.sh`:**
 
-- Add `--single-multi-repo) MODE="single_multi" ;;` to the `case`.
-- Add a branch: when `MODE` is `single_multi`, require non-empty `GIT_REPO` with the message `Error: GIT_REPO must be set and non-empty for --single-multi-repo.`, then `trigger_pipeline "single_multi_repo" "single_multi_repo_${TIMESTAMP}"` with the same four-key JSON params as the single-repo branch.
-- Add the flag to the header comment and to `usage`, described as: `Trigger single multi-repo pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)`.
+- Add `--single-repo-with-context) MODE="single_repo_with_context" ;;` to the `case`.
+- Add a branch: when `MODE` is `single_repo_with_context`, require non-empty `GIT_REPO` with the message `Error: GIT_REPO must be set and non-empty for --single-repo-with-context.`, then `trigger_pipeline "single_repo_with_context" "single_repo_with_context_${TIMESTAMP}"` with the same four-key JSON params as the single-repo branch.
+- Add the flag to the header comment and to `usage`, described as: `Trigger single-repo-with-context pipeline run: multi-repo scan, then deep scan of GIT_REPO (GIT_REPO required and must be in the repo list)`.
 - The default mode stays `multi`.
 
 **`README.md`:** in the section that describes the single- and multi-repository runs, add a short paragraph for the new mode: what it does, that `GIT_REPO` must be one of the listed repositories, that only imports are resolved (not declared build dependencies), that results are stored on the single-repo paths for the focal repository and replace or are replaced by a plain single-repo run of it, and that `repo_catalog.json` is logged with the multi-repo metadata.
@@ -547,10 +547,10 @@ class TestOrchestratorWiring(unittest.TestCase):
 
     def test_pipeline_is_defined_and_registered(self):
         tree = ast.parse(self.SRC)
-        self.assertIn("single_multi_repo_pipeline",
+        self.assertIn("single_repo_with_context_pipeline",
                       [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)])
-        self.assertIn('"single_multi_repo"', self.SRC)
-        self.assertIn('name="single-multi-repo-pipeline"', self.SRC)
+        self.assertIn('"single_repo_with_context"', self.SRC)
+        self.assertIn('name="single-repo-with-context-pipeline"', self.SRC)
 
     def test_existing_pipelines_are_still_registered(self):
         for key in ('"single_repo"', '"multi_repo"', '"data_generation"', '"indexing"', '"analysis"'):
@@ -560,8 +560,8 @@ class TestOrchestratorWiring(unittest.TestCase):
 class TestRunScriptFlag(unittest.TestCase):
     SH = (Path(__file__).resolve().parents[1] / "scripts/run_pipelines.sh").read_text()
     def test_flag_and_pipeline_name(self):
-        self.assertIn('--single-multi-repo) MODE="single_multi"', self.SH)
-        self.assertIn('trigger_pipeline "single_multi_repo"', self.SH)
+        self.assertIn('--single-repo-with-context) MODE="single_repo_with_context"', self.SH)
+        self.assertIn('trigger_pipeline "single_repo_with_context"', self.SH)
         self.assertIn('MODE="multi"\n', self.SH)   # default unchanged
 ```
 
@@ -579,8 +579,8 @@ Expected: only the two known failures.
 
 - [ ] **Step 5: Shell check**
 
-Run: `bash -n scripts/run_pipelines.sh && GIT_REPO= bash scripts/run_pipelines.sh --single-multi-repo; echo "exit=$?"`
-Expected: no syntax error; the `GIT_REPO must be set and non-empty for --single-multi-repo` message; `exit=1`. If the script exits earlier on an unrelated missing variable (for example `KFP_HOST`), report the message it gave instead of working around it.
+Run: `bash -n scripts/run_pipelines.sh && GIT_REPO= bash scripts/run_pipelines.sh --single-repo-with-context; echo "exit=$?"`
+Expected: no syntax error; the `GIT_REPO must be set and non-empty for --single-repo-with-context` message; `exit=1`. If the script exits earlier on an unrelated missing variable (for example `KFP_HOST`), report the message it gave instead of working around it.
 
 - [ ] **Step 6: Compile check**
 
@@ -590,7 +590,7 @@ Run, with a scratch output directory outside the repository:
 PIPELINE_COMPILE_ONLY=1 KFP_PIPELINE_OUTPUT_DIR=<scratch dir> PYTHONPATH=. python3 pipelines/orchestrator.py
 ```
 
-Expected: `<scratch dir>` contains `single_multi_repo.yaml` beside the five existing pipelines, and in it the tasks for `validate-focal-repo-op` and `annotate-focal-repo-op` carry the same injected environment and `imagePullPolicy` as `run-indexing-multi-repo-op` in `multi_repo.yaml`. If `kfp` and the project's dependencies are not installed locally, do not install them into the repository's environment: report this step as not run.
+Expected: `<scratch dir>` contains `single_repo_with_context.yaml` beside the five existing pipelines, and in it the tasks for `validate-focal-repo-op` and `annotate-focal-repo-op` carry the same injected environment and `imagePullPolicy` as `run-indexing-multi-repo-op` in `multi_repo.yaml`. If `kfp` and the project's dependencies are not installed locally, do not install them into the repository's environment: report this step as not run.
 
 - [ ] **Step 7: Confirm the untouched files**
 
@@ -607,7 +607,7 @@ No code. This is the acceptance check from the spec and the test of its main ris
 
 **Inputs:** the repository list in `assets/repos/repo_list1.json`; `GIT_REPO=https://github.com/kfrankli/northpolesouthern-timetable`, `GIT_BRANCH=main`. `timetable` is the focal repository because it imports `com.northpolesouthern.train.*`.
 
-- [ ] **Step 1:** Run `./scripts/run_pipelines.sh --single-multi-repo` (or the local orchestrator path) with those inputs.
+- [ ] **Step 1:** Run `./scripts/run_pipelines.sh --single-repo-with-context` (or the local orchestrator path) with those inputs.
 - [ ] **Step 2:** From the annotate step's log, record `files`, `resolved_imports`, `unresolved_imports`. Open `repo_catalog.json` and check that the `train` repository has a `packages` entry starting `com.northpolesouthern.train`.
 - [ ] **Step 3:** If `resolved_imports` is 0, the package names did not line up. Record what `package` values the catalog holds for `train` and what the `imports` values look like in a `timetable` `_metadata.txt`, and stop: this goes back to the owner. `RepoFacts.own_modules` in each repository's `provenance.json` is a deterministic alternative source of package names worth comparing at that point.
 - [ ] **Step 4:** In the focal migration report, record whether `train` is described as a sibling repository with its purpose, or as an unknown or external library.

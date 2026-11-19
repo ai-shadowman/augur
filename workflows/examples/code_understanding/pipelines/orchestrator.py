@@ -24,7 +24,7 @@ if uses_kfp():
     from pipelines.kubeflow.data_generation import DataGenerationPipeline
     from pipelines.kubeflow.indexing import IndexingPipeline
     from pipelines.kubeflow.analysis import AnalysisPipeline
-    from pipelines.kubeflow.single_multi_repo import annotate_focal_repo_op, validate_focal_repo_op
+    from pipelines.kubeflow.single_repo_with_context import annotate_focal_repo_op, validate_focal_repo_op
 else:
     from pipelines.base.data_generation import DataGenerationPipeline
     from pipelines.base.indexing import IndexingPipeline
@@ -116,8 +116,8 @@ def multi_repo_pipeline(
         AnalysisPipeline().run_multi_repo()
 
 
-@dsl.pipeline(name="single-multi-repo-pipeline")
-def single_multi_repo_pipeline(
+@dsl.pipeline(name="single-repo-with-context-pipeline")
+def single_repo_with_context_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
@@ -164,7 +164,7 @@ def single_multi_repo_pipeline(
         AnalysisPipeline().run_multi_repo()
 
         # A sibling of parent_target_path, never inside it, so a later overview index cannot pick it up.
-        annotated_path = f"{os.path.normpath(parent_target_path)}-single-multi/{focal_slug}"
+        annotated_path = f"{os.path.normpath(parent_target_path)}-single-repo-with-context/{focal_slug}"
         prepare_focal_codebase(git_repo, git_branch, git_repos, parent_target_path, annotated_path)
         graphrag_source_path = os.path.join(
             os.getenv("KFP_DATA_INDEXING_OUTPUT_PATH", "graph_rag_app/source"), focal_slug
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         "data_generation": DataGenerationPipeline.run,
         "single_repo":     single_repo_pipeline,
         "multi_repo":      multi_repo_pipeline,
-        "single_multi_repo": single_multi_repo_pipeline,
+        "single_repo_with_context": single_repo_with_context_pipeline,
         "indexing":        IndexingPipeline.run,
         "analysis":        AnalysisPipeline.run,
     })

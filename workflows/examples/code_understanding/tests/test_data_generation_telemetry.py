@@ -585,10 +585,10 @@ class TestIndexingTelemetryExclusion(unittest.TestCase):
 
     def test_indexing_tags_carry_scan_mode_when_given(self):
         (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")
-        log_results = self.run_indexing(lambda root: None, scan_mode="single-multi-repo")
+        log_results = self.run_indexing(lambda root: None, scan_mode="single-repo-with-context")
         self.assertEqual(log_results.call_count, 2)
         for call in log_results.call_args_list:
-            self.assertEqual(call.kwargs["tags"]["scan_mode"], "single-multi-repo")
+            self.assertEqual(call.kwargs["tags"]["scan_mode"], "single-repo-with-context")
 
     def test_indexing_tags_have_no_scan_mode_key_by_default(self):
         (self.codebase / "Main.txt").write_text("application source", encoding="utf-8")

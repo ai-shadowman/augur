@@ -1,6 +1,6 @@
 """Roll the per-file metadata of every listed repository into one catalog.
 
-Single-multi-repo mode indexes one focal repository with a compact summary of
+Single-repo-with-context mode indexes one focal repository with a compact summary of
 its siblings. Everything here is read from files data generation already wrote
 (``_metadata.txt``, ``provenance.json``, document headers), so the catalog
 costs no model calls.
@@ -15,7 +15,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CATALOG_FILENAME = "repo_catalog.json"
-SCAN_MODE = "single-multi-repo"
+SCAN_MODE = "single-repo-with-context"
 
 _SCALAR_FIELDS = ("file_path", "language", "package", "purpose")
 _LIST_KEY = re.compile(r"^(imports|classes)_(\d+)$")
@@ -33,7 +33,7 @@ def require_focal_in_list(git_repo: str, git_branch: str, git_repos: list[dict])
     from utils.code_utils import generate_slug_from_repo
 
     if not (git_repo or "").strip():
-        raise ValueError("GIT_REPO must name the focal repository for single-multi-repo mode")
+        raise ValueError("GIT_REPO must name the focal repository for single-repo-with-context mode")
     focal = generate_slug_from_repo(git_repo, git_branch)
     listed = [_slug(item) for item in git_repos]
     if focal not in listed:

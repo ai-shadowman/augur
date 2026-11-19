@@ -1,10 +1,10 @@
-# Single Multi-Repo Scan Design
+# Single Repo With Context Scan Design
 
 All code paths below are relative to `workflows/examples/code_understanding/`.
 
 ## Summary
 
-Augur gets a third run mode, working name **single multi-repo**. It runs the existing multi-repo scan over a list of repositories, stores a catalog of what each repository provides, then runs the deep single-repo scan on one named focal repository with its cross-repository imports resolved against that catalog.
+Augur gets a third run mode, named **single repo with context**. It runs the existing multi-repo scan over a list of repositories, stores a catalog of what each repository provides, then runs the deep single-repo scan on one named focal repository with its cross-repository imports resolved against that catalog.
 
 ## Why
 
@@ -42,8 +42,8 @@ This mode is expected to become the default and eventually replace both existing
 - Repository list: obtained exactly as multi-repo mode obtains it today in each variant. Local: `GIT_REPO_LIST_CONTENTS`, else `repos/repo_list.json` from the asset loader. Kubeflow: `GIT_REPO_LIST_CONTENTS` only (`get_repo_list_op` has no fallback). This mode does not change that.
 - Focal repository: `GIT_REPO` and `GIT_BRANCH`, as in single-repo mode.
 - The focal repository must be in the list, compared by slug (`generate_slug_from_repo`). If it is not, or `GIT_REPO` is empty, the run fails before any work starts.
-- `scripts/run_pipelines.sh` gains `--single-multi-repo`, triggering a pipeline registered as `single_multi_repo`. The existing default (multi) is unchanged. The Makefile already passes `ARGS` through.
-- `pipelines/orchestrator.py` gains `single_multi_repo_pipeline` (KFP name `single-multi-repo-pipeline`), added to the compile map.
+- `scripts/run_pipelines.sh` gains `--single-repo-with-context`, triggering a pipeline registered as `single_repo_with_context`. The existing default (multi) is unchanged. The Makefile already passes `ARGS` through.
+- `pipelines/orchestrator.py` gains `single_repo_with_context_pipeline` (KFP name `single-repo-with-context-pipeline`), added to the compile map.
 
 ## Flow
 
@@ -126,7 +126,7 @@ It is not a `repository` entity: `extract_graph.txt` forbids emitting one, `sett
 
 ## Results Storage
 
-The deep pass stores its index, report, and telemetry on the normal single-repo paths (`results/.../<focal-slug>`), so ad-hoc queries and anything else that reads a single-repo index work with no changes. A later plain single-repo run of the same repository overwrites it, and vice versa. Deep-pass artifacts carry an extra tag `scan_mode: single-multi-repo`.
+The deep pass stores its index, report, and telemetry on the normal single-repo paths (`results/.../<focal-slug>`), so ad-hoc queries and anything else that reads a single-repo index work with no changes. A later plain single-repo run of the same repository overwrites it, and vice versa. Deep-pass artifacts carry an extra tag `scan_mode: single-repo-with-context`.
 
 ## Failure Behavior
 
@@ -171,4 +171,4 @@ These were not discussed and are open to correction:
 - The focal `_metadata.txt` files are annotated along with the headers.
 - Runtime and library versions come from `provenance.json`.
 - No report prompt changes; the annotations reach the report through the index.
-- Flag and pipeline names (`--single-multi-repo`, `single_multi_repo`).
+- Flag and pipeline names (`--single-repo-with-context`, `single_repo_with_context`).
