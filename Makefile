@@ -446,6 +446,7 @@ _deploy-console-app-manifests:
 		--set console.route.enabled="$(CONSOLE_ROUTE_ENABLED)" \
 		--set-string console.image="$(CONSOLE_IMG)" \
 		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
+		-s templates/pipeline-rbac.yaml \
 		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
 	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
 	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
@@ -509,6 +510,7 @@ _deploy-console-plugin-manifests:
 		--set-string consolePlugin.image="$(PLUGIN_IMG)" \
 		--set-string consolePlugin.apiImage="$(CONSOLE_IMG)" \
 		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
+		-s templates/pipeline-rbac.yaml \
 		-s templates/console-plugin.yaml | oc apply -f - && \
 	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
 	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \

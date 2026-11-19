@@ -38,51 +38,24 @@ def submit_pipeline_run(
     clean_ws = sanitize_slug(workspace or "")
     ws_param = clean_ws if (clean_ws and clean_ws.lower() != "default") else ""
 
-    if repos:
-        catalog_creds: dict[tuple[str, str], tuple[str, str]] = {}
-        try:
-            from services.get_catalog_repos import get_catalog_repos
-
-            for item in get_catalog_repos(namespace=namespace, workspace=workspace) or []:
-                if (
-                    isinstance(item, dict)
-                    and item.get("git_repo")
-                    and item.get("git_token")
-                ):
-                    norm_url = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
-                    norm_branch = str(item.get("git_branch") or "main").strip() or "main"
-                    catalog_creds[(norm_url, norm_branch)] = (
-                        str(item.get("git_username") or ""),
-                        str(item["git_token"]),
-                    )
-        except Exception:
-            logger.debug("Could not load catalog credentials for pipeline submission", exc_info=True)
-
-        enriched: list[dict[str, str]] = []
-        for r in repos:
-            entry_copy: dict[str, str] = {
-                "git_repo": r["git_repo"],
-                "git_branch": r.get("git_branch") or git_branch,
-            }
-            user = (r.get("git_username") or "").strip()
-            tok = (r.get("git_token") or "").strip()
-            if not tok:
-                key = (
-                    entry_copy["git_repo"].strip().rstrip("/").removesuffix(".git"),
-                    entry_copy["git_branch"].strip() or "main",
-                )
-                if key in catalog_creds:
-                    user, tok = catalog_creds[key]
-            if tok:
-                entry_copy["git_username"] = user
-                entry_copy["git_token"] = tok
-            enriched.append(entry_copy)
-        repos = enriched
+    has_credentials = any(bool((r.get("git_token") or "").strip()) for r in repos)
+    catalog_entries: list[dict[str, str]] = []
+    public_repos: list[dict[str, str]] = []
+    for r in repos:
+        branch = r.get("git_branch") or git_branch
+        pub = {"git_repo": r["git_repo"], "git_branch": branch}
+        public_repos.append(pub)
+        tok = (r.get("git_token") or "").strip()
+        catalog_entries.append(
+            {**pub, "git_username": (r.get("git_username") or "").strip(), "git_token": tok}
+            if tok
+            else dict(pub)
+        )
 
     if len(repos) == 1:
-        entry = repos[0]
+        entry = catalog_entries[0]
         repo_url = entry["git_repo"]
-        branch = entry.get("git_branch") or git_branch
+        branch = entry["git_branch"]
         pipeline_name = "single_repo"
         run_name = f"single_repo_{timestamp}"
         resolved_slug = ""
@@ -101,22 +74,26 @@ def submit_pipeline_run(
                 workspace=workspace,
             )
         except Exception:
+            if has_credentials:
+                raise
             logger.warning(
                 "log_repos failed for single-repo; continuing with pipeline submission.",
                 exc_info=True,
             )
     else:
         pipeline_name = "multi_repo"
-        resolved_slug = generate_multi_repo_slug(repos, project_slug=project_slug)
+        resolved_slug = generate_multi_repo_slug(public_repos, project_slug=project_slug)
         run_name = (
             f"multi_repo_{resolved_slug}_{timestamp}"
             if resolved_slug and resolved_slug != "multi-repo"
             else f"multi_repo_{timestamp}"
         )
-        if repos:
+        if catalog_entries:
             try:
-                log_repos(repos, namespace=namespace, workspace=workspace)
+                log_repos(catalog_entries, namespace=namespace, workspace=workspace)
             except Exception:
+                if has_credentials:
+                    raise
                 logger.warning(
                     "log_repos failed; continuing with pipeline submission.",
                     exc_info=True,
@@ -125,7 +102,7 @@ def submit_pipeline_run(
             "parent_source_path": source_path,
             "parent_target_path": target_path,
             "pipeline_run_id": pipeline_run_id,
-            "runnable_repos": json.dumps(repos),
+            "runnable_repos": json.dumps(public_repos),
             "project_slug": resolved_slug,
             "project_workspace": ws_param,
         }

@@ -53,7 +53,7 @@ def clone_from_repo(repo_url,
             err_msg = err_msg.replace(enc_token, "***")
         logging.error(f"Error cloning repository: {err_msg}")
 
-        raise e
+        raise RuntimeError(err_msg) from None
 
 
 def reset_environment(source_path: str, target_path: str):
@@ -92,19 +92,14 @@ def prepare_environment(source_path: str,
             if not git_token and git_repo:
                 try:
                     from loaders.default_asset_loader import DefaultAssetLoader
+                    from loaders.mlflow_asset_loader import _repo_identity
 
-                    norm_url = git_repo.strip().rstrip("/").removesuffix(".git")
-                    norm_branch = (git_branch or "main").strip() or "main"
+                    target = _repo_identity({"git_repo": git_repo, "git_branch": git_branch})
                     for item in DefaultAssetLoader().load_catalog_repos() or []:
-                        if not isinstance(item, dict) or not item.get("git_repo"):
-                            continue
-                        item_url = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
-                        item_branch = str(item.get("git_branch") or "main").strip() or "main"
-                        if item_url == norm_url and item_branch == norm_branch:
-                            if item.get("git_token"):
-                                git_username = git_username or str(item.get("git_username") or "")
-                                git_token = str(item["git_token"])
-                                break
+                        if isinstance(item, dict) and item.get("git_token") and _repo_identity(item) == target:
+                            git_username = git_username or str(item.get("git_username") or "")
+                            git_token = str(item["git_token"])
+                            break
                 except Exception:
                     logging.debug("Catalog credential lookup skipped in prepare_environment", exc_info=True)
             if not git_token:
@@ -984,28 +979,9 @@ class DataGenerationPipeline:
             except Exception:
                 repos = []
 
-        catalog_creds: dict[tuple[str, str], tuple[str, str]] = {}
-        if repos and any(not r.get("git_token") for r in repos if isinstance(r, dict)):
-            try:
-                for item in DefaultAssetLoader().load_catalog_repos() or []:
-                    if isinstance(item, dict) and item.get("git_repo") and item.get("git_token"):
-                        u = str(item["git_repo"]).strip().rstrip("/").removesuffix(".git")
-                        b = str(item.get("git_branch") or "main").strip() or "main"
-                        catalog_creds[(u, b)] = (str(item.get("git_username") or ""), str(item["git_token"]))
-            except Exception:
-                pass
-
         for repo in repos:
-            repo.setdefault("git_branch", "main")
-            if not repo.get("git_token") and repo.get("git_repo"):
-                key = (
-                    str(repo["git_repo"]).strip().rstrip("/").removesuffix(".git"),
-                    str(repo.get("git_branch") or "main").strip() or "main",
-                )
-                if key in catalog_creds:
-                    repo["git_username"], repo["git_token"] = catalog_creds[key]
-            repo.setdefault("git_username", "")
-            repo.setdefault("git_token", "")
+            if isinstance(repo, dict):
+                repo.setdefault("git_branch", "main")
 
         try:
             DefaultAssetLoader().log_repos(repos)

@@ -36,8 +36,8 @@ else:
 def single_repo_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
-    git_username: str = os.getenv("GIT_USERNAME", ""),
-    git_token: str = os.getenv("GIT_TOKEN", ""),
+    git_username: str = "",
+    git_token: str = "",
     parent_source_path: str = os.getenv("PARENT_SOURCE_PATH", "source"),
     parent_target_path: str = os.getenv("PARENT_TARGET_PATH", "target"),
     multi_repo: bool = False,

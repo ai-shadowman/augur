@@ -430,7 +430,11 @@ def get_repo_list_op(
     if pipeline_run_id:
         return []
 
-    return DataGenerationPipeline.get_repo_list(runnable_repos)
+    return [
+        {"git_repo": r["git_repo"], "git_branch": r.get("git_branch") or "main"}
+        for r in DataGenerationPipeline.get_repo_list(runnable_repos)
+        if isinstance(r, dict) and r.get("git_repo")
+    ]
 
 
 ##############################################################################
@@ -441,8 +445,8 @@ def get_repo_list_op(
 def _run_pipeline(
     git_repo: str = os.getenv("GIT_REPO", ""),
     git_branch: str = os.getenv("GIT_BRANCH", "main"),
-    git_username: str = os.getenv("GIT_USERNAME", ""),
-    git_token: str = os.getenv("GIT_TOKEN", ""),
+    git_username: str = "",
+    git_token: str = "",
     multi_repo: bool = False,
     max_concurrency: int = 0,
     pipeline_run_id: str = "",
@@ -506,8 +510,6 @@ def _run_pipeline_multi_repo(
         _run_pipeline(
             git_repo=repo.git_repo,
             git_branch=repo.git_branch,
-            git_username=repo.git_username,
-            git_token=repo.git_token,
             multi_repo=True,
             max_concurrency=bench.output,
             pipeline_run_id=pipeline_run_id,

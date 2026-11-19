@@ -1100,7 +1100,6 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         import api.repositories as api_repositories
         from api.pipeline_service import submit_pipeline_run
         from loaders.mlflow_asset_loader import _merge_repo_catalog
-        import services.get_catalog_repos as get_catalog_mod
         import services.trigger_run as trigger_run_mod
         import services.update_repos as update_repos_mod
 
@@ -1210,23 +1209,49 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         fake_client.run_pipeline.return_value = mock.MagicMock(run_id="run-priv-1")
 
         with mock.patch.object(trigger_run_mod, "create_client", return_value=fake_client), \
-             mock.patch.object(get_catalog_mod, "get_catalog_repos", return_value=merged), \
              mock.patch.object(update_repos_mod, "log_repos") as mock_pipe_log:
             submit_pipeline_run(
                 repos=[
-                    {"git_repo": private_entry["git_repo"], "git_branch": "main"},
-                    {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
+                    dict(private_entry),
+                    dict(blank_user_entry),
                     {"git_repo": "https://github.com/kfrankli/northpolesouthern-train", "git_branch": "main"},
                 ],
                 namespace="team-ns",
             )
+        # Credentials are persisted to the MLflow catalog via log_repos, never serialized into KFP runnable_repos
+        logged_catalog_entries = mock_pipe_log.call_args.args[0]
+        self.assertEqual(logged_catalog_entries[0], private_entry)
+        self.assertEqual(logged_catalog_entries[1], blank_user_entry)
         runnable = json.loads(fake_client.run_pipeline.call_args.kwargs["params"]["runnable_repos"])
-        self.assertEqual(runnable[0], private_entry)
-        self.assertEqual(runnable[1], blank_user_entry)
-        self.assertNotIn("git_token", runnable[2])
-        mock_pipe_log.assert_called_once()
+        for item in runnable:
+            self.assertNotIn("git_token", item)
+            self.assertNotIn("git_username", item)
 
-        # Verify clone_from_repo handles non-empty username, blank username (GitHub & GitLab), and URL encoding
+        # Failed log_repos must raise when credentials are supplied so a run never starts without saving its token
+        with mock.patch.object(trigger_run_mod, "create_client", return_value=fake_client), \
+             mock.patch.object(update_repos_mod, "log_repos", side_effect=RuntimeError("MLflow down")):
+            with self.assertRaises(RuntimeError):
+                submit_pipeline_run(repos=[dict(private_entry)], namespace="team-ns")
+
+        # MlFlowAssetLoader.log_repos keeps tokens in global catalog enrichment while stripping them from category=repositories
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+        mlf_loader = MlFlowAssetLoader(namespace="team-ns", workspace="default")
+        with mock.patch.object(mlf_loader, "download", return_value=[]), \
+             mock.patch.object(mlf_loader, "register_enrichments") as mock_enrich, \
+             mock.patch.object(mlf_loader, "log_results") as mock_log_res:
+            mlf_loader.log_repos([private_entry])
+        self.assertEqual(
+            mock_enrich.call_args.kwargs["enrichment_files"]["repos/repo_list.json"],
+            [private_entry],
+        )
+        per_run_repos = json.loads(mock_log_res.call_args.kwargs["content"])
+        self.assertEqual(
+            per_run_repos,
+            [{"git_repo": private_entry["git_repo"], "git_branch": "main"}],
+        )
+
+        # Verify clone_from_repo handles non-empty username, blank username (GitHub & GitLab), URL encoding, and redaction on failure
         import pipelines.base.data_generation as base_dg
 
         fake_git = types.ModuleType("git")
@@ -1235,6 +1260,8 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         class _FakeRepo:
             @staticmethod
             def clone_from(url, dest, branch="main"):
+                if dest == "/tmp/fail":
+                    raise Exception(f"Cmd('git') failed! cmdline: git clone -v -- {url} {dest}")
                 cloned_urls.append(url)
 
         fake_git.Repo = _FakeRepo
@@ -1260,6 +1287,17 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
                 git_username="",
                 git_token="tok#secret",
             )
+            with self.assertRaises(RuntimeError) as clone_err_ctx:
+                base_dg.clone_from_repo(
+                    "https://github.com/kfrankli/northpolesouthern-timetable-private",
+                    "/tmp/fail",
+                    branch="main",
+                    git_username="user@example.com",
+                    git_token="tok#secret",
+                )
+        self.assertNotIn("tok#secret", str(clone_err_ctx.exception))
+        self.assertNotIn("tok%23secret", str(clone_err_ctx.exception))
+        self.assertIsNone(clone_err_ctx.exception.__cause__)
         self.assertEqual(
             cloned_urls[0],
             "https://user%40example.com:tok%23secret@github.com/kfrankli/northpolesouthern-timetable-private",
@@ -1273,20 +1311,40 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
             "https://oauth2:tok%23secret@gitlab.com/kfrankli/northpolesouthern-blank-user-private",
         )
 
-        # Verify get_repo_list backfills credentials from catalog when runnable_repos omits them (including blank username)
+        # Verify prepare_environment resolves catalog credentials via _repo_identity (preferring catalog over env GIT_TOKEN)
         fake_loader = mock.MagicMock()
         fake_loader.load_catalog_repos.return_value = [private_entry, blank_user_entry]
-        with mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_loader):
-            resolved = base_dg.DataGenerationPipeline.get_repo_list(
-                json.dumps([
-                    {"git_repo": private_entry["git_repo"], "git_branch": "main"},
-                    {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
-                ])
-            )
-        self.assertEqual(resolved[0]["git_username"], "shadowman")
-        self.assertEqual(resolved[0]["git_token"], private_entry["git_token"])
-        self.assertEqual(resolved[1]["git_username"], "")
-        self.assertEqual(resolved[1]["git_token"], blank_user_entry["git_token"])
+        captured_clones: list[tuple[str, str]] = []
+        with mock.patch.dict(os.environ, {"GIT_USERNAME": "global-u", "GIT_TOKEN": "global-tok"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_loader), \
+             mock.patch.object(base_dg, "reset_environment"), \
+             mock.patch("provenance.pipeline.capture", return_value="/tmp/nonexistent-facts.json"), \
+             mock.patch.object(
+                 base_dg,
+                 "clone_from_repo",
+                 side_effect=lambda url, dst, branch="main", git_username="", git_token="": captured_clones.append((git_username, git_token)),
+             ):
+            base_dg.prepare_environment("/tmp/s1", "/tmp/t1", private_entry["git_repo"] + ".git/", "main")
+            base_dg.prepare_environment("/tmp/s2", "/tmp/t2", blank_user_entry["git_repo"], "main")
+        self.assertEqual(captured_clones[0], ("shadowman", private_entry["git_token"]))
+        self.assertEqual(captured_clones[1], ("", blank_user_entry["git_token"]))
+
+        # Verify KFP @dsl.pipeline functions default git_username and git_token to "" instead of compile-time os.getenv
+        import ast
+
+        for rel_pipe in (
+            ("workflows", "examples", "code_understanding", "pipelines", "orchestrator.py"),
+            ("workflows", "examples", "code_understanding", "pipelines", "kubeflow", "data_generation.py"),
+        ):
+            pipe_src = (_REPO_ROOT.joinpath(*rel_pipe)).read_text(encoding="utf-8")
+            tree = ast.parse(pipe_src)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name in ("single_repo_pipeline", "_run_pipeline"):
+                    arg_names = [a.arg for a in node.args.args]
+                    defaults = dict(zip(arg_names[-len(node.args.defaults):], node.args.defaults))
+                    for cred_arg in ("git_username", "git_token"):
+                        self.assertIsInstance(defaults[cred_arg], ast.Constant)
+                        self.assertEqual(defaults[cred_arg].value, "")
 
     def test_delete_repository_ui_api_and_catalog_flow(self):
         import json
@@ -1298,6 +1356,7 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
         js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
         rbac_yaml = (_REPO_ROOT / "resources" / "helm" / "templates" / "pipeline-rbac.yaml").read_text(encoding="utf-8")
+        makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn(".cu-repo-delete", html)
         self.assertIn(".cu-repo-delete svg { pointer-events: none; }", html)
         self.assertIn('id="delete-repo-modal"', html)
@@ -1306,6 +1365,9 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertIn('title="Delete"', js)
         self.assertIn("openDeleteRepoModal", js)
         self.assertIn('method: "DELETE"', js)
+        self.assertIn("i.indexed && i.git_slug === fullSlug", js)
+        self.assertIn('await api("/api/v2/repositories"', js)
+        self.assertEqual(makefile.count("-s templates/pipeline-rbac.yaml"), 2)
         self.assertIn("- delete", rbac_yaml)
         self.assertNotIn("- update", rbac_yaml)
         self.assertNotIn("- patch", rbac_yaml)

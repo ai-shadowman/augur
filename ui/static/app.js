@@ -371,7 +371,7 @@ function repoKey(r) { return `${r.git_repo}|${r.git_branch}`; }
 function selectedRepos() { return state.repos.filter((r) => state.selected.has(repoKey(r))); }
 function gitSlug(url, branch) {
   try {
-    const path = new URL(url).pathname.replace(/^\//, "").replace(/\.git$/, "");
+    const path = new URL(url).pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
     const parts = path.split("/").filter(Boolean);
     const name = parts.pop() || "repo";
     const owner = parts.pop() || "";
@@ -1001,7 +1001,8 @@ function renderRepos() {
     const key = repoKey(r);
     const checkId = `repo-check-${idx}`;
     const slug = (shortName(r.git_repo) || "").replace(/\.git$/, "");
-    const indexed = state.indexes.some((i) => !i.multi_repo && (i.git_slug || "").includes(slug));
+    const fullSlug = gitSlug(r.git_repo, r.git_branch || "main");
+    const indexed = state.indexes.some((i) => !i.multi_repo && i.indexed && i.git_slug === fullSlug);
     const chips = [
       `<span class="cu-chip">${esc(r.git_branch)}</span>`,
       indexed ? '<span class="cu-chip indexed">indexed</span>' : "",
@@ -1607,6 +1608,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("delete-repo-modal").classList.contains("hidden")) closeDeleteRepoModal();
 });
 $("add-custom").onclick = async () => {
+  const btn = $("add-custom");
+  if (btn.disabled) return;
   const git_repo = $("custom-url").value.trim();
   const git_branch = $("custom-branch").value.trim() || "main";
   const isPrivate = $("custom-private").checked;
@@ -1631,17 +1634,34 @@ $("add-custom").onclick = async () => {
   const entry = isPrivate
     ? { git_repo, git_branch, git_username, git_token }
     : { git_repo, git_branch };
-  const key = `${git_repo}|${git_branch}`;
-  const existingIdx = state.repos.findIndex((r) => repoKey(r) === key);
-  if (existingIdx >= 0) state.repos[existingIdx] = entry;
-  else state.repos.push(entry);
-  state.selected.add(key);
-  closeAddRepo();
-  renderRepos();
-  api("/api/v2/repositories", {
-    method: "POST",
-    body: JSON.stringify({ repos: [entry] }),
-  }).catch((e) => banner(String(e.message || e), true));
+  const norm = (u, b) => `${String(u || "").trim().replace(/\/+$/, "").replace(/\.git$/, "")}|${String(b || "main").trim() || "main"}`;
+  btn.disabled = true;
+  try {
+    const updated = await api("/api/v2/repositories", {
+      method: "POST",
+      body: JSON.stringify({ repos: [entry] }),
+    });
+    if (Array.isArray(updated)) {
+      const prevKeys = new Map(state.repos.map((r) => [norm(r.git_repo, r.git_branch), repoKey(r)]));
+      state.repos = updated.map((r) => ({ git_repo: r.git_repo, git_branch: r.git_branch || "main" }));
+      const targetNorm = norm(git_repo, git_branch);
+      for (const r of state.repos) {
+        const n = norm(r.git_repo, r.git_branch);
+        const oldKey = prevKeys.get(n);
+        if (oldKey && oldKey !== repoKey(r) && state.selected.delete(oldKey)) {
+          state.selected.add(repoKey(r));
+        }
+        if (n === targetNorm) state.selected.add(repoKey(r));
+      }
+    }
+    closeAddRepo();
+    renderRepos();
+  } catch (e) {
+    $("add-repo-error").textContent = String(e.message || e);
+    $("add-repo-error").classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+  }
 };
 function closeAnalyzeModal() {
   $("analyze-modal").classList.add("hidden");

@@ -751,13 +751,18 @@ class MlFlowAssetLoader(AssetLoader):
         if pipeline_run_id:
             repo_tags["pipeline_run_id"] = pipeline_run_id
 
+        public_repos = [
+            {"git_repo": r["git_repo"], "git_branch": r.get("git_branch") or "main"}
+            for r in (run_repos or [])
+            if isinstance(r, dict) and r.get("git_repo")
+        ]
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
             tmp_path = os.path.join(tmp_dir, "repo_list.json")
             self.log_results(
                 tmp_path,
                 artifact_path="repos",
                 tags=repo_tags,
-                content=json.dumps(run_repos),
+                content=json.dumps(public_repos),
             )
 
     def load_run_repos(self, run_id: str | None = None) -> list:
