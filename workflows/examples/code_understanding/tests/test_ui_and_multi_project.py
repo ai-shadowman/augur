@@ -549,6 +549,55 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertIn("srcDoc={srcDoc}", plugin_page)
         self.assertIn("<base href=", plugin_page)
 
+        makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        values_yaml = (_REPO_ROOT / "resources" / "helm" / "values.yaml").read_text(encoding="utf-8")
+        console_app_tpl = (_REPO_ROOT / "resources" / "helm" / "templates" / "console-app.yaml").read_text(encoding="utf-8")
+        console_plugin_tpl = (_REPO_ROOT / "resources" / "helm" / "templates" / "console-plugin.yaml").read_text(encoding="utf-8")
+        self.assertIn("CONSOLE_ROUTE_ENABLED     ?= true", makefile)
+        self.assertIn("CONSOLE_ROUTE_AUTH        ?= false", makefile)
+        self.assertEqual(makefile.count("-s templates/console-app.yaml"), 2)
+        self.assertEqual(makefile.count('--set console.route.enabled="$$ROUTE_ENABLED"'), 2)
+        self.assertEqual(makefile.count('--set console.route.auth="$$ROUTE_AUTH"'), 2)
+        self.assertIn('--set console.enabled="$$ROUTE_ENABLED"', makefile)
+        self.assertIn("  route:\n    enabled: true\n    auth: false", values_yaml.replace("\r\n", "\n"))
+        self.assertIn("{{- if .Values.console.route.enabled }}", console_app_tpl)
+        self.assertIn('value: {{ if .Values.console.route.auth }}"true"{{ else }}"false"{{ end }}', console_app_tpl)
+        self.assertIn("REQUIRE_OPENSHIFT_AUTH", console_plugin_tpl)
+
+        import shutil
+
+        if shutil.which("helm"):
+            import subprocess
+
+            chart_dir = str(_REPO_ROOT / "resources" / "helm")
+            default_manifest = subprocess.check_output(
+                [
+                    "helm", "template", "agent-mesh-for-sw", chart_dir,
+                    "--set", "namespace=demo",
+                    "--set", "console.enabled=true",
+                    "--set-string", "console.image=quay.io/org/console-app:latest",
+                    "-s", "templates/console-app.yaml",
+                ],
+                text=True,
+            ).replace("\r\n", "\n")
+            self.assertIn("kind: Route", default_manifest)
+            self.assertIn('- name: REQUIRE_OPENSHIFT_AUTH\n              value: "false"', default_manifest)
+
+            authed_no_route = subprocess.check_output(
+                [
+                    "helm", "template", "agent-mesh-for-sw", chart_dir,
+                    "--set", "namespace=demo",
+                    "--set", "console.enabled=true",
+                    "--set", "console.route.enabled=false",
+                    "--set", "console.route.auth=true",
+                    "--set-string", "console.image=quay.io/org/console-app:latest",
+                    "-s", "templates/console-app.yaml",
+                ],
+                text=True,
+            ).replace("\r\n", "\n")
+            self.assertNotIn("kind: Route", authed_no_route)
+            self.assertIn('- name: REQUIRE_OPENSHIFT_AUTH\n              value: "true"', authed_no_route)
+
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
         deps_idx = ui_df.index("COPY --chown=1001:0 ui/pyproject.toml ui/uv.lock ./")

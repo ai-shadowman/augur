@@ -26,7 +26,8 @@ CONSOLE_APP_IMAGE_NAME    ?= console-app
 CONSOLE_APP_IMAGE_TAG     ?= latest
 CONSOLE_PLUGIN_IMAGE_NAME ?= console-plugin
 CONSOLE_PLUGIN_IMAGE_TAG  ?= latest
-CONSOLE_ROUTE_ENABLED     ?= false
+CONSOLE_ROUTE_ENABLED     ?= true
+CONSOLE_ROUTE_AUTH        ?= false
 CONSOLE_ROUTE_HOST        ?=
 
 install:
@@ -434,6 +435,9 @@ run-console-app:
 
 _deploy-console-app-manifests:
 	@set -a && . $(ENV_FILE) && set +a && \
+	case "$$(printf '%s' "$${CONSOLE_ROUTE_ENABLED:-$(CONSOLE_ROUTE_ENABLED)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_ENABLED=true ;; *) ROUTE_ENABLED=false ;; esac && \
+	case "$$(printf '%s' "$${CONSOLE_ROUTE_AUTH:-$(CONSOLE_ROUTE_AUTH)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_AUTH=true ;; *) ROUTE_AUTH=false ;; esac && \
+	ROUTE_HOST="$${CONSOLE_ROUTE_HOST:-$(CONSOLE_ROUTE_HOST)}" && \
 	echo "==> Deploying Code Understanding console ($(CONSOLE_IMG))..." && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
@@ -443,13 +447,17 @@ _deploy-console-app-manifests:
 		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
 		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set console.enabled=true \
-		--set console.route.enabled="$(CONSOLE_ROUTE_ENABLED)" \
+		--set console.route.enabled="$$ROUTE_ENABLED" \
+		--set console.route.auth="$$ROUTE_AUTH" \
 		--set-string console.image="$(CONSOLE_IMG)" \
-		--set-string console.route.host="$(CONSOLE_ROUTE_HOST)" \
+		--set-string console.route.host="$$ROUTE_HOST" \
 		-s templates/pipeline-rbac.yaml \
-		-s templates/console-app.yaml | oc apply -n $$KFP_NAMESPACE -f - && \
-	oc rollout restart deployment/code-understanding-console -n $$KFP_NAMESPACE && \
-	oc rollout status deployment/code-understanding-console -n $$KFP_NAMESPACE --timeout=300s && \
+		-s templates/console-app.yaml | oc apply -n "$$KFP_NAMESPACE" -f - && \
+	if [ "$$ROUTE_ENABLED" != "true" ]; then \
+		oc delete route code-understanding-console -n "$$KFP_NAMESPACE" --ignore-not-found=true; \
+	fi && \
+	oc rollout restart deployment/code-understanding-console -n "$$KFP_NAMESPACE" && \
+	oc rollout status deployment/code-understanding-console -n "$$KFP_NAMESPACE" --timeout=300s && \
 	if oc get deployment code-understanding-plugin-api -n "$$KFP_NAMESPACE" >/dev/null 2>&1; then \
 		echo "==> Updating OpenShift console plugin backend (code-understanding-plugin-api)..." && \
 		oc set image deployment/code-understanding-plugin-api api="$(CONSOLE_IMG)" -n "$$KFP_NAMESPACE" && \
@@ -457,9 +465,9 @@ _deploy-console-app-manifests:
 		oc rollout status deployment/code-understanding-plugin-api -n "$$KFP_NAMESPACE" --timeout=300s; \
 	fi && \
 	echo "" && \
-	if [ "$(CONSOLE_ROUTE_ENABLED)" = "true" ]; then \
-		ROUTE_HOST="$$(oc get route code-understanding-console -n $$KFP_NAMESPACE -o jsonpath='{.spec.host}')" && \
-		echo "==> Open the console in your browser: https://$$ROUTE_HOST"; \
+	if [ "$$ROUTE_ENABLED" = "true" ]; then \
+		ROUTE_URL_HOST="$$(oc get route code-understanding-console -n "$$KFP_NAMESPACE" -o jsonpath='{.spec.host}')" && \
+		echo "==> Open the console in your browser: https://$$ROUTE_URL_HOST"; \
 	fi && \
 	echo "==> Run: make port-forward-console-app  then open http://localhost:8080" && \
 	echo ""
@@ -495,28 +503,52 @@ oc-deploy-console-app:
 
 _deploy-console-plugin-manifests:
 	@set -a && . $(ENV_FILE) && set +a && \
+	case "$$(printf '%s' "$${CONSOLE_ROUTE_ENABLED:-$(CONSOLE_ROUTE_ENABLED)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_ENABLED=true ;; *) ROUTE_ENABLED=false ;; esac && \
+	case "$$(printf '%s' "$${CONSOLE_ROUTE_AUTH:-$(CONSOLE_ROUTE_AUTH)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_AUTH=true ;; *) ROUTE_AUTH=false ;; esac && \
+	ROUTE_HOST="$${CONSOLE_ROUTE_HOST:-$(CONSOLE_ROUTE_HOST)}" && \
 	CONSOLE_HOST="$$(oc get route console -n openshift-console -o jsonpath='{.spec.host}')" && \
 	CLUSTER_DOMAIN="$$(oc get ingress.config cluster -o jsonpath='{.spec.domain}')" && \
 	echo "==> Deploying OpenShift console plugin ($(PLUGIN_IMG)) and FastAPI backend ($(CONSOLE_IMG))..." && \
 	oc delete route code-understanding-plugin-api -n "$$KFP_NAMESPACE" --ignore-not-found=true && \
 	helm template agent-mesh-for-sw resources/helm \
 		--set namespace="$$KFP_NAMESPACE" \
+		--set requester="$$(oc whoami)" \
 		--set augurRepoUrl="$(AUGUR_GIT_REPO_URL)" \
 		--set augurRepoBranch="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set repoUrl="$(AUGUR_GIT_REPO_URL)" \
 		--set repoRef="$(AUGUR_GIT_REPO_BRANCH)" \
 		--set clusterDomain="$$CLUSTER_DOMAIN" \
+		--set console.enabled="$$ROUTE_ENABLED" \
+		--set console.route.enabled="$$ROUTE_ENABLED" \
+		--set console.route.auth="$$ROUTE_AUTH" \
+		--set-string console.image="$(CONSOLE_IMG)" \
+		--set-string console.route.host="$$ROUTE_HOST" \
 		--set consolePlugin.enabled=true \
 		--set-string consolePlugin.image="$(PLUGIN_IMG)" \
 		--set-string consolePlugin.apiImage="$(CONSOLE_IMG)" \
 		--set consolePlugin.consoleBaseUrl="https://$$CONSOLE_HOST" \
 		-s templates/pipeline-rbac.yaml \
+		-s templates/console-app.yaml \
 		-s templates/console-plugin.yaml | oc apply -f - && \
-	oc rollout restart deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE && \
-	oc rollout restart deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE && \
-	oc rollout status deployment/code-understanding-console-plugin -n $$KFP_NAMESPACE --timeout=300s && \
-	oc rollout status deployment/code-understanding-plugin-api -n $$KFP_NAMESPACE --timeout=300s && \
-	$(MAKE) enable-console-plugin
+	if [ "$$ROUTE_ENABLED" = "true" ]; then \
+		oc rollout restart deployment/code-understanding-console -n "$$KFP_NAMESPACE"; \
+	else \
+		oc delete route code-understanding-console -n "$$KFP_NAMESPACE" --ignore-not-found=true; \
+	fi && \
+	oc rollout restart deployment/code-understanding-console-plugin -n "$$KFP_NAMESPACE" && \
+	oc rollout restart deployment/code-understanding-plugin-api -n "$$KFP_NAMESPACE" && \
+	if [ "$$ROUTE_ENABLED" = "true" ]; then \
+		oc rollout status deployment/code-understanding-console -n "$$KFP_NAMESPACE" --timeout=300s; \
+	fi && \
+	oc rollout status deployment/code-understanding-console-plugin -n "$$KFP_NAMESPACE" --timeout=300s && \
+	oc rollout status deployment/code-understanding-plugin-api -n "$$KFP_NAMESPACE" --timeout=300s && \
+	$(MAKE) enable-console-plugin && \
+	if [ "$$ROUTE_ENABLED" = "true" ]; then \
+		ROUTE_URL_HOST="$$(oc get route code-understanding-console -n "$$KFP_NAMESPACE" -o jsonpath='{.spec.host}')" && \
+		echo "==> Open console app via Route:" && \
+		echo "    https://$$ROUTE_URL_HOST" && \
+		echo ""; \
+	fi
 
 deploy-console-plugin:
 	@set -a && . $(ENV_FILE) && set +a && \

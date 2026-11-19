@@ -95,7 +95,8 @@ console:
   image: ""
   imagePullPolicy: Always
   route:
-    enabled: false
+    enabled: true
+    auth: false
     host: ""
 
 consolePlugin:
