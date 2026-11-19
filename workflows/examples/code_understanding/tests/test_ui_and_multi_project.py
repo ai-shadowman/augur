@@ -1501,6 +1501,54 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         self.assertEqual(after_del, [base[1]])
         mock_reg.assert_called_once_with(enrichment_files={"repos/repo_list.json": [base[1]]})
 
+        # End-to-end check on register_enrichments -> _mark_as_archived, global enrichment URI lookup,
+        # and _mark_as_latest: MLflow rejects double-quoted `tags."..." IS NULL` clauses.
+        seen_filters: list[str] = []
+        archive_client = mock.MagicMock()
+        archive_client.get_experiment_by_name.return_value = types.SimpleNamespace(
+            experiment_id="10",
+            lifecycle_stage="active",
+            artifact_location="mlflow-artifacts:/workspaces/team-ns/10",
+        )
+        anchor_info = types.SimpleNamespace(run_id="anchor-1", experiment_id="10", start_time=5000)
+        archive_client.get_run.return_value = types.SimpleNamespace(info=anchor_info)
+
+        def _archive_search_runs(experiment_ids, filter_string="", **kwargs):
+            self.assertNotIn('" IS NULL', filter_string)
+            seen_filters.append(filter_string)
+            if "attributes.start_time <= 5000" in filter_string:
+                return [
+                    types.SimpleNamespace(info=types.SimpleNamespace(run_id="stale-1")),
+                    types.SimpleNamespace(info=types.SimpleNamespace(run_id="anchor-1")),
+                ]
+            return []
+
+        archive_client.search_runs.side_effect = _archive_search_runs
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=archive_client), \
+             mock.patch.object(loader, "load_catalog_repos", return_value=base), \
+             mock.patch.object(loader, "load_results", return_value=None), \
+             mock.patch.object(loader, "log_results", side_effect=["assets-1", "anchor-1"]):
+            loader.delete_repo("https://github.com/kfrankli/northpolesouthern-timetable", "main")
+            loader._get_absolute_artifact_uris(
+                "results/.enrichments/.assets/repos/repo_list.json",
+                experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                tags={"category": "enrichments", "git_slug": None},
+            )
+            loader._mark_as_latest(
+                archive_client,
+                "10",
+                "anchor-1",
+                tags={"git_slug": None, "kfp.run_id": None},
+            )
+
+        self.assertTrue(any("tags.git_slug IS NULL" in f for f in seen_filters))
+        self.assertTrue(any("tags.`kfp.run_id` IS NULL" in f for f in seen_filters))
+        archive_client.set_tag.assert_any_call("stale-1", "archived", "true")
+        self.assertNotIn(
+            mock.call("anchor-1", "archived", "true"),
+            archive_client.set_tag.call_args_list,
+        )
+
         # Deleting the last repo leaves [] in enrichments; load_catalog_repos must return [] without falling back
         with mock.patch.object(loader, "download", side_effect=lambda p, *a, **kw: [] if p == "repos/repo_list.json" else base):
             self.assertEqual(loader.load_catalog_repos(), [])
@@ -1608,9 +1656,9 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
             return []
 
         fake_mlf.search_runs.side_effect = _search_runs
-        fake_mlf.search_traces.side_effect = lambda experiment_ids, filter_string="": (
+        fake_mlf.search_traces.side_effect = lambda locations, filter_string="", include_spans=True: (
             [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-1", request_id=None))]
-            if experiment_ids == ["13"] and "kfp-active-1" in filter_string
+            if locations == ["13"] and "kfp-active-1" in filter_string and include_spans is False
             else []
         )
 

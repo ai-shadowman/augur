@@ -123,6 +123,11 @@ def _remove_from_repo_catalog(base: list, git_repo: str, git_branch: str = "main
     ]
 
 
+def _tag_is_null_clause(key: str) -> str:
+    # MLflow's IS NULL parser accepts unquoted or backtick-quoted tag keys, not double quotes.
+    return f"tags.{key} IS NULL" if key.isidentifier() else f"tags.`{key.replace('`', '``')}` IS NULL"
+
+
 class MlFlowAssetLoader(AssetLoader):
     """Loads an asset from the MLflow artifacts registry."""
 
@@ -180,13 +185,14 @@ class MlFlowAssetLoader(AssetLoader):
             experiment_ids=[anchor_run.info.experiment_id],
             filter_string=(
                 "tags.category = 'enrichments'"
-                ' AND tags."git_slug" IS NULL'
+                " AND tags.git_slug IS NULL"
                 " AND tags.archived IS NULL"
-                f" AND attributes.start_time < {anchor_run.info.start_time}"
+                f" AND attributes.start_time <= {anchor_run.info.start_time}"
             ),
         )
         for stale_run in stale:
-            client.set_tag(stale_run.info.run_id, "archived", "true")
+            if stale_run.info.run_id != anchor_run.info.run_id:
+                client.set_tag(stale_run.info.run_id, "archived", "true")
 
     @staticmethod
     def _has_prior_enrichment_checkpoint(runs: list) -> bool:
@@ -225,7 +231,7 @@ class MlFlowAssetLoader(AssetLoader):
         tag_filter_parts = []
         for k, v in (tags or {}).items():
             if v is None:
-                tag_filter_parts.append(f'tags."{k}" IS NULL')
+                tag_filter_parts.append(_tag_is_null_clause(k))
             elif v != "":
                 tag_filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
@@ -284,7 +290,7 @@ class MlFlowAssetLoader(AssetLoader):
         if tags:
             for k, v in tags.items():
                 if v is None:
-                    filter_parts.append(f'tags."{k}" IS NULL')
+                    filter_parts.append(_tag_is_null_clause(k))
                 elif v != "":
                     filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
@@ -911,8 +917,9 @@ class MlFlowAssetLoader(AssetLoader):
                 safe_rid = escape_mlflow_filter_value(rid)
                 try:
                     traces = client.search_traces(
-                        experiment_ids=[telemetry_exp_id],
+                        locations=[telemetry_exp_id],
                         filter_string=f"tags.`kfp.run_id` = '{safe_rid}'",
+                        include_spans=False,
                     )
                     trace_ids = [
                         tid
