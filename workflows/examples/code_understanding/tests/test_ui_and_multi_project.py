@@ -633,6 +633,68 @@ class TestEvaluatorImprovements(unittest.TestCase):
         self.assertEqual(parsed["faithfulness"], 4)
         self.assertEqual(parsed["answer_relevance"], 5)
 
+    def test_save_code_and_metadata_files_handles_truncated_list_or_fragment(self):
+        import shutil
+        import tempfile
+        import pipelines.base.data_generation as base_dg
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            fake_df = mock.MagicMock()
+            fake_df.iterrows.return_value = [
+                # 1. Truncated outer JSON where extract_json_from_string matches inner "imports" list
+                (
+                    0,
+                    {
+                        "file_path": "src/Train.java",
+                        "code": "public class Train {}",
+                        "extracted_data": '{"file_path": "src/Train.java", "imports": ["java.util.List"], "methods": [{"method_name": "go"',
+                    },
+                ),
+                # 2. Truncated outer JSON where extract_json_from_string matches inner method dict
+                (
+                    1,
+                    {
+                        "file_path": "src/Station.java",
+                        "code": "public class Station {}",
+                        "extracted_data": '{"methods": [{"method_name": "open", "code": "void open() {}"}, {"method_name": "close"',
+                    },
+                ),
+                # 3. Single-dict list wrapping valid top-level metadata
+                (
+                    2,
+                    {
+                        "file_path": "src/Route.java",
+                        "code": "public class Route {}",
+                        "extracted_data": '[{"file_path": "src/Route.java", "purpose": "Defines route", "libraries": ["slf4j"]}]',
+                    },
+                ),
+            ]
+
+            import json
+
+            with mock.patch.dict(os.environ, {"ASSET_LOADER": "local"}, clear=False), \
+                 mock.patch("utils.json_utils.yaml.dump", side_effect=lambda obj, **kw: json.dumps(obj)):
+                base_dg.save_code_and_metadata_files(
+                    df=fake_df,
+                    target_path=tmp_dir,
+                    git_repo="https://github.com/kfrankli/northpolesouthern-train",
+                    git_slug="kfrankli-northpolesouthern-train-main",
+                    language="java",
+                    config=False,
+                )
+
+            for stem in ("Train", "Station", "Route"):
+                self.assertTrue(os.path.isfile(os.path.join(tmp_dir, "src", f"{stem}.txt")))
+                self.assertTrue(os.path.isfile(os.path.join(tmp_dir, "src", f"{stem}_metadata.txt")))
+            route_txt = (Path(tmp_dir) / "src" / "Route.txt").read_text(encoding="utf-8")
+            self.assertIn("Purpose: Defines route", route_txt)
+            self.assertIn("- [library] slf4j", route_txt)
+            station_meta = (Path(tmp_dir) / "src" / "Station_metadata.txt").read_text(encoding="utf-8")
+            self.assertNotIn("void open()", station_meta)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     def test_is_mlflow_tracking_request_scopes_to_tracking_uri(self):
         from eval.mlflow_custom_evaluator import _is_mlflow_tracking_request
 

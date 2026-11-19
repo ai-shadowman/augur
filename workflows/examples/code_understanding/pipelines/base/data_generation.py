@@ -428,6 +428,7 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
             lines.extend(f"- [import] {imp}" for imp in imports)
             lines.extend(
                 f"- [library] {lib.get('library_name', '')} {lib.get('library_version', '')}".strip()
+                if isinstance(lib, dict) else f"- [library] {lib}"
                 for lib in libraries
             )
             lines.extend(
@@ -512,9 +513,15 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
             extracted = row.get("extracted_data") if "extracted_data" in row else None
             metadata = json_utils.extract_json_from_string(extracted) if extracted else None
+            if isinstance(metadata, list) and len(metadata) == 1 and isinstance(metadata[0], dict):
+                metadata = metadata[0]
 
-            if not metadata:
-                logging.info(f"No LLM metadata found for file {rel_file_path}. Using fallback metadata.")
+            _top_keys = {
+                "file_path", "git_repo", "git_slug", "language",
+                "purpose", "package", "imports", "classes", "methods", "functions", "libraries",
+            }
+            if not isinstance(metadata, dict) or not (metadata.keys() & _top_keys):
+                logging.info(f"No valid LLM metadata found for file {rel_file_path}. Using fallback metadata.")
                 metadata = {
                     "file_path": rel_file_path,
                     "language": language,
