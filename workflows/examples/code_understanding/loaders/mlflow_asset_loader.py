@@ -123,9 +123,38 @@ def _remove_from_repo_catalog(base: list, git_repo: str, git_branch: str = "main
     ]
 
 
-def _tag_is_null_clause(key: str) -> str:
-    # MLflow's IS NULL parser accepts unquoted or backtick-quoted tag keys, not double quotes.
-    return f"tags.{key} IS NULL" if key.isidentifier() else f"tags.`{key.replace('`', '``')}` IS NULL"
+def _run_tags(run) -> dict:
+    return getattr(getattr(run, "data", None), "tags", None) or {}
+
+
+def _search_all_runs(
+    client,
+    experiment_ids: list[str],
+    filter_string: str = "",
+    order_by: list[str] | None = None,
+) -> list:
+    # RHOAI MLflow servers predate `IS NULL` filter clauses; paginate and filter missing tags in Python.
+    results: list = []
+    page_token: str | None = None
+    seen_tokens: set[str] = set()
+    while True:
+        kwargs: dict[str, object] = {
+            "experiment_ids": experiment_ids,
+            "filter_string": filter_string,
+            "max_results": 1000,
+        }
+        if order_by:
+            kwargs["order_by"] = order_by
+        if page_token:
+            kwargs["page_token"] = page_token
+        runs = client.search_runs(**kwargs)
+        results.extend(runs or [])
+        next_token = getattr(runs, "token", None)
+        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+            break
+        seen_tokens.add(next_token)
+        page_token = next_token
+    return results
 
 
 class MlFlowAssetLoader(AssetLoader):
@@ -152,55 +181,65 @@ class MlFlowAssetLoader(AssetLoader):
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-    def _get_global_enrichment_runs(self, client, experiment_id: str, base_filter: str) -> list:
+    def _get_global_enrichment_runs(
+        self,
+        client,
+        experiment_id: str,
+        base_filter: str,
+        null_tag_keys: tuple[str, ...] = ("git_slug",),
+    ) -> list:
         """Returns the ordered list of global enrichment runs to merge: [checkpoint] + [deltas].
 
         The checkpoint run (tagged latest=true) is first; delta runs (no latest tag, created
         after the checkpoint) follow in chronological order. Only unarchived runs are returned.
         """
-        archived_filter = f"{base_filter} AND tags.archived IS NULL" if base_filter else "tags.archived IS NULL"
-        checkpoint_runs = client.search_runs(
+        runs = _search_all_runs(
+            client,
             experiment_ids=[experiment_id],
-            filter_string=f"{archived_filter} AND tags.latest = 'true'",
-            order_by=["attributes.start_time DESC"],
-            max_results=1,
-        )
-        checkpoint = checkpoint_runs[0] if checkpoint_runs else None
-
-        delta_filter = f"{archived_filter} AND tags.latest IS NULL"
-        if checkpoint:
-            delta_filter += f" AND attributes.start_time >= {checkpoint.info.start_time}"
-
-        delta_runs = client.search_runs(
-            experiment_ids=[experiment_id],
-            filter_string=delta_filter,
+            filter_string=base_filter,
             order_by=["attributes.start_time ASC"],
         )
-
-        return ([checkpoint] if checkpoint else []) + list(delta_runs)
+        unarchived = [
+            r
+            for r in runs
+            if (t := _run_tags(r)).get("archived") != "true"
+            and all(not t.get(k) for k in null_tag_keys)
+        ]
+        checkpoints = [r for r in unarchived if _run_tags(r).get("latest") == "true"]
+        checkpoint = checkpoints[-1] if checkpoints else None
+        min_start = (
+            getattr(getattr(checkpoint, "info", None), "start_time", None) if checkpoint else None
+        )
+        deltas = [
+            r
+            for r in unarchived
+            if "latest" not in _run_tags(r)
+            and (min_start is None or getattr(getattr(r, "info", None), "start_time", 0) >= min_start)
+        ]
+        return ([checkpoint] if checkpoint else []) + deltas
 
     def _mark_as_archived(self, client, anchor_run) -> None:
         """Archives all unarchived global enrichment runs created before anchor_run."""
-        stale = client.search_runs(
+        stale = _search_all_runs(
+            client,
             experiment_ids=[anchor_run.info.experiment_id],
             filter_string=(
                 "tags.category = 'enrichments'"
-                " AND tags.git_slug IS NULL"
-                " AND tags.archived IS NULL"
                 f" AND attributes.start_time <= {anchor_run.info.start_time}"
             ),
         )
         for stale_run in stale:
-            if stale_run.info.run_id != anchor_run.info.run_id:
-                client.set_tag(stale_run.info.run_id, "archived", "true")
+            if stale_run.info.run_id == anchor_run.info.run_id:
+                continue
+            tags = _run_tags(stale_run)
+            if tags.get("git_slug") or tags.get("archived") == "true":
+                continue
+            client.set_tag(stale_run.info.run_id, "archived", "true")
 
     @staticmethod
     def _has_prior_enrichment_checkpoint(runs: list) -> bool:
         """Return True if any run in the list is a checkpoint (tagged latest=true)."""
-        return any(
-            (getattr(getattr(r, "data", None), "tags", None) or {}).get("latest") == "true"
-            for r in runs
-        )
+        return any(_run_tags(r).get("latest") == "true" for r in runs)
 
     def _get_artifact_base_uri(self, client, experiment, filter_string: str) -> str:
         """Return the artifact URI of the latest matching run in *experiment*."""
@@ -229,9 +268,10 @@ class MlFlowAssetLoader(AssetLoader):
         experiment = self.get_or_create_experiment_by_name(client, experiment_name)
 
         tag_filter_parts = []
+        null_tag_keys = []
         for k, v in (tags or {}).items():
             if v is None:
-                tag_filter_parts.append(_tag_is_null_clause(k))
+                null_tag_keys.append(k)
             elif v != "":
                 tag_filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
@@ -241,7 +281,10 @@ class MlFlowAssetLoader(AssetLoader):
             )
             base_filter = " AND ".join(tag_filter_parts)
             runs = self._get_global_enrichment_runs(
-                client, enrichment_experiment.experiment_id, base_filter
+                client,
+                enrichment_experiment.experiment_id,
+                base_filter,
+                tuple(null_tag_keys),
             )
             if not runs:
                 return [posixpath.join(enrichment_experiment.artifact_location, asset_file_path)]
@@ -287,18 +330,22 @@ class MlFlowAssetLoader(AssetLoader):
 
     def _mark_as_latest(self, client, experiment_id, new_run_id, tags: dict = None):
         filter_parts = ["tags.latest = 'true'"]
+        null_tag_keys = []
         if tags:
             for k, v in tags.items():
                 if v is None:
-                    filter_parts.append(_tag_is_null_clause(k))
+                    null_tag_keys.append(k)
                 elif v != "":
                     filter_parts.append(f"tags.\"{k}\" = '{escape_mlflow_filter_value(v)}'")
 
-        existing = client.search_runs(
+        existing = _search_all_runs(
+            client,
             experiment_ids=[experiment_id],
             filter_string=" AND ".join(filter_parts),
         )
         for run in existing:
+            if null_tag_keys and any(_run_tags(run).get(k) for k in null_tag_keys):
+                continue
             client.set_tag(run.info.run_id, "latest", "false")
         client.set_tag(new_run_id, "latest", "true")
 
@@ -340,7 +387,7 @@ class MlFlowAssetLoader(AssetLoader):
         enrichment_tags = {"category": "enrichments"}
         if is_global_scoped_enrichment(enrichment_path):
             enrichment_tags["git_slug"] = None
-        else:
+        elif git_slug:
             enrichment_tags["git_slug"] = git_slug
         default_static_exp = getattr(
             self, "DEFAULT_STATIC_ASSET_EXPERIMENT", self.STATIC_ASSET_EXPERIMENT
@@ -435,30 +482,41 @@ class MlFlowAssetLoader(AssetLoader):
                 asset_uris = self._get_absolute_artifact_uris(
                     path, experiment_name=exp_name, tags=tags
                 )
-                with timing_span("mlflow.artifact_download", "io"):
-                    local_path = mlflow.artifacts.download_artifacts(artifact_uri=asset_uris[0])
-
-                os.makedirs(download_dir, exist_ok=True)
-                with timing_span("mlflow.artifact_copy", "io"):
-                    shutil.copytree(local_path, download_dir, dirs_exist_ok=True)
+                copied_any = False
+                uri_err = None
+                for uri in asset_uris:
+                    try:
+                        with timing_span("mlflow.artifact_download", "io"):
+                            local_path = mlflow.artifacts.download_artifacts(artifact_uri=uri)
+                        os.makedirs(download_dir, exist_ok=True)
+                        with timing_span("mlflow.artifact_copy", "io"):
+                            shutil.copytree(local_path, download_dir, dirs_exist_ok=True)
+                        copied_any = True
+                    except Exception as e:
+                        uri_err = e
+                        if len(asset_uris) == 1:
+                            raise
+                if not copied_any:
+                    raise uri_err or FileNotFoundError(f"Asset {asset_dir_path} not found.")
 
                 enrichment_prefix = os.path.join(".enrichments", ".assets")
-                for root, _, files in os.walk(download_dir):
-                    for f in files:
-                        full_path = os.path.join(root, f)
-                        if enrichment_prefix not in full_path:
-                            continue
-                        rel_path = os.path.relpath(full_path, download_dir)
-                        file_uris = self._get_absolute_artifact_uris(
-                            f"{path}/{rel_path}", experiment_name=exp_name, tags=tags
-                        )
-                        merged = self._download_and_merge_enrichments(file_uris)
-                        if merged is not None:
-                            with open(full_path, "w") as fp:
-                                if isinstance(merged, (dict, list)):
-                                    json.dump(merged, fp)
-                                else:
-                                    fp.write(merged)
+                if len(asset_uris) > 1:
+                    for root, _, files in os.walk(download_dir):
+                        for f in files:
+                            full_path = os.path.join(root, f)
+                            if enrichment_prefix not in full_path:
+                                continue
+                            rel_path = os.path.relpath(full_path, download_dir).replace("\\", "/")
+                            file_uris = self._get_absolute_artifact_uris(
+                                f"{path}/{rel_path}", experiment_name=exp_name, tags=tags
+                            )
+                            merged = self._download_and_merge_enrichments(file_uris)
+                            if merged is not None:
+                                with open(full_path, "w") as fp:
+                                    if isinstance(merged, (dict, list)):
+                                        json.dump(merged, fp)
+                                    else:
+                                        fp.write(merged)
                 return True
             except Exception as e:
                 last_err = e
@@ -707,9 +765,11 @@ class MlFlowAssetLoader(AssetLoader):
             tags = {"category": "enrichments"}
             if git_slug:
                 tags["git_slug"] = git_slug
+            else:
+                tags["latest"] = "true"
 
             client = MlflowClient()
-            if os.path.exists(assets_dir):
+            if git_slug and os.path.exists(assets_dir):
                 try:
                     self.log_results(
                         assets_dir,
@@ -873,30 +933,14 @@ class MlFlowAssetLoader(AssetLoader):
 
         matched_runs: dict[str, object] = {}
         for flt in filters:
-            page_token: str | None = None
-            seen_tokens: set[str] = set()
-            while True:
-                search_kwargs: dict[str, object] = {
-                    "experiment_ids": active_exp_ids,
-                    "filter_string": flt,
-                    "max_results": 1000,
-                }
-                if page_token:
-                    search_kwargs["page_token"] = page_token
-                runs = client.search_runs(**search_kwargs)
-                for run in (runs or []):
-                    rid = getattr(getattr(run, "info", None), "run_id", None)
-                    if isinstance(rid, str) and rid:
-                        matched_runs[rid] = run
-                next_token = getattr(runs, "token", None)
-                if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
-                    break
-                seen_tokens.add(next_token)
-                page_token = next_token
+            for run in _search_all_runs(client, active_exp_ids, flt):
+                rid = getattr(getattr(run, "info", None), "run_id", None)
+                if isinstance(rid, str) and rid:
+                    matched_runs[rid] = run
 
         deleted_count = 0
         for run_id, run in matched_runs.items():
-            tags = getattr(getattr(run, "data", None), "tags", None) or {}
+            tags = _run_tags(run)
             if str(tags.get("multi_repo", "")).strip().lower() in ("true", "1", "yes"):
                 continue
             slug_tag = str(tags.get("git_slug") or "").strip()
@@ -916,25 +960,40 @@ class MlFlowAssetLoader(AssetLoader):
             for rid in clean_run_ids:
                 safe_rid = escape_mlflow_filter_value(rid)
                 try:
-                    traces = client.search_traces(
-                        locations=[telemetry_exp_id],
-                        filter_string=f"tags.`kfp.run_id` = '{safe_rid}'",
-                        include_spans=False,
-                    )
-                    trace_ids = [
-                        tid
-                        for t in (traces or [])
-                        if isinstance(
-                            (
-                                tid := getattr(getattr(t, "info", None), "trace_id", None)
-                                or getattr(getattr(t, "info", None), "request_id", None)
-                            ),
-                            str,
+                    trace_ids: list[str] = []
+                    page_token: str | None = None
+                    seen_tokens: set[str] = set()
+                    while True:
+                        trace_kwargs: dict[str, object] = {
+                            "locations": [telemetry_exp_id],
+                            "filter_string": f"tags.`kfp.run_id` = '{safe_rid}'",
+                            "include_spans": False,
+                        }
+                        if page_token:
+                            trace_kwargs["page_token"] = page_token
+                        traces = client.search_traces(**trace_kwargs)
+                        trace_ids.extend(
+                            tid
+                            for t in (traces or [])
+                            if isinstance(
+                                (
+                                    tid := getattr(getattr(t, "info", None), "trace_id", None)
+                                    or getattr(getattr(t, "info", None), "request_id", None)
+                                ),
+                                str,
+                            )
+                            and tid
                         )
-                        and tid
-                    ]
-                    if trace_ids:
-                        client.delete_traces(experiment_id=telemetry_exp_id, trace_ids=trace_ids)
+                        next_token = getattr(traces, "token", None)
+                        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+                            break
+                        seen_tokens.add(next_token)
+                        page_token = next_token
+                    for i in range(0, len(trace_ids), 100):
+                        client.delete_traces(
+                            experiment_id=telemetry_exp_id,
+                            trace_ids=trace_ids[i : i + 100],
+                        )
                 except Exception:
                     logging.debug(
                         "Skipping trace cleanup in experiment %s for run %s",

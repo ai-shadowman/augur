@@ -1502,7 +1502,7 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         mock_reg.assert_called_once_with(enrichment_files={"repos/repo_list.json": [base[1]]})
 
         # End-to-end check on register_enrichments -> _mark_as_archived, global enrichment URI lookup,
-        # and _mark_as_latest: MLflow rejects double-quoted `tags."..." IS NULL` clauses.
+        # and _mark_as_latest: RHOAI MLflow servers reject `IS NULL` / `IS NOT NULL` clauses outright.
         seen_filters: list[str] = []
         archive_client = mock.MagicMock()
         archive_client.get_experiment_by_name.return_value = types.SimpleNamespace(
@@ -1513,23 +1513,49 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
         anchor_info = types.SimpleNamespace(run_id="anchor-1", experiment_id="10", start_time=5000)
         archive_client.get_run.return_value = types.SimpleNamespace(info=anchor_info)
 
+        def _mk_run(rid, start_time, tags):
+            return types.SimpleNamespace(
+                info=types.SimpleNamespace(
+                    run_id=rid,
+                    start_time=start_time,
+                    artifact_uri=f"mlflow-artifacts:/workspaces/team-ns/10/{rid}/artifacts",
+                ),
+                data=types.SimpleNamespace(tags=tags),
+            )
+
         def _archive_search_runs(experiment_ids, filter_string="", **kwargs):
-            self.assertNotIn('" IS NULL', filter_string)
+            self.assertNotIn("NULL", filter_string.upper())
             seen_filters.append(filter_string)
             if "attributes.start_time <= 5000" in filter_string:
                 return [
-                    types.SimpleNamespace(info=types.SimpleNamespace(run_id="stale-1")),
-                    types.SimpleNamespace(info=types.SimpleNamespace(run_id="anchor-1")),
+                    _mk_run("stale-1", 1000, {"category": "enrichments"}),
+                    _mk_run("already-archived", 2000, {"category": "enrichments", "archived": "true"}),
+                    _mk_run("repo-scoped", 3000, {"category": "enrichments", "git_slug": "repo-a-main"}),
+                    _mk_run("anchor-1", 5000, {"category": "enrichments"}),
+                ]
+            if filter_string == "tags.\"category\" = 'enrichments'":
+                return [
+                    _mk_run("pre-ckpt-delta", 500, {"category": "enrichments"}),
+                    _mk_run("ckpt-1", 1000, {"category": "enrichments", "latest": "true"}),
+                    _mk_run("retired-ckpt", 1500, {"category": "enrichments", "latest": "false"}),
+                    _mk_run("archived-delta", 2000, {"category": "enrichments", "archived": "true"}),
+                    _mk_run("repo-delta", 2500, {"category": "enrichments", "git_slug": "repo-a-main"}),
+                    _mk_run("anchor-1", 5000, {"category": "enrichments"}),
+                ]
+            if filter_string == "tags.latest = 'true'":
+                return [
+                    _mk_run("old-global-latest", 1000, {"latest": "true"}),
+                    _mk_run("old-repo-latest", 1100, {"latest": "true", "git_slug": "repo-a-main"}),
                 ]
             return []
 
         archive_client.search_runs.side_effect = _archive_search_runs
         with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=archive_client), \
              mock.patch.object(loader, "load_catalog_repos", return_value=base), \
-             mock.patch.object(loader, "load_results", return_value=None), \
-             mock.patch.object(loader, "log_results", side_effect=["assets-1", "anchor-1"]):
+             mock.patch.object(loader, "load_results", return_value=None) as mock_sync_load, \
+             mock.patch.object(loader, "log_results", return_value="anchor-1") as mock_log_results:
             loader.delete_repo("https://github.com/kfrankli/northpolesouthern-timetable", "main")
-            loader._get_absolute_artifact_uris(
+            uris = loader._get_absolute_artifact_uris(
                 "results/.enrichments/.assets/repos/repo_list.json",
                 experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
                 tags={"category": "enrichments", "git_slug": None},
@@ -1538,14 +1564,72 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
                 archive_client,
                 "10",
                 "anchor-1",
-                tags={"git_slug": None, "kfp.run_id": None},
+                tags={"git_slug": None},
             )
 
-        self.assertTrue(any("tags.git_slug IS NULL" in f for f in seen_filters))
-        self.assertTrue(any("tags.`kfp.run_id` IS NULL" in f for f in seen_filters))
+        # Issue 1: sync_enrichments scopes load_results to global enrichments so newer indexing runs don't mask it
+        mock_sync_load.assert_called_once()
+        self.assertEqual(
+            mock_sync_load.call_args.kwargs.get("tags"),
+            {"category": "enrichments", "git_slug": None},
+        )
+        # Issue 3 & 4: global register_enrichments uploads once (not twice) and marks checkpoint latest="true"
+        mock_log_results.assert_called_once()
+        self.assertEqual(
+            mock_log_results.call_args.kwargs.get("tags"),
+            {"category": "enrichments", "latest": "true"},
+        )
+        # Issue 5: non-global candidate metadata never sets git_slug=None when git_slug is omitted
+        non_global_candidates = loader._get_download_candidate_metadata(
+            "results/.enrichments/custom.json", None, None, None
+        )
+        self.assertEqual(non_global_candidates[0][2], {"category": "enrichments"})
+
+        # Issue 1 (download_dir): skips missing static URI and copies existing global enrichment URIs
+        with tempfile.TemporaryDirectory() as tmp_dl:
+            src_dir = Path(tmp_dl) / "src"
+            dst_dir = Path(tmp_dl) / "dst"
+            src_dir.mkdir()
+            (src_dir / "keep.json").write_text('{"ok": true}', encoding="utf-8")
+            with mock.patch.object(
+                loader,
+                "_get_absolute_artifact_uris",
+                return_value=["mlflow-artifacts:/missing/static", "mlflow-artifacts:/valid/delta"],
+            ), mock.patch(
+                "loaders.mlflow_asset_loader.mlflow.artifacts.download_artifacts",
+                side_effect=lambda artifact_uri: (
+                    (_ for _ in ()).throw(FileNotFoundError(artifact_uri))
+                    if "missing" in artifact_uri
+                    else str(src_dir)
+                ),
+            ):
+                self.assertTrue(
+                    loader.download_dir(
+                        "results/.enrichments/.assets",
+                        str(dst_dir),
+                        experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                        asset_tags={"category": "enrichments", "git_slug": None},
+                    )
+                )
+            self.assertEqual(json.loads((dst_dir / "keep.json").read_text(encoding="utf-8")), {"ok": True})
+
+        self.assertTrue(seen_filters)
+        self.assertEqual(
+            uris,
+            [
+                "mlflow-artifacts:/workspaces/team-ns/10/ckpt-1/artifacts/results/.enrichments/.assets/repos/repo_list.json",
+                "mlflow-artifacts:/workspaces/team-ns/10/anchor-1/artifacts/results/.enrichments/.assets/repos/repo_list.json",
+            ],
+        )
         archive_client.set_tag.assert_any_call("stale-1", "archived", "true")
+        for skipped_id in ("anchor-1", "already-archived", "repo-scoped"):
+            self.assertNotIn(
+                mock.call(skipped_id, "archived", "true"),
+                archive_client.set_tag.call_args_list,
+            )
+        archive_client.set_tag.assert_any_call("old-global-latest", "latest", "false")
         self.assertNotIn(
-            mock.call("anchor-1", "archived", "true"),
+            mock.call("old-repo-latest", "latest", "false"),
             archive_client.set_tag.call_args_list,
         )
 
@@ -1655,12 +1739,27 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
                 ]
             return []
 
+        class _TracePage(list):
+            def __init__(self, items, token=None):
+                super().__init__(items)
+                self.token = token
+
+        def _search_traces(locations, filter_string="", include_spans=True, page_token=None):
+            if locations == ["13"] and "kfp-active-1" in filter_string and include_spans is False:
+                if page_token is None:
+                    return _TracePage(
+                        [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-1", request_id=None))],
+                        token="tp2",
+                    )
+                if page_token == "tp2":
+                    return _TracePage(
+                        [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-2", request_id=None))],
+                        token=None,
+                    )
+            return _TracePage([])
+
         fake_mlf.search_runs.side_effect = _search_runs
-        fake_mlf.search_traces.side_effect = lambda locations, filter_string="", include_spans=True: (
-            [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-1", request_id=None))]
-            if locations == ["13"] and "kfp-active-1" in filter_string and include_spans is False
-            else []
-        )
+        fake_mlf.search_traces.side_effect = _search_traces
 
         with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=fake_mlf):
             deleted_mlf_count = loader.purge_repo_records(
@@ -1670,12 +1769,12 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
             )
         self.assertEqual(deleted_mlf_count, 3)
         self.assertEqual(fake_mlf.search_runs.call_count, 5)
-        self.assertEqual(fake_mlf.search_traces.call_count, 2)
+        self.assertEqual(fake_mlf.search_traces.call_count, 3)
         self.assertEqual(
             {c.args[0] for c in fake_mlf.delete_run.call_args_list},
             {"mlf-idx-1", "mlf-run-repos-1", "mlf-eval-1"},
         )
-        fake_mlf.delete_traces.assert_called_once_with(experiment_id="13", trace_ids=["tr-1"])
+        fake_mlf.delete_traces.assert_called_once_with(experiment_id="13", trace_ids=["tr-1", "tr-2"])
 
         # Verify services.update_repos.delete_repo runs KFP + MLflow purge BEFORE catalog removal and surfaces errors
         call_order: list[str] = []
