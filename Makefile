@@ -80,6 +80,8 @@ install:
 		$(MAKE) upload-mlflow-assets; \
 	fi
 	$(MAKE) upload-pipelines
+	$(MAKE) deploy-console-app
+	$(MAKE) deploy-console-plugin
 
 apply-secrets:
 	@set -a && . $(ENV_FILE) && set +a && \

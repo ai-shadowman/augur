@@ -598,6 +598,39 @@ class TestUIStaticAndTemplates(unittest.TestCase):
             self.assertNotIn("kind: Route", authed_no_route)
             self.assertIn('- name: REQUIRE_OPENSHIFT_AUTH\n              value: "true"', authed_no_route)
 
+    def test_make_install_deploys_console_app_and_plugin(self):
+        makefile_lines = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+        install_idx = makefile_lines.index("install:")
+        recipe_lines: list[str] = []
+        continuing = False
+        for line in makefile_lines[install_idx + 1:]:
+            if continuing:
+                recipe_lines.append(line)
+                continuing = line.rstrip().endswith("\\")
+                continue
+            if not line.strip() or not line.startswith("\t"):
+                break
+            recipe_lines.append(line)
+            continuing = line.rstrip().endswith("\\")
+
+        for step in (
+            "\t$(MAKE) apply-secrets",
+            "\t$(MAKE) upload-pipelines",
+            "\t$(MAKE) deploy-console-app",
+            "\t$(MAKE) deploy-console-plugin",
+        ):
+            self.assertIn(step, recipe_lines)
+
+        secrets_idx = recipe_lines.index("\t$(MAKE) apply-secrets")
+        pipelines_idx = recipe_lines.index("\t$(MAKE) upload-pipelines")
+        app_idx = recipe_lines.index("\t$(MAKE) deploy-console-app")
+        plugin_idx = recipe_lines.index("\t$(MAKE) deploy-console-plugin")
+        for idx in (secrets_idx, pipelines_idx, app_idx, plugin_idx):
+            self.assertFalse(recipe_lines[idx - 1].rstrip().endswith("\\"))
+        self.assertLess(secrets_idx, pipelines_idx)
+        self.assertLess(pipelines_idx, app_idx)
+        self.assertLess(app_idx, plugin_idx)
+
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
         deps_idx = ui_df.index("COPY --chown=1001:0 ui/pyproject.toml ui/uv.lock ./")
