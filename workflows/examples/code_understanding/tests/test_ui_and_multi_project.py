@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import types
@@ -600,7 +601,15 @@ class TestUIStaticAndTemplates(unittest.TestCase):
 
     def test_make_install_deploys_console_app_and_plugin(self):
         makefile_lines = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
-        install_idx = makefile_lines.index("install:")
+        install_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("install:"))
+        target_lines = [
+            line for line in makefile_lines if re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_-]*:([^=]|$)", line)
+        ]
+        self.assertGreaterEqual(len(target_lines), 25)
+        for tline in target_lines:
+            self.assertRegex(tline, r":\s*##\s+\S")
+        list_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("list-commands:"))
+        self.assertIn("match($$0, /##", "\n".join(makefile_lines[list_idx + 1:list_idx + 4]))
         recipe_lines: list[str] = []
         continuing = False
         for line in makefile_lines[install_idx + 1:]:
@@ -616,20 +625,33 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         for step in (
             "\t$(MAKE) apply-secrets",
             "\t$(MAKE) upload-pipelines",
-            "\t$(MAKE) deploy-console-app",
             "\t$(MAKE) deploy-console-plugin",
         ):
             self.assertIn(step, recipe_lines)
 
         secrets_idx = recipe_lines.index("\t$(MAKE) apply-secrets")
         pipelines_idx = recipe_lines.index("\t$(MAKE) upload-pipelines")
-        app_idx = recipe_lines.index("\t$(MAKE) deploy-console-app")
         plugin_idx = recipe_lines.index("\t$(MAKE) deploy-console-plugin")
-        for idx in (secrets_idx, pipelines_idx, app_idx, plugin_idx):
+        for idx in (secrets_idx, pipelines_idx, plugin_idx):
             self.assertFalse(recipe_lines[idx - 1].rstrip().endswith("\\"))
         self.assertLess(secrets_idx, pipelines_idx)
-        self.assertLess(pipelines_idx, app_idx)
-        self.assertLess(app_idx, plugin_idx)
+        self.assertLess(pipelines_idx, plugin_idx)
+
+        build_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("build-images:"))
+        build_end = next(
+            i for i in range(build_idx + 1, len(makefile_lines)) if makefile_lines[i] and not makefile_lines[i].startswith("\t")
+        )
+        build_recipe = makefile_lines[build_idx + 1:build_end]
+        self.assertIn("\t$(MAKE) build-console-app-image", build_recipe)
+        self.assertIn("\t$(MAKE) build-console-plugin-image", build_recipe)
+        app_build_idx = build_recipe.index("\t$(MAKE) build-console-app-image")
+        self.assertFalse(build_recipe[app_build_idx - 1].rstrip().endswith("\\"))
+
+        all_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("build-push-all:"))
+        all_end = next(
+            i for i in range(all_idx + 1, len(makefile_lines)) if makefile_lines[i] and not makefile_lines[i].startswith("\t")
+        )
+        self.assertEqual([line for line in makefile_lines[all_idx + 1:all_end] if line.strip()], ["\t$(MAKE) build-images"])
 
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
