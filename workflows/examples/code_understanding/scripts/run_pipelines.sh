@@ -103,12 +103,20 @@ params = json.loads(os.environ["KFP_TRIGGER_PARAMS"])
 repos_json = os.environ.get("KFP_TRIGGER_REPOS_JSON", "")
 workspace = os.environ.get("KFP_TRIGGER_WORKSPACE") or None
 if repos_json:
+    parsed_repos = json.loads(repos_json)
+    has_creds = any(isinstance(r, dict) and str(r.get("git_token") or "").strip() for r in parsed_repos)
     try:
-        log_repos(json.loads(repos_json), workspace=workspace)
+        log_repos(parsed_repos, workspace=workspace)
     except Exception:
+        if has_creds:
+            raise
         logging.warning("log_repos failed; continuing with pipeline submission.", exc_info=True)
     if os.environ.get("KFP_TRIGGER_PIPELINE") == "multi_repo":
-        params["runnable_repos"] = repos_json
+        params["runnable_repos"] = json.dumps([
+            {"git_repo": r["git_repo"], "git_branch": r.get("git_branch") or "main"}
+            for r in parsed_repos
+            if isinstance(r, dict) and r.get("git_repo")
+        ])
 enable_caching = os.environ.get("KFP_TRIGGER_ENABLE_CACHING", "false").lower() == "true"
 run = trigger_run(
     os.environ["KFP_TRIGGER_PIPELINE"],

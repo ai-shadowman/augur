@@ -38,10 +38,24 @@ def submit_pipeline_run(
     clean_ws = sanitize_slug(workspace or "")
     ws_param = clean_ws if (clean_ws and clean_ws.lower() != "default") else ""
 
+    has_credentials = any(bool((r.get("git_token") or "").strip()) for r in repos)
+    catalog_entries: list[dict[str, str]] = []
+    public_repos: list[dict[str, str]] = []
+    for r in repos:
+        branch = r.get("git_branch") or git_branch
+        pub = {"git_repo": r["git_repo"], "git_branch": branch}
+        public_repos.append(pub)
+        tok = (r.get("git_token") or "").strip()
+        catalog_entries.append(
+            {**pub, "git_username": (r.get("git_username") or "").strip(), "git_token": tok}
+            if tok
+            else dict(pub)
+        )
+
     if len(repos) == 1:
-        entry = repos[0]
+        entry = catalog_entries[0]
         repo_url = entry["git_repo"]
-        branch = entry.get("git_branch") or git_branch
+        branch = entry["git_branch"]
         pipeline_name = "single_repo"
         run_name = f"single_repo_{timestamp}"
         resolved_slug = ""
@@ -55,27 +69,31 @@ def submit_pipeline_run(
         }
         try:
             log_repos(
-                [{"git_repo": repo_url, "git_branch": branch}],
+                [entry],
                 namespace=namespace,
                 workspace=workspace,
             )
         except Exception:
+            if has_credentials:
+                raise
             logger.warning(
                 "log_repos failed for single-repo; continuing with pipeline submission.",
                 exc_info=True,
             )
     else:
         pipeline_name = "multi_repo"
-        resolved_slug = generate_multi_repo_slug(repos, project_slug=project_slug)
+        resolved_slug = generate_multi_repo_slug(public_repos, project_slug=project_slug)
         run_name = (
             f"multi_repo_{resolved_slug}_{timestamp}"
             if resolved_slug and resolved_slug != "multi-repo"
             else f"multi_repo_{timestamp}"
         )
-        if repos:
+        if catalog_entries:
             try:
-                log_repos(repos, namespace=namespace, workspace=workspace)
+                log_repos(catalog_entries, namespace=namespace, workspace=workspace)
             except Exception:
+                if has_credentials:
+                    raise
                 logger.warning(
                     "log_repos failed; continuing with pipeline submission.",
                     exc_info=True,
@@ -84,7 +102,7 @@ def submit_pipeline_run(
             "parent_source_path": source_path,
             "parent_target_path": target_path,
             "pipeline_run_id": pipeline_run_id,
-            "runnable_repos": json.dumps(repos),
+            "runnable_repos": json.dumps(public_repos),
             "project_slug": resolved_slug,
             "project_workspace": ws_param,
         }

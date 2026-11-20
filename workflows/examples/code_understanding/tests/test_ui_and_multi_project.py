@@ -83,6 +83,12 @@ if importlib.util.find_spec("fastapi") is None and "fastapi" not in sys.modules:
                 return fn
             return _dec
 
+        def delete(self, path: str, **kwargs):
+            def _dec(fn):
+                self.routes.append(("DELETE", self.prefix + path, fn))
+                return fn
+            return _dec
+
     class FastAPI(APIRouter):
         def __init__(self, **kwargs):
             super().__init__()
@@ -543,6 +549,88 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         self.assertIn("srcDoc={srcDoc}", plugin_page)
         self.assertIn("<base href=", plugin_page)
 
+        makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        values_yaml = (_REPO_ROOT / "resources" / "helm" / "values.yaml").read_text(encoding="utf-8")
+        console_app_tpl = (_REPO_ROOT / "resources" / "helm" / "templates" / "console-app.yaml").read_text(encoding="utf-8")
+        console_plugin_tpl = (_REPO_ROOT / "resources" / "helm" / "templates" / "console-plugin.yaml").read_text(encoding="utf-8")
+        self.assertIn("CONSOLE_ROUTE_ENABLED     ?= true", makefile)
+        self.assertIn("CONSOLE_ROUTE_AUTH        ?= false", makefile)
+        self.assertEqual(makefile.count("-s templates/console-app.yaml"), 2)
+        self.assertEqual(makefile.count('--set console.route.enabled="$$ROUTE_ENABLED"'), 2)
+        self.assertEqual(makefile.count('--set console.route.auth="$$ROUTE_AUTH"'), 2)
+        self.assertIn('--set console.enabled="$$ROUTE_ENABLED"', makefile)
+        self.assertIn("  route:\n    enabled: true\n    auth: false", values_yaml.replace("\r\n", "\n"))
+        self.assertIn("{{- if .Values.console.route.enabled }}", console_app_tpl)
+        self.assertIn('value: {{ if .Values.console.route.auth }}"true"{{ else }}"false"{{ end }}', console_app_tpl)
+        self.assertIn("REQUIRE_OPENSHIFT_AUTH", console_plugin_tpl)
+
+        import shutil
+
+        if shutil.which("helm"):
+            import subprocess
+
+            chart_dir = str(_REPO_ROOT / "resources" / "helm")
+            default_manifest = subprocess.check_output(
+                [
+                    "helm", "template", "agent-mesh-for-sw", chart_dir,
+                    "--set", "namespace=demo",
+                    "--set", "console.enabled=true",
+                    "--set-string", "console.image=quay.io/org/console-app:latest",
+                    "-s", "templates/console-app.yaml",
+                ],
+                text=True,
+            ).replace("\r\n", "\n")
+            self.assertIn("kind: Route", default_manifest)
+            self.assertIn('- name: REQUIRE_OPENSHIFT_AUTH\n              value: "false"', default_manifest)
+
+            authed_no_route = subprocess.check_output(
+                [
+                    "helm", "template", "agent-mesh-for-sw", chart_dir,
+                    "--set", "namespace=demo",
+                    "--set", "console.enabled=true",
+                    "--set", "console.route.enabled=false",
+                    "--set", "console.route.auth=true",
+                    "--set-string", "console.image=quay.io/org/console-app:latest",
+                    "-s", "templates/console-app.yaml",
+                ],
+                text=True,
+            ).replace("\r\n", "\n")
+            self.assertNotIn("kind: Route", authed_no_route)
+            self.assertIn('- name: REQUIRE_OPENSHIFT_AUTH\n              value: "true"', authed_no_route)
+
+    def test_make_install_deploys_console_app_and_plugin(self):
+        makefile_lines = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+        install_idx = makefile_lines.index("install:")
+        recipe_lines: list[str] = []
+        continuing = False
+        for line in makefile_lines[install_idx + 1:]:
+            if continuing:
+                recipe_lines.append(line)
+                continuing = line.rstrip().endswith("\\")
+                continue
+            if not line.strip() or not line.startswith("\t"):
+                break
+            recipe_lines.append(line)
+            continuing = line.rstrip().endswith("\\")
+
+        for step in (
+            "\t$(MAKE) apply-secrets",
+            "\t$(MAKE) upload-pipelines",
+            "\t$(MAKE) deploy-console-app",
+            "\t$(MAKE) deploy-console-plugin",
+        ):
+            self.assertIn(step, recipe_lines)
+
+        secrets_idx = recipe_lines.index("\t$(MAKE) apply-secrets")
+        pipelines_idx = recipe_lines.index("\t$(MAKE) upload-pipelines")
+        app_idx = recipe_lines.index("\t$(MAKE) deploy-console-app")
+        plugin_idx = recipe_lines.index("\t$(MAKE) deploy-console-plugin")
+        for idx in (secrets_idx, pipelines_idx, app_idx, plugin_idx):
+            self.assertFalse(recipe_lines[idx - 1].rstrip().endswith("\\"))
+        self.assertLess(secrets_idx, pipelines_idx)
+        self.assertLess(pipelines_idx, app_idx)
+        self.assertLess(app_idx, plugin_idx)
+
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
         deps_idx = ui_df.index("COPY --chown=1001:0 ui/pyproject.toml ui/uv.lock ./")
@@ -577,6 +665,68 @@ class TestEvaluatorImprovements(unittest.TestCase):
         self.assertIsInstance(parsed, dict)
         self.assertEqual(parsed["faithfulness"], 4)
         self.assertEqual(parsed["answer_relevance"], 5)
+
+    def test_save_code_and_metadata_files_handles_truncated_list_or_fragment(self):
+        import shutil
+        import tempfile
+        import pipelines.base.data_generation as base_dg
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            fake_df = mock.MagicMock()
+            fake_df.iterrows.return_value = [
+                # 1. Truncated outer JSON where extract_json_from_string matches inner "imports" list
+                (
+                    0,
+                    {
+                        "file_path": "src/Train.java",
+                        "code": "public class Train {}",
+                        "extracted_data": '{"file_path": "src/Train.java", "imports": ["java.util.List"], "methods": [{"method_name": "go"',
+                    },
+                ),
+                # 2. Truncated outer JSON where extract_json_from_string matches inner method dict
+                (
+                    1,
+                    {
+                        "file_path": "src/Station.java",
+                        "code": "public class Station {}",
+                        "extracted_data": '{"methods": [{"method_name": "open", "code": "void open() {}"}, {"method_name": "close"',
+                    },
+                ),
+                # 3. Single-dict list wrapping valid top-level metadata
+                (
+                    2,
+                    {
+                        "file_path": "src/Route.java",
+                        "code": "public class Route {}",
+                        "extracted_data": '[{"file_path": "src/Route.java", "purpose": "Defines route", "libraries": ["slf4j"]}]',
+                    },
+                ),
+            ]
+
+            import json
+
+            with mock.patch.dict(os.environ, {"ASSET_LOADER": "local"}, clear=False), \
+                 mock.patch("utils.json_utils.yaml.dump", side_effect=lambda obj, **kw: json.dumps(obj)):
+                base_dg.save_code_and_metadata_files(
+                    df=fake_df,
+                    target_path=tmp_dir,
+                    git_repo="https://github.com/kfrankli/northpolesouthern-train",
+                    git_slug="kfrankli-northpolesouthern-train-main",
+                    language="java",
+                    config=False,
+                )
+
+            for stem in ("Train", "Station", "Route"):
+                self.assertTrue(os.path.isfile(os.path.join(tmp_dir, "src", f"{stem}.txt")))
+                self.assertTrue(os.path.isfile(os.path.join(tmp_dir, "src", f"{stem}_metadata.txt")))
+            route_txt = (Path(tmp_dir) / "src" / "Route.txt").read_text(encoding="utf-8")
+            self.assertIn("Purpose: Defines route", route_txt)
+            self.assertIn("- [library] slf4j", route_txt)
+            station_meta = (Path(tmp_dir) / "src" / "Station_metadata.txt").read_text(encoding="utf-8")
+            self.assertNotIn("void open()", station_meta)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_is_mlflow_tracking_request_scopes_to_tracking_uri(self):
         from eval.mlflow_custom_evaluator import _is_mlflow_tracking_request
@@ -1087,6 +1237,648 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
             runs_env = api_pipelines.get_recent_runs_envelope(req, limit=5)
         self.assertEqual(runs_env["runs"][0]["status"], "Running")
         self.assertEqual(runs_env["runs"][0]["current_stage"], "Analysis")
+
+    def test_private_repository_ui_api_catalog_and_pipeline_flow(self):
+        import json
+        from fastapi import HTTPException, Request
+        import api.repositories as api_repositories
+        from api.pipeline_service import submit_pipeline_run
+        from loaders.mlflow_asset_loader import _merge_repo_catalog
+        import services.trigger_run as trigger_run_mod
+        import services.update_repos as update_repos_mod
+
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="custom-private"', html)
+        self.assertIn('id="private-repo-fields"', html)
+        self.assertIn('id="custom-username"', html)
+        self.assertIn('<label class="cu-form-label" for="custom-username">Username</label>', html)
+        self.assertIn('id="custom-token"', html)
+        self.assertIn('type="password"', html)
+        self.assertIn("git_username", js)
+        self.assertIn("git_token", js)
+
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        private_entry = {
+            "git_repo": "https://github.com/kfrankli/northpolesouthern-timetable-private",
+            "git_branch": "main",
+            "git_username": "shadowman",
+            "git_token": "github_pat_11AA4AIPK24UCISqMdc9Gz",
+        }
+        blank_user_entry = {
+            "git_repo": "https://github.com/kfrankli/northpolesouthern-blank-user-private",
+            "git_branch": "main",
+            "git_username": "",
+            "git_token": "github_pat_11AA4AIPK24UCISqMdc9Gz",
+        }
+
+        with mock.patch.object(
+            api_repositories,
+            "fetch_catalog_repos",
+            return_value=[private_entry, blank_user_entry],
+        ), mock.patch.object(api_repositories, "_log_repos") as mock_log:
+            resp = api_repositories.post_repositories(
+                api_repositories.UpdateReposRequest(
+                    repos=[
+                        api_repositories.RepoItem(**private_entry),
+                        api_repositories.RepoItem(
+                            git_repo=blank_user_entry["git_repo"],
+                            git_branch="main",
+                            git_username="   ",
+                            git_token=blank_user_entry["git_token"],
+                        ),
+                    ]
+                ),
+                req,
+            )
+            mock_log.assert_called_once_with(
+                [private_entry, blank_user_entry],
+                namespace="team-ns",
+                workspace="default",
+            )
+            self.assertEqual(resp[0].git_username, "shadowman")
+            self.assertIsNone(resp[0].git_token)
+            self.assertEqual(resp[1].git_username, "")
+            self.assertIsNone(resp[1].git_token)
+
+            envelope = api_repositories.get_catalog_repositories_envelope(req)
+            self.assertNotIn("git_token", envelope["repos"][0])
+            self.assertEqual(envelope["repos"][1]["git_username"], "")
+            self.assertNotIn("git_token", envelope["repos"][1])
+
+            with self.assertRaises(HTTPException) as bad_ctx:
+                api_repositories.post_repositories(
+                    api_repositories.UpdateReposRequest(
+                        repos=[
+                            api_repositories.RepoItem(
+                                git_repo="https://github.com/o/priv",
+                                git_branch="main",
+                                git_username="shadowman",
+                            )
+                        ]
+                    ),
+                    req,
+                )
+            self.assertEqual(bad_ctx.exception.status_code, 422)
+
+        merged = _merge_repo_catalog(
+            [{"git_repo": "https://github.com/kfrankli/northpolesouthern-train", "git_branch": "main"}],
+            [private_entry, blank_user_entry],
+        )
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged[1], private_entry)
+        self.assertEqual(merged[2], blank_user_entry)
+        # Subsequent credential-less run log does not duplicate or wipe credentials (even when git_username == "")
+        merged_after_run = _merge_repo_catalog(
+            merged,
+            [
+                {"git_repo": private_entry["git_repo"], "git_branch": "main"},
+                {"git_repo": blank_user_entry["git_repo"], "git_branch": "main"},
+            ],
+        )
+        self.assertEqual(len(merged_after_run), 3)
+        self.assertEqual(merged_after_run[1]["git_token"], private_entry["git_token"])
+        self.assertEqual(merged_after_run[2]["git_username"], "")
+        self.assertEqual(merged_after_run[2]["git_token"], blank_user_entry["git_token"])
+
+        fake_client = mock.MagicMock()
+        fake_client.list_pipelines.return_value = mock.MagicMock(
+            pipelines=[mock.MagicMock(pipeline_id="p-1")]
+        )
+        fake_client.list_pipeline_versions.return_value = mock.MagicMock(
+            total_size=1,
+            pipeline_versions=[mock.MagicMock(pipeline_version_id="v-1", created_at="2026-01-01")],
+        )
+        fake_client.create_experiment.return_value = mock.MagicMock(experiment_id="e-1")
+        fake_client.run_pipeline.return_value = mock.MagicMock(run_id="run-priv-1")
+
+        with mock.patch.object(trigger_run_mod, "create_client", return_value=fake_client), \
+             mock.patch.object(update_repos_mod, "log_repos") as mock_pipe_log:
+            submit_pipeline_run(
+                repos=[
+                    dict(private_entry),
+                    dict(blank_user_entry),
+                    {"git_repo": "https://github.com/kfrankli/northpolesouthern-train", "git_branch": "main"},
+                ],
+                namespace="team-ns",
+            )
+        # Credentials are persisted to the MLflow catalog via log_repos, never serialized into KFP runnable_repos
+        logged_catalog_entries = mock_pipe_log.call_args.args[0]
+        self.assertEqual(logged_catalog_entries[0], private_entry)
+        self.assertEqual(logged_catalog_entries[1], blank_user_entry)
+        runnable = json.loads(fake_client.run_pipeline.call_args.kwargs["params"]["runnable_repos"])
+        for item in runnable:
+            self.assertNotIn("git_token", item)
+            self.assertNotIn("git_username", item)
+
+        # Failed log_repos must raise when credentials are supplied so a run never starts without saving its token
+        with mock.patch.object(trigger_run_mod, "create_client", return_value=fake_client), \
+             mock.patch.object(update_repos_mod, "log_repos", side_effect=RuntimeError("MLflow down")):
+            with self.assertRaises(RuntimeError):
+                submit_pipeline_run(repos=[dict(private_entry)], namespace="team-ns")
+
+        # MlFlowAssetLoader.log_repos keeps tokens in global catalog enrichment while stripping them from category=repositories
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader
+
+        mlf_loader = MlFlowAssetLoader(namespace="team-ns", workspace="default")
+        with mock.patch.object(mlf_loader, "download", return_value=[]), \
+             mock.patch.object(mlf_loader, "register_enrichments") as mock_enrich, \
+             mock.patch.object(mlf_loader, "log_results") as mock_log_res:
+            mlf_loader.log_repos([private_entry])
+        self.assertEqual(
+            mock_enrich.call_args.kwargs["enrichment_files"]["repos/repo_list.json"],
+            [private_entry],
+        )
+        per_run_repos = json.loads(mock_log_res.call_args.kwargs["content"])
+        self.assertEqual(
+            per_run_repos,
+            [{"git_repo": private_entry["git_repo"], "git_branch": "main"}],
+        )
+
+        # Verify clone_from_repo handles non-empty username, blank username (GitHub & GitLab), URL encoding, and redaction on failure
+        import pipelines.base.data_generation as base_dg
+
+        fake_git = types.ModuleType("git")
+        cloned_urls: list[str] = []
+
+        class _FakeRepo:
+            @staticmethod
+            def clone_from(url, dest, branch="main"):
+                if dest == "/tmp/fail":
+                    raise Exception(f"Cmd('git') failed! cmdline: git clone -v -- {url} {dest}")
+                cloned_urls.append(url)
+
+        fake_git.Repo = _FakeRepo
+        with mock.patch.dict(sys.modules, {"git": fake_git}):
+            base_dg.clone_from_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable-private",
+                "/tmp/dest",
+                branch="main",
+                git_username="user@example.com",
+                git_token="tok#secret",
+            )
+            base_dg.clone_from_repo(
+                "https://github.com/kfrankli/northpolesouthern-blank-user-private",
+                "/tmp/dest2",
+                branch="main",
+                git_username="",
+                git_token="tok#secret",
+            )
+            base_dg.clone_from_repo(
+                "https://gitlab.com/kfrankli/northpolesouthern-blank-user-private",
+                "/tmp/dest3",
+                branch="main",
+                git_username="",
+                git_token="tok#secret",
+            )
+            with self.assertRaises(RuntimeError) as clone_err_ctx:
+                base_dg.clone_from_repo(
+                    "https://github.com/kfrankli/northpolesouthern-timetable-private",
+                    "/tmp/fail",
+                    branch="main",
+                    git_username="user@example.com",
+                    git_token="tok#secret",
+                )
+        self.assertNotIn("tok#secret", str(clone_err_ctx.exception))
+        self.assertNotIn("tok%23secret", str(clone_err_ctx.exception))
+        self.assertIsNone(clone_err_ctx.exception.__cause__)
+        self.assertEqual(
+            cloned_urls[0],
+            "https://user%40example.com:tok%23secret@github.com/kfrankli/northpolesouthern-timetable-private",
+        )
+        self.assertEqual(
+            cloned_urls[1],
+            "https://tok%23secret@github.com/kfrankli/northpolesouthern-blank-user-private",
+        )
+        self.assertEqual(
+            cloned_urls[2],
+            "https://oauth2:tok%23secret@gitlab.com/kfrankli/northpolesouthern-blank-user-private",
+        )
+
+        # Verify prepare_environment resolves catalog credentials via _repo_identity (preferring catalog over env GIT_TOKEN)
+        fake_loader = mock.MagicMock()
+        fake_loader.load_catalog_repos.return_value = [private_entry, blank_user_entry]
+        captured_clones: list[tuple[str, str]] = []
+        with mock.patch.dict(os.environ, {"GIT_USERNAME": "global-u", "GIT_TOKEN": "global-tok"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_loader), \
+             mock.patch.object(base_dg, "reset_environment"), \
+             mock.patch("provenance.pipeline.capture", return_value="/tmp/nonexistent-facts.json"), \
+             mock.patch.object(
+                 base_dg,
+                 "clone_from_repo",
+                 side_effect=lambda url, dst, branch="main", git_username="", git_token="": captured_clones.append((git_username, git_token)),
+             ):
+            base_dg.prepare_environment("/tmp/s1", "/tmp/t1", private_entry["git_repo"] + ".git/", "main")
+            base_dg.prepare_environment("/tmp/s2", "/tmp/t2", blank_user_entry["git_repo"], "main")
+        self.assertEqual(captured_clones[0], ("shadowman", private_entry["git_token"]))
+        self.assertEqual(captured_clones[1], ("", blank_user_entry["git_token"]))
+
+        # Verify KFP @dsl.pipeline functions default git_username and git_token to "" instead of compile-time os.getenv
+        import ast
+
+        for rel_pipe in (
+            ("workflows", "examples", "code_understanding", "pipelines", "orchestrator.py"),
+            ("workflows", "examples", "code_understanding", "pipelines", "kubeflow", "data_generation.py"),
+        ):
+            pipe_src = (_REPO_ROOT.joinpath(*rel_pipe)).read_text(encoding="utf-8")
+            tree = ast.parse(pipe_src)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name in ("single_repo_pipeline", "_run_pipeline"):
+                    arg_names = [a.arg for a in node.args.args]
+                    defaults = dict(zip(arg_names[-len(node.args.defaults):], node.args.defaults))
+                    for cred_arg in ("git_username", "git_token"):
+                        self.assertIsInstance(defaults[cred_arg], ast.Constant)
+                        self.assertEqual(defaults[cred_arg].value, "")
+
+    def test_delete_repository_ui_api_and_catalog_flow(self):
+        import json
+        from fastapi import HTTPException, Request
+        import api.repositories as api_repositories
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader, _remove_from_repo_catalog
+        import services.update_repos as update_repos_mod
+
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+        rbac_yaml = (_REPO_ROOT / "resources" / "helm" / "templates" / "pipeline-rbac.yaml").read_text(encoding="utf-8")
+        makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn(".cu-repo-delete", html)
+        self.assertIn(".cu-repo-delete svg { pointer-events: none; }", html)
+        self.assertIn('id="delete-repo-modal"', html)
+        self.assertIn('id="delete-repo-confirm"', html)
+        self.assertIn("cu-repo-delete", js)
+        self.assertIn('title="Delete"', js)
+        self.assertIn("openDeleteRepoModal", js)
+        self.assertIn('method: "DELETE"', js)
+        self.assertIn("i.indexed && i.git_slug === fullSlug", js)
+        self.assertIn('await api("/api/v2/repositories"', js)
+        self.assertEqual(makefile.count("-s templates/pipeline-rbac.yaml"), 2)
+        self.assertIn("- delete", rbac_yaml)
+        self.assertNotIn("- update", rbac_yaml)
+        self.assertNotIn("- patch", rbac_yaml)
+
+        base = [
+            {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable", "git_branch": "main"},
+            {"git_repo": "https://github.com/dbrletic/cron-job-creator", "git_branch": "master"},
+        ]
+        remaining = _remove_from_repo_catalog(
+            base,
+            "https://github.com/kfrankli/northpolesouthern-timetable.git/",
+            "main",
+        )
+        self.assertEqual(remaining, [base[1]])
+
+        loader = MlFlowAssetLoader(namespace="team-ns", workspace="default")
+        with mock.patch.object(loader, "load_catalog_repos", return_value=base), \
+             mock.patch.object(loader, "register_enrichments") as mock_reg:
+            after_del = loader.delete_repo("https://github.com/kfrankli/northpolesouthern-timetable", "main")
+        self.assertEqual(after_del, [base[1]])
+        mock_reg.assert_called_once_with(enrichment_files={"repos/repo_list.json": [base[1]]})
+
+        # End-to-end check on register_enrichments -> _mark_as_archived, global enrichment URI lookup,
+        # and _mark_as_latest: RHOAI MLflow servers reject `IS NULL` / `IS NOT NULL` clauses outright.
+        seen_filters: list[str] = []
+        archive_client = mock.MagicMock()
+        archive_client.get_experiment_by_name.return_value = types.SimpleNamespace(
+            experiment_id="10",
+            lifecycle_stage="active",
+            artifact_location="mlflow-artifacts:/workspaces/team-ns/10",
+        )
+        anchor_info = types.SimpleNamespace(run_id="anchor-1", experiment_id="10", start_time=5000)
+        archive_client.get_run.return_value = types.SimpleNamespace(info=anchor_info)
+
+        def _mk_run(rid, start_time, tags):
+            return types.SimpleNamespace(
+                info=types.SimpleNamespace(
+                    run_id=rid,
+                    start_time=start_time,
+                    artifact_uri=f"mlflow-artifacts:/workspaces/team-ns/10/{rid}/artifacts",
+                ),
+                data=types.SimpleNamespace(tags=tags),
+            )
+
+        def _archive_search_runs(experiment_ids, filter_string="", **kwargs):
+            self.assertNotIn("NULL", filter_string.upper())
+            seen_filters.append(filter_string)
+            if "attributes.start_time <= 5000" in filter_string:
+                return [
+                    _mk_run("stale-1", 1000, {"category": "enrichments"}),
+                    _mk_run("already-archived", 2000, {"category": "enrichments", "archived": "true"}),
+                    _mk_run("repo-scoped", 3000, {"category": "enrichments", "git_slug": "repo-a-main"}),
+                    _mk_run("anchor-1", 5000, {"category": "enrichments"}),
+                ]
+            if filter_string == "tags.\"category\" = 'enrichments'":
+                return [
+                    _mk_run("pre-ckpt-delta", 500, {"category": "enrichments"}),
+                    _mk_run("ckpt-1", 1000, {"category": "enrichments", "latest": "true"}),
+                    _mk_run("retired-ckpt", 1500, {"category": "enrichments", "latest": "false"}),
+                    _mk_run("archived-delta", 2000, {"category": "enrichments", "archived": "true"}),
+                    _mk_run("repo-delta", 2500, {"category": "enrichments", "git_slug": "repo-a-main"}),
+                    _mk_run("anchor-1", 5000, {"category": "enrichments"}),
+                ]
+            if filter_string == "tags.latest = 'true'":
+                return [
+                    _mk_run("old-global-latest", 1000, {"latest": "true"}),
+                    _mk_run("old-repo-latest", 1100, {"latest": "true", "git_slug": "repo-a-main"}),
+                ]
+            return []
+
+        archive_client.search_runs.side_effect = _archive_search_runs
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=archive_client), \
+             mock.patch.object(loader, "load_catalog_repos", return_value=base), \
+             mock.patch.object(loader, "load_results", return_value=None) as mock_sync_load, \
+             mock.patch.object(loader, "log_results", return_value="anchor-1") as mock_log_results:
+            loader.delete_repo("https://github.com/kfrankli/northpolesouthern-timetable", "main")
+            uris = loader._get_absolute_artifact_uris(
+                "results/.enrichments/.assets/repos/repo_list.json",
+                experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                tags={"category": "enrichments", "git_slug": None},
+            )
+            loader._mark_as_latest(
+                archive_client,
+                "10",
+                "anchor-1",
+                tags={"git_slug": None},
+            )
+
+        # Issue 1: sync_enrichments scopes load_results to global enrichments so newer indexing runs don't mask it
+        mock_sync_load.assert_called_once()
+        self.assertEqual(
+            mock_sync_load.call_args.kwargs.get("tags"),
+            {"category": "enrichments", "git_slug": None},
+        )
+        # Issue 3 & 4: global register_enrichments uploads once (not twice) and marks checkpoint latest="true"
+        mock_log_results.assert_called_once()
+        self.assertEqual(
+            mock_log_results.call_args.kwargs.get("tags"),
+            {"category": "enrichments", "latest": "true"},
+        )
+        # Issue 5: non-global candidate metadata never sets git_slug=None when git_slug is omitted
+        non_global_candidates = loader._get_download_candidate_metadata(
+            "results/.enrichments/custom.json", None, None, None
+        )
+        self.assertEqual(non_global_candidates[0][2], {"category": "enrichments"})
+
+        # Issue 1 (download_dir): skips missing static URI and copies existing global enrichment URIs
+        with tempfile.TemporaryDirectory() as tmp_dl:
+            src_dir = Path(tmp_dl) / "src"
+            dst_dir = Path(tmp_dl) / "dst"
+            src_dir.mkdir()
+            (src_dir / "keep.json").write_text('{"ok": true}', encoding="utf-8")
+            with mock.patch.object(
+                loader,
+                "_get_absolute_artifact_uris",
+                return_value=["mlflow-artifacts:/missing/static", "mlflow-artifacts:/valid/delta"],
+            ), mock.patch(
+                "loaders.mlflow_asset_loader.mlflow.artifacts.download_artifacts",
+                side_effect=lambda artifact_uri: (
+                    (_ for _ in ()).throw(FileNotFoundError(artifact_uri))
+                    if "missing" in artifact_uri
+                    else str(src_dir)
+                ),
+            ):
+                self.assertTrue(
+                    loader.download_dir(
+                        "results/.enrichments/.assets",
+                        str(dst_dir),
+                        experiment_name=loader.RESULT_DIRECTORY_ASSET_EXPERIMENT,
+                        asset_tags={"category": "enrichments", "git_slug": None},
+                    )
+                )
+            self.assertEqual(json.loads((dst_dir / "keep.json").read_text(encoding="utf-8")), {"ok": True})
+
+        self.assertTrue(seen_filters)
+        self.assertEqual(
+            uris,
+            [
+                "mlflow-artifacts:/workspaces/team-ns/10/ckpt-1/artifacts/results/.enrichments/.assets/repos/repo_list.json",
+                "mlflow-artifacts:/workspaces/team-ns/10/anchor-1/artifacts/results/.enrichments/.assets/repos/repo_list.json",
+            ],
+        )
+        archive_client.set_tag.assert_any_call("stale-1", "archived", "true")
+        for skipped_id in ("anchor-1", "already-archived", "repo-scoped"):
+            self.assertNotIn(
+                mock.call(skipped_id, "archived", "true"),
+                archive_client.set_tag.call_args_list,
+            )
+        archive_client.set_tag.assert_any_call("old-global-latest", "latest", "false")
+        self.assertNotIn(
+            mock.call("old-repo-latest", "latest", "false"),
+            archive_client.set_tag.call_args_list,
+        )
+
+        # Deleting the last repo leaves [] in enrichments; load_catalog_repos must return [] without falling back
+        with mock.patch.object(loader, "download", side_effect=lambda p, *a, **kw: [] if p == "repos/repo_list.json" else base):
+            self.assertEqual(loader.load_catalog_repos(), [])
+
+        # Verify KFP purge terminates active single-repo runs, deletes single-repo runs, and skips multi-repo/other runs
+        def _kfp_run(run_id, display_name, state, params):
+            return types.SimpleNamespace(
+                run_id=run_id,
+                display_name=display_name,
+                state=state,
+                runtime_config=types.SimpleNamespace(parameters=params),
+            )
+
+        fake_kfp = mock.MagicMock()
+        fake_kfp.get_experiment.return_value = types.SimpleNamespace(experiment_id="exp-1")
+        fake_kfp.list_runs.side_effect = [
+            types.SimpleNamespace(
+                runs=[
+                    _kfp_run(
+                        "kfp-active-1",
+                        "single_repo_timetable",
+                        "RUNNING",
+                        {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable.git", "git_branch": "main"},
+                    ),
+                    _kfp_run(
+                        "kfp-multi-keep",
+                        "multi_repo_combined",
+                        "SUCCEEDED",
+                        {"runnable_repos": json.dumps(base)},
+                    ),
+                ],
+                next_page_token="p2",
+            ),
+            types.SimpleNamespace(
+                runs=[
+                    _kfp_run(
+                        "kfp-done-2",
+                        "single_repo_timetable_old",
+                        "SUCCEEDED",
+                        {"git_repo": "https://github.com/kfrankli/northpolesouthern-timetable", "git_branch": "main"},
+                    ),
+                    _kfp_run(
+                        "kfp-other-repo",
+                        "single_repo_cron",
+                        "SUCCEEDED",
+                        {"git_repo": "https://github.com/dbrletic/cron-job-creator", "git_branch": "master"},
+                    ),
+                ],
+                next_page_token="",
+            ),
+        ]
+        with mock.patch("utils.service_utils.create_client", return_value=fake_kfp):
+            deleted_kfp_ids = update_repos_mod.purge_kfp_runs_for_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+        self.assertEqual(deleted_kfp_ids, ["kfp-active-1", "kfp-done-2"])
+        fake_kfp.terminate_run.assert_called_once_with("kfp-active-1")
+        self.assertEqual(
+            [c.args[0] for c in fake_kfp.delete_run.call_args_list],
+            ["kfp-active-1", "kfp-done-2"],
+        )
+
+        # Verify MLflow soft-delete removes single-repo runs + traces while keeping multi-repo and global catalog runs
+        def _mlf_run(run_id, tags):
+            return types.SimpleNamespace(
+                info=types.SimpleNamespace(run_id=run_id),
+                data=types.SimpleNamespace(tags=tags),
+            )
+
+        slug = "kfrankli-northpolesouthern-timetable-main"
+        fake_mlf = mock.MagicMock()
+        exp_map = {
+            "team-ns/code-refactoring/assets/result-directories": types.SimpleNamespace(
+                experiment_id="10", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/assets/results": types.SimpleNamespace(
+                experiment_id="11", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/evaluations": types.SimpleNamespace(
+                experiment_id="12", lifecycle_stage="active"
+            ),
+            "team-ns/AIP-default": types.SimpleNamespace(
+                experiment_id="13", lifecycle_stage="active"
+            ),
+        }
+        fake_mlf.get_experiment_by_name.side_effect = lambda name: exp_map.get(name)
+
+        def _search_runs(experiment_ids, filter_string="", **kwargs):
+            self.assertEqual(experiment_ids, ["10", "11", "12", "13"])
+            if slug in filter_string:
+                return [
+                    _mlf_run("mlf-idx-1", {"category": "indexing", "git_slug": slug, "multi_repo": "False"}),
+                    _mlf_run("mlf-multi-skip", {"category": "indexing", "git_slug": slug, "multi_repo": "True"}),
+                    _mlf_run("mlf-eval-1", {"category": "evaluation", "git_slug": slug, "multi_repo": "False"}),
+                ]
+            if "kfp-done-2" in filter_string:
+                return [
+                    _mlf_run("mlf-global-enrich-keep", {"category": "enrichments", "pipeline_run_id": "kfp-done-2"}),
+                    _mlf_run("mlf-run-repos-1", {"category": "repositories", "pipeline_run_id": "kfp-done-2"}),
+                    _mlf_run("mlf-other-slug-keep", {"category": "analysis", "git_slug": "dbrletic-cron-job-creator-master"}),
+                ]
+            return []
+
+        class _TracePage(list):
+            def __init__(self, items, token=None):
+                super().__init__(items)
+                self.token = token
+
+        def _search_traces(locations, filter_string="", include_spans=True, page_token=None):
+            if locations == ["13"] and "kfp-active-1" in filter_string and include_spans is False:
+                if page_token is None:
+                    return _TracePage(
+                        [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-1", request_id=None))],
+                        token="tp2",
+                    )
+                if page_token == "tp2":
+                    return _TracePage(
+                        [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-2", request_id=None))],
+                        token=None,
+                    )
+            return _TracePage([])
+
+        fake_mlf.search_runs.side_effect = _search_runs
+        fake_mlf.search_traces.side_effect = _search_traces
+
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=fake_mlf):
+            deleted_mlf_count = loader.purge_repo_records(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                kfp_run_ids=deleted_kfp_ids,
+            )
+        self.assertEqual(deleted_mlf_count, 3)
+        self.assertEqual(fake_mlf.search_runs.call_count, 5)
+        self.assertEqual(fake_mlf.search_traces.call_count, 3)
+        self.assertEqual(
+            {c.args[0] for c in fake_mlf.delete_run.call_args_list},
+            {"mlf-idx-1", "mlf-run-repos-1", "mlf-eval-1"},
+        )
+        fake_mlf.delete_traces.assert_called_once_with(experiment_id="13", trace_ids=["tr-1", "tr-2"])
+
+        # Verify services.update_repos.delete_repo runs KFP + MLflow purge BEFORE catalog removal and surfaces errors
+        call_order: list[str] = []
+        fake_default_loader = mock.MagicMock()
+        fake_default_loader.purge_repo_records.side_effect = lambda *a, **kw: call_order.append("mlflow") or 2
+        fake_default_loader.delete_repo.side_effect = lambda *a, **kw: call_order.append("catalog") or [base[1]]
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=fake_default_loader), \
+             mock.patch.object(
+                 update_repos_mod,
+                 "purge_kfp_runs_for_repo",
+                 side_effect=lambda *a, **kw: call_order.append("kfp") or ["kfp-1"],
+             ) as mock_kfp_purge:
+            svc_remaining = update_repos_mod.delete_repo(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+        self.assertEqual(svc_remaining, [base[1]])
+        self.assertEqual(call_order, ["kfp", "mlflow", "catalog"])
+        mock_kfp_purge.assert_called_once_with(
+            "https://github.com/kfrankli/northpolesouthern-timetable",
+            "main",
+            namespace="team-ns",
+            workspace="default",
+        )
+        fake_default_loader.purge_repo_records.assert_called_once_with(
+            "https://github.com/kfrankli/northpolesouthern-timetable",
+            "main",
+            kfp_run_ids=["kfp-1"],
+        )
+
+        # Failed KFP purge must raise and leave catalog entry intact so the user can retry
+        failing_loader = mock.MagicMock()
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch("loaders.default_asset_loader.DefaultAssetLoader", return_value=failing_loader), \
+             mock.patch.object(
+                 update_repos_mod,
+                 "purge_kfp_runs_for_repo",
+                 side_effect=RuntimeError("403 Forbidden"),
+             ):
+            with self.assertRaises(RuntimeError):
+                update_repos_mod.delete_repo(
+                    "https://github.com/kfrankli/northpolesouthern-timetable",
+                    "main",
+                    namespace="team-ns",
+                    workspace="default",
+                )
+        failing_loader.delete_repo.assert_not_called()
+
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        with mock.patch.object(api_repositories, "_delete_repo", return_value=[base[1]]) as mock_del, \
+             mock.patch.object(api_repositories, "fetch_catalog_repos", return_value=[base[1]]):
+            resp = api_repositories.delete_repository(
+                req,
+                git_repo="https://github.com/kfrankli/northpolesouthern-timetable",
+                git_branch="main",
+            )
+            mock_del.assert_called_once_with(
+                "https://github.com/kfrankli/northpolesouthern-timetable",
+                "main",
+                namespace="team-ns",
+                workspace="default",
+            )
+            self.assertEqual(len(resp), 1)
+            self.assertEqual(resp[0].git_repo, base[1]["git_repo"])
+
+            with self.assertRaises(HTTPException) as bad_ctx:
+                api_repositories.delete_repository(req, git_repo="   ", git_branch="main")
+            self.assertEqual(bad_ctx.exception.status_code, 422)
 
 
 if __name__ == "__main__":

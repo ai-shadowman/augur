@@ -86,13 +86,14 @@ make oc-deploy-console-plugin
 
 Once `make deploy-console-plugin` (or `make oc-deploy-console-plugin`) finishes rolling out:
 * Open `https://<openshift-console-host>/code-understanding`, **or**
-* Click the OpenShift **Application Launcher** (9-dot grid icon in the top masthead) and select **Code Understanding**.
+* Click the OpenShift **Application Launcher** (9-dot grid icon in the top masthead) and select **Code Understanding**, **or**
+* Open the standalone console Route URL printed in the terminal (`https://code-understanding-console-<namespace>.<cluster-domain>`).
 
 ---
 
-### Option B: Standalone Console Deployment (Port-Forward)
+### Option B: Standalone Console Deployment (Route / Port-Forward)
 
-Deploys `Deployment/code-understanding-console` and `Service/code-understanding-console` (`8080`) in `KFP_NAMESPACE` from [`resources/helm/templates/console-app.yaml`](resources/helm/templates/console-app.yaml) without modifying cluster-scoped OpenShift Console settings.
+Deploys `Deployment/code-understanding-console`, `Service/code-understanding-console` (`8080`), and `Route/code-understanding-console` in `KFP_NAMESPACE` from [`resources/helm/templates/console-app.yaml`](resources/helm/templates/console-app.yaml) without modifying cluster-scoped OpenShift Console settings. (Set `CONSOLE_ROUTE_ENABLED=false` to skip creating the Route, or `CONSOLE_ROUTE_AUTH=true` to require `Authorization: Bearer <token>` on `/api/*` for API clients — note that the standalone UI has no browser login prompt.)
 
 1. **Build and deploy**:
    ```bash
@@ -104,7 +105,8 @@ Deploys `Deployment/code-understanding-console` and `Service/code-understanding-
    make oc-deploy-console-app
    ```
 
-2. **Port-forward and open locally**:
+2. **Open the UI**:
+   Open the `https://code-understanding-console-...` Route URL printed by `make`, or port-forward locally:
    ```bash
    make port-forward-console-app
    ```

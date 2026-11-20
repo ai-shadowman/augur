@@ -23,12 +23,20 @@ def clone_from_repo(repo_url,
                     git_token: str = os.environ.get('GIT_TOKEN',"")):
     """Clones the given git repo to the specified destination."""
     from git import Repo
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import quote, urlparse, urlunparse
 
     updated_repo_url = repo_url
-    if git_username and git_token:
+    enc_token = ""
+    if git_token:
         parsed = urlparse(repo_url)
-        updated_repo_url = urlunparse(parsed._replace(netloc=f"{git_username}:{git_token}@{parsed.netloc}"))
+        enc_token = quote(git_token, safe="")
+        if git_username:
+            auth = f"{quote(git_username, safe='')}:{enc_token}"
+        elif "gitlab" in parsed.netloc.lower():
+            auth = f"oauth2:{enc_token}"
+        else:
+            auth = enc_token
+        updated_repo_url = urlunparse(parsed._replace(netloc=f"{auth}@{parsed.netloc}"))
 
     try:
 
@@ -38,10 +46,14 @@ def clone_from_repo(repo_url,
 
     except Exception as e:
 
-        err_msg = str(e).replace(git_token, '***') if git_token else str(e)
+        err_msg = str(e)
+        if git_token:
+            err_msg = err_msg.replace(git_token, "***")
+        if enc_token:
+            err_msg = err_msg.replace(enc_token, "***")
         logging.error(f"Error cloning repository: {err_msg}")
 
-        raise e
+        raise RuntimeError(err_msg) from None
 
 
 def reset_environment(source_path: str, target_path: str):
@@ -77,6 +89,23 @@ def prepare_environment(source_path: str,
 
         cm_clone = dur_tracker.measure(stage="Data Generation", step="GitHub Checkout") if dur_tracker else nullcontext()
         with cm_clone:
+            if not git_token and git_repo:
+                try:
+                    from loaders.default_asset_loader import DefaultAssetLoader
+                    from loaders.mlflow_asset_loader import _repo_identity
+
+                    target = _repo_identity({"git_repo": git_repo, "git_branch": git_branch})
+                    for item in DefaultAssetLoader().load_catalog_repos() or []:
+                        if isinstance(item, dict) and item.get("git_token") and _repo_identity(item) == target:
+                            git_username = git_username or str(item.get("git_username") or "")
+                            git_token = str(item["git_token"])
+                            break
+                except Exception:
+                    logging.debug("Catalog credential lookup skipped in prepare_environment", exc_info=True)
+            if not git_token:
+                git_username = git_username or os.environ.get("GIT_USERNAME", "")
+                git_token = os.environ.get("GIT_TOKEN", "")
+
             clone_from_repo(git_repo,
                             source_path,
                             branch=git_branch,
@@ -399,6 +428,7 @@ def generate_code_comment(metadata: dict, file_path: str, config=False, external
             lines.extend(f"- [import] {imp}" for imp in imports)
             lines.extend(
                 f"- [library] {lib.get('library_name', '')} {lib.get('library_version', '')}".strip()
+                if isinstance(lib, dict) else f"- [library] {lib}"
                 for lib in libraries
             )
             lines.extend(
@@ -483,9 +513,15 @@ def save_code_and_metadata_files(df, target_path, git_repo: str, git_slug: str, 
 
             extracted = row.get("extracted_data") if "extracted_data" in row else None
             metadata = json_utils.extract_json_from_string(extracted) if extracted else None
+            if isinstance(metadata, list) and len(metadata) == 1 and isinstance(metadata[0], dict):
+                metadata = metadata[0]
 
-            if not metadata:
-                logging.info(f"No LLM metadata found for file {rel_file_path}. Using fallback metadata.")
+            _top_keys = {
+                "file_path", "git_repo", "git_slug", "language",
+                "purpose", "package", "imports", "classes", "methods", "functions", "libraries",
+            }
+            if not isinstance(metadata, dict) or not (metadata.keys() & _top_keys):
+                logging.info(f"No valid LLM metadata found for file {rel_file_path}. Using fallback metadata.")
                 metadata = {
                     "file_path": rel_file_path,
                     "language": language,
@@ -749,7 +785,8 @@ class DataGenerationPipeline:
 
     @enable_telemetry
     def run(self, git_repo: str, git_branch: str, source_path: str, target_path: str,
-            multi_repo: bool = False, override_concurrency: int = 0):
+            multi_repo: bool = False, override_concurrency: int = 0,
+            git_username: str = "", git_token: str = ""):
         """Prepares the environment, generates code metadata for all detected languages, and returns a status dict."""
         import traceback
 
@@ -791,7 +828,8 @@ class DataGenerationPipeline:
                         override_concurrency=override_concurrency,
                     )
                     prepare_environment(source_path=source_path, target_path=target_path,
-                                        git_repo=git_repo, git_branch=git_branch)
+                                        git_repo=git_repo, git_branch=git_branch,
+                                        git_username=git_username, git_token=git_token)
                     if target_path and bench_result:
                         from utils.llm_benchmark import save_benchmark_result
                         save_benchmark_result(bench_result, target_path)
@@ -825,7 +863,8 @@ class DataGenerationPipeline:
                     override_concurrency=override_concurrency,
                 )
                 prepare_environment(source_path=source_path, target_path=target_path,
-                                    git_repo=git_repo, git_branch=git_branch)
+                                    git_repo=git_repo, git_branch=git_branch,
+                                    git_username=git_username, git_token=git_token)
                 if target_path and bench_result:
                     from utils.llm_benchmark import save_benchmark_result
                     save_benchmark_result(bench_result, target_path)
@@ -948,9 +987,8 @@ class DataGenerationPipeline:
                 repos = []
 
         for repo in repos:
-            repo.setdefault("git_branch", "main")
-            repo.setdefault("git_username", "")
-            repo.setdefault("git_token", "")
+            if isinstance(repo, dict):
+                repo.setdefault("git_branch", "main")
 
         try:
             DefaultAssetLoader().log_repos(repos)
@@ -998,7 +1036,9 @@ class DataGenerationPipeline:
             result = self.run(git_repo=git_repo, git_branch=git_branch,
                               source_path=source_path, target_path=target_path,
                               multi_repo=True,
-                              override_concurrency=best_concurrency)
+                              override_concurrency=best_concurrency,
+                              git_username=git_data.get("git_username", ""),
+                              git_token=git_data.get("git_token", ""))
             pipeline_results.append(result)
 
         try:

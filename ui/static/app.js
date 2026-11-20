@@ -74,7 +74,7 @@ async function runMermaid(container) {
 
 const state = {
   repos: [], selected: new Set(), indexes: [], queryable: [],
-  defaultKey: null, poll: null, chat: [], thinking: null,
+  defaultKey: null, poll: null, pollRunId: null, chat: [], thinking: null,
   animateLatest: false, allRuns: [], runPage: 0, selectedRunId: null,
   runsRefreshTimer: null,
   namespace: (() => { try { return sessionStorage.getItem("cu-namespace") || ""; } catch { return ""; } })(),
@@ -371,7 +371,7 @@ function repoKey(r) { return `${r.git_repo}|${r.git_branch}`; }
 function selectedRepos() { return state.repos.filter((r) => state.selected.has(repoKey(r))); }
 function gitSlug(url, branch) {
   try {
-    const path = new URL(url).pathname.replace(/^\//, "").replace(/\.git$/, "");
+    const path = new URL(url).pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
     const parts = path.split("/").filter(Boolean);
     const name = parts.pop() || "repo";
     const owner = parts.pop() || "";
@@ -933,35 +933,119 @@ function jobCard(job) {
   </article>`;
 }
 
+let pendingDeleteRepo = null;
+
+function openDeleteRepoModal(repo) {
+  if (state.thinking && state.thinking.kind === "delete") return;
+  pendingDeleteRepo = repo;
+  const branch = repo.git_branch || "main";
+  $("delete-repo-target").innerHTML =
+    `<strong>${esc(shortName(repo.git_repo) || repo.git_repo)} @ ${esc(branch)}</strong>` +
+    `<div class="cu-muted" style="font-size:0.82rem;margin-top:0.2rem;word-break:break-all">${esc(repo.git_repo)}</div>`;
+  $("delete-repo-modal").classList.remove("hidden");
+}
+
+function closeDeleteRepoModal() {
+  $("delete-repo-modal").classList.add("hidden");
+  pendingDeleteRepo = null;
+}
+
+async function deleteRepo(repo) {
+  const key = repoKey(repo);
+  const idx = state.repos.findIndex((r) => repoKey(r) === key);
+  if (idx < 0) return;
+  const removed = state.repos[idx];
+  const wasSelected = state.selected.has(key);
+  let nextThinking = state.thinking && state.thinking.kind !== "delete" ? state.thinking : null;
+  state.repos.splice(idx, 1);
+  state.selected.delete(key);
+  renderRepos();
+  banner("");
+  setThinking({
+    kind: "delete",
+    label: "Deleting repository",
+    status: "Removing repository, pipeline runs, and MLflow records…",
+  });
+  try {
+    const qs = new URLSearchParams({
+      git_repo: removed.git_repo,
+      git_branch: removed.git_branch || "main",
+    });
+    await api(`/api/v2/repositories?${qs.toString()}`, { method: "DELETE" });
+    await load();
+    if (state.pollRunId && !state.allRuns.some((r) => r.run_id === state.pollRunId)) {
+      if (state.poll) clearInterval(state.poll);
+      state.poll = null;
+      state.pollRunId = null;
+      if (nextThinking && nextThinking.kind === "pipeline") nextThinking = null;
+    }
+  } catch (e) {
+    if (!state.repos.some((r) => repoKey(r) === key)) {
+      state.repos.splice(Math.min(idx, state.repos.length), 0, removed);
+    }
+    if (wasSelected) state.selected.add(key);
+    renderRepos();
+    banner(String(e.message || e), true);
+  } finally {
+    setThinking(nextThinking);
+  }
+}
+
 function renderRepos() {
-  $("repo-list").innerHTML = state.repos.map((r) => {
+  if (!state.repos.length) {
+    $("repo-list").innerHTML = `<div class="cu-muted" style="padding:0.75rem 0.9rem">No repositories configured.</div>`;
+    renderSelection();
+    return;
+  }
+  $("repo-list").innerHTML = state.repos.map((r, idx) => {
     const key = repoKey(r);
+    const checkId = `repo-check-${idx}`;
     const slug = (shortName(r.git_repo) || "").replace(/\.git$/, "");
-    const indexed = state.indexes.some((i) => !i.multi_repo && (i.git_slug || "").includes(slug));
+    const fullSlug = gitSlug(r.git_repo, r.git_branch || "main");
+    const indexed = state.indexes.some((i) => !i.multi_repo && i.indexed && i.git_slug === fullSlug);
     const chips = [
       `<span class="cu-chip">${esc(r.git_branch)}</span>`,
       indexed ? '<span class="cu-chip indexed">indexed</span>' : "",
+      `<button type="button" class="cu-repo-delete" data-key="${esc(key)}" title="Delete" aria-label="Delete ${esc(slug || r.git_repo)}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`,
     ].join("");
-    return `<label class="cu-repo">
-      <input class="cu-check" type="checkbox" data-key="${esc(key)}" ${state.selected.has(key) ? "checked" : ""}/>
-      <span class="cu-repo-body">
+    return `<div class="cu-repo">
+      <input class="cu-check" id="${checkId}" type="checkbox" data-key="${esc(key)}" ${state.selected.has(key) ? "checked" : ""}/>
+      <label class="cu-repo-body" for="${checkId}">
         <span class="cu-repo-title">${esc(slug || r.git_repo)}</span>
         <span class="cu-repo-url-row">
           <span class="cu-repo-url">${esc(r.git_repo)}</span>
           <a class="cu-repo-link" href="${esc(r.git_repo)}" target="_blank" rel="noopener noreferrer" title="Open repository"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></a>
         </span>
-      </span>
+      </label>
       <span class="cu-chips">${chips}</span>
-    </label>`;
+    </div>`;
   }).join("");
-  $("repo-list").querySelectorAll("input").forEach((el) => {
+  $("repo-list").querySelectorAll("input.cu-check").forEach((el) => {
     el.addEventListener("change", () => {
       if (el.checked) state.selected.add(el.dataset.key); else state.selected.delete(el.dataset.key);
       renderSelection();
     });
   });
+  $("repo-list").querySelectorAll(".cu-repo").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("input, a, button, label")) return;
+      const cb = row.querySelector("input.cu-check");
+      if (cb) {
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event("change"));
+      }
+    });
+  });
   $("repo-list").querySelectorAll(".cu-repo-link").forEach((link) => {
     link.addEventListener("click", (e) => e.stopPropagation());
+  });
+  $("repo-list").querySelectorAll(".cu-repo-delete").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = state.repos.find((r) => repoKey(r) === btn.dataset.key);
+      if (target) openDeleteRepoModal(target);
+    });
   });
   renderSelection();
 }
@@ -1287,13 +1371,15 @@ function pollQuery(queryId) {
 
 async function pollV2(runId) {
   if (state.poll) clearInterval(state.poll);
+  state.pollRunId = runId;
   let tickInFlight = false;
   const tick = async () => {
-    if (tickInFlight) return;
+    if (tickInFlight || state.pollRunId !== runId) return;
     tickInFlight = true;
     try {
       const snap = await api(`/api/v2/pipelines/runs/${runId}`);
-      if (state.thinking) {
+      if (state.pollRunId !== runId) return;
+      if (state.thinking && state.thinking.kind !== "delete") {
         const stagePart = snap.current_stage ? ` · ${snap.current_stage}` : "";
         setThinking({
           ...state.thinking,
@@ -1301,6 +1387,7 @@ async function pollV2(runId) {
         });
       }
       await load();
+      if (state.pollRunId !== runId) return;
       if (snap.status === "running" || snap.status === "pending") {
         const matched = state.allRuns.find((r) => r.run_id === runId);
         if (matched && snap.current_stage && matched.current_stage !== snap.current_stage) {
@@ -1312,6 +1399,7 @@ async function pollV2(runId) {
       if (["succeeded", "skipped", "failed", "cancelled", "running"].includes(snap.status)) {
         clearInterval(state.poll);
         state.poll = null;
+        state.pollRunId = null;
         setThinking(null);
         if (snap.status === "succeeded" || snap.status === "skipped") {
           banner("Pipeline completed successfully.");
@@ -1323,8 +1411,10 @@ async function pollV2(runId) {
         }
       }
     } catch (e) {
+      if (state.pollRunId !== runId) return;
       clearInterval(state.poll);
       state.poll = null;
+      state.pollRunId = null;
       setThinking(null);
       banner(String(e.message || e), true);
     } finally {
@@ -1483,9 +1573,21 @@ function closeAddRepo() {
   $("add-repo-modal").classList.add("hidden");
   $("custom-url").value = "";
   $("custom-branch").value = "main";
+  $("custom-private").checked = false;
+  $("private-repo-fields").classList.add("hidden");
+  $("custom-username").value = "";
+  $("custom-token").value = "";
   $("add-repo-error").classList.add("hidden");
   $("add-repo-error").textContent = "";
 }
+$("custom-private").addEventListener("change", () => {
+  const isPrivate = $("custom-private").checked;
+  $("private-repo-fields").classList.toggle("hidden", !isPrivate);
+  if (!isPrivate) {
+    $("custom-username").value = "";
+    $("custom-token").value = "";
+  }
+});
 $("open-add-repo").onclick = () => {
   $("add-repo-modal").classList.remove("hidden");
   $("custom-url").focus();
@@ -1493,12 +1595,26 @@ $("open-add-repo").onclick = () => {
 $("add-repo-close").onclick = closeAddRepo;
 $("add-repo-cancel").onclick = closeAddRepo;
 $("add-repo-modal").addEventListener("click", (e) => { if (e.target === $("add-repo-modal")) closeAddRepo(); });
+$("delete-repo-close").addEventListener("click", closeDeleteRepoModal);
+$("delete-repo-cancel").addEventListener("click", closeDeleteRepoModal);
+$("delete-repo-modal").addEventListener("click", (e) => { if (e.target === $("delete-repo-modal")) closeDeleteRepoModal(); });
+$("delete-repo-confirm").addEventListener("click", async () => {
+  const target = pendingDeleteRepo;
+  closeDeleteRepoModal();
+  if (target) await deleteRepo(target);
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("add-repo-modal").classList.contains("hidden")) closeAddRepo();
+  if (e.key === "Escape" && !$("delete-repo-modal").classList.contains("hidden")) closeDeleteRepoModal();
 });
 $("add-custom").onclick = async () => {
+  const btn = $("add-custom");
+  if (btn.disabled) return;
   const git_repo = $("custom-url").value.trim();
   const git_branch = $("custom-branch").value.trim() || "main";
+  const isPrivate = $("custom-private").checked;
+  const git_username = $("custom-username").value.trim();
+  const git_token = $("custom-token").value.trim();
   if (!git_repo) {
     $("add-repo-error").textContent = "Repository URL is required.";
     $("add-repo-error").classList.remove("hidden");
@@ -1509,16 +1625,43 @@ $("add-custom").onclick = async () => {
     $("add-repo-error").classList.remove("hidden");
     return;
   }
+  if (isPrivate && !git_token) {
+    $("add-repo-error").textContent = "Git Token is required for a private repository.";
+    $("add-repo-error").classList.remove("hidden");
+    return;
+  }
   $("add-repo-error").classList.add("hidden");
-  const key = `${git_repo}|${git_branch}`;
-  if (!state.repos.some((r) => repoKey(r) === key)) state.repos.push({ git_repo, git_branch });
-  state.selected.add(key);
-  closeAddRepo();
-  renderRepos();
-  api("/api/v2/repositories", {
-    method: "POST",
-    body: JSON.stringify({ repos: [{ git_repo, git_branch }] }),
-  }).catch(() => {});
+  const entry = isPrivate
+    ? { git_repo, git_branch, git_username, git_token }
+    : { git_repo, git_branch };
+  const norm = (u, b) => `${String(u || "").trim().replace(/\/+$/, "").replace(/\.git$/, "")}|${String(b || "main").trim() || "main"}`;
+  btn.disabled = true;
+  try {
+    const updated = await api("/api/v2/repositories", {
+      method: "POST",
+      body: JSON.stringify({ repos: [entry] }),
+    });
+    if (Array.isArray(updated)) {
+      const prevKeys = new Map(state.repos.map((r) => [norm(r.git_repo, r.git_branch), repoKey(r)]));
+      state.repos = updated.map((r) => ({ git_repo: r.git_repo, git_branch: r.git_branch || "main" }));
+      const targetNorm = norm(git_repo, git_branch);
+      for (const r of state.repos) {
+        const n = norm(r.git_repo, r.git_branch);
+        const oldKey = prevKeys.get(n);
+        if (oldKey && oldKey !== repoKey(r) && state.selected.delete(oldKey)) {
+          state.selected.add(repoKey(r));
+        }
+        if (n === targetNorm) state.selected.add(repoKey(r));
+      }
+    }
+    closeAddRepo();
+    renderRepos();
+  } catch (e) {
+    $("add-repo-error").textContent = String(e.message || e);
+    $("add-repo-error").classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+  }
 };
 function closeAnalyzeModal() {
   $("analyze-modal").classList.add("hidden");

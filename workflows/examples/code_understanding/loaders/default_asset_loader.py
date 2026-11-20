@@ -113,5 +113,16 @@ class DefaultAssetLoader(AssetLoader):
     def load_catalog_repos(self) -> list:
         return self._loader.load_catalog_repos()
 
+    def delete_repo(self, git_repo: str, git_branch: str = "main") -> list:
+        return self._loader.delete_repo(git_repo, git_branch)
+
+    def purge_repo_records(
+        self,
+        git_repo: str,
+        git_branch: str = "main",
+        kfp_run_ids: list[str] | None = None,
+    ) -> int:
+        return self._loader.purge_repo_records(git_repo, git_branch, kfp_run_ids=kfp_run_ids)
+
     def num_prompts(self, *args, **kwargs):
         return self._loader.num_prompts(*args, **kwargs)

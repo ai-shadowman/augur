@@ -46,8 +46,13 @@ class RepoEntry(BaseModel):
     git_branch: str = Field(default="main", description="Branch to clone")
 
 
+class TriggerRepoEntry(RepoEntry):
+    git_username: str | None = Field(default=None, description="Username for private repository")
+    git_token: str | None = Field(default=None, description="Git token for private repository")
+
+
 class TriggerPipelineRequest(BaseModel):
-    repos: list[RepoEntry] = Field(
+    repos: list[TriggerRepoEntry] = Field(
         default_factory=list,
         description="1 repo -> single_repo pipeline; 2+ (or empty on report re-run) -> multi_repo pipeline",
     )
@@ -176,7 +181,18 @@ def trigger_pipeline(
         raise HTTPException(status_code=422, detail="At least one repository is required.")
     ns = get_active_namespace(request)
     ws = get_active_workspace(request)
-    repo_dicts = [{"git_repo": r.git_repo, "git_branch": r.git_branch} for r in body.repos]
+    repo_dicts = [
+        {
+            "git_repo": r.git_repo,
+            "git_branch": r.git_branch,
+            **(
+                {"git_username": (r.git_username or "").strip(), "git_token": r.git_token.strip()}
+                if (r.git_token and r.git_token.strip())
+                else {}
+            ),
+        }
+        for r in body.repos
+    ]
     try:
         info = submit_pipeline_run(
             repo_dicts,

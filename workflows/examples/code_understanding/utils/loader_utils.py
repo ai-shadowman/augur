@@ -77,6 +77,7 @@ def sync_enrichments(loader, assets_dir: str) -> None:
         loader.load_results(
             download_dir=seed_assets,
             artifact_path=f"{loader.RESULTS_PATH_PREFIX_ENRICHMENTS}/.assets",
+            tags={"category": "enrichments", "git_slug": None},
         )
         if not os.path.exists(seed_assets):
             return
