@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 
-from services.get_run_status import _ACTIVE_RUN_STATES, _normalize_state, extract_active_stage
+from services.get_run_status import (
+    _ACTIVE_RUN_STATES,
+    _normalize_state,
+    extract_active_stage,
+    extract_run_target,
+    matches_run_workspace,
+)
 from utils.service_utils import create_client, get_kfp_experiment_name
 
 logger = logging.getLogger(__name__)
@@ -39,60 +43,21 @@ def list_kfp_runs(
     out: list[dict] = []
     for r in items[:limit]:
         run_id = getattr(r, "run_id", None) or getattr(r, "id", "")
-        display = getattr(r, "display_name", None) or getattr(r, "name", "") or run_id
         state_raw = getattr(r, "state", None) or getattr(r, "runtime_state", None)
         state = _normalize_state(state_raw) or "PENDING"
         created_at = getattr(r, "created_at", None)
         finished_at = getattr(r, "finished_at", None)
 
-        rc = getattr(r, "runtime_config", None)
-        params = (getattr(rc, "parameters", None) if rc else None) or {}
-        git_repo = str(params.get("git_repo") or "")
-        git_branch = str(params.get("git_branch") or "main") if git_repo else ""
-        project_slug = str(params.get("project_slug") or "")
-        project_workspace = str(params.get("project_workspace") or "")
-        if workspace and workspace.strip().lower() != "default":
-            if project_workspace and project_workspace.lower() != workspace.strip().lower():
-                continue
-        elif project_workspace and project_workspace.lower() != "default":
-            if not workspace or workspace.strip().lower() == "default":
-                continue
-        display_lower = display.lower()
-        is_single = display_lower.startswith("single_repo") or display_lower.startswith("single-repo")
-        is_multi = (
-            display_lower.startswith("multi_repo")
-            or display_lower.startswith("multi-repo")
-            or (not git_repo and not is_single)
-        )
-        if not is_multi and not git_repo:
-            git_repo = os.getenv("GIT_REPO", "")
-            git_branch = str(params.get("git_branch") or os.getenv("GIT_BRANCH", "main") or "main")
-
-        repos: list[dict] = []
-        if is_multi:
-            raw_repos = params.get("runnable_repos", "")
-            if raw_repos:
-                try:
-                    parsed = json.loads(raw_repos) if isinstance(raw_repos, str) else raw_repos
-                    if isinstance(parsed, list):
-                        repos = [
-                            {
-                                "git_repo": entry.get("git_repo", ""),
-                                "git_branch": entry.get("git_branch", "main"),
-                            }
-                            for entry in parsed
-                            if isinstance(entry, dict) and entry.get("git_repo")
-                        ]
-                except Exception:
-                    logger.debug("Could not parse runnable_repos for run %s", run_id, exc_info=True)
-            if not project_slug and repos:
-                try:
-                    from utils.pipeline_utils import generate_multi_repo_slug
-                    project_slug = generate_multi_repo_slug(repos)
-                except Exception:
-                    pass
-        elif git_repo:
-            repos = [{"git_repo": git_repo, "git_branch": git_branch}]
+        target = extract_run_target(r, fallback_id=run_id)
+        if not matches_run_workspace(target["project_workspace"], workspace):
+            continue
+        display = target["display"]
+        git_repo = target["git_repo"]
+        git_branch = target["git_branch"]
+        is_multi = target["multi_repo"]
+        project_slug = target["project_slug"]
+        project_workspace = target["project_workspace"]
+        repos = target["repos"]
 
         current_stage = ""
         if state in _ACTIVE_RUN_STATES:

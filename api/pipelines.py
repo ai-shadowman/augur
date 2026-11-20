@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.pipeline_service import (
+    delete_pipeline_run,
     fetch_reports_from_mlflow,
     get_run_info,
     get_run_status,
@@ -323,3 +324,37 @@ def get_pipeline_status(
         project_slug=project_slug,
         lowercase_status=False,
     )
+
+
+@router.delete("/runs/{job_id}")
+def delete_pipeline_run_route(
+    job_id: str,
+    request: Request,
+    git_repo: str = Query(default=""),
+    git_branch: str = Query(default="main"),
+    multi_repo: bool = Query(default=False),
+    project_slug: str = Query(default=""),
+) -> dict[str, Any]:
+    """Delete a KFP pipeline run and purge all associated MLflow records and traces."""
+    clean_id = (job_id or "").strip()
+    if not clean_id:
+        raise HTTPException(status_code=422, detail="job_id is required.")
+    ns = get_active_namespace(request)
+    ws = get_active_workspace(request)
+    try:
+        return delete_pipeline_run(
+            job_id=clean_id,
+            git_repo=git_repo,
+            git_branch=git_branch,
+            multi_repo=multi_repo,
+            project_slug=project_slug,
+            namespace=ns,
+            workspace=ws,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to delete pipeline run %s", clean_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

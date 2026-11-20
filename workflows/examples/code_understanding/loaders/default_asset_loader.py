@@ -124,5 +124,8 @@ class DefaultAssetLoader(AssetLoader):
     ) -> int:
         return self._loader.purge_repo_records(git_repo, git_branch, kfp_run_ids=kfp_run_ids)
 
+    def purge_run_records(self, *args, **kwargs) -> int:
+        return self._loader.purge_run_records(*args, **kwargs)
+
     def num_prompts(self, *args, **kwargs):
         return self._loader.num_prompts(*args, **kwargs)

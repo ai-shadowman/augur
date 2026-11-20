@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import types
@@ -600,7 +601,15 @@ class TestUIStaticAndTemplates(unittest.TestCase):
 
     def test_make_install_deploys_console_app_and_plugin(self):
         makefile_lines = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
-        install_idx = makefile_lines.index("install:")
+        install_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("install:"))
+        target_lines = [
+            line for line in makefile_lines if re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_-]*:([^=]|$)", line)
+        ]
+        self.assertGreaterEqual(len(target_lines), 25)
+        for tline in target_lines:
+            self.assertRegex(tline, r":\s*##\s+\S")
+        list_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("list-commands:"))
+        self.assertIn("match($$0, /##", "\n".join(makefile_lines[list_idx + 1:list_idx + 4]))
         recipe_lines: list[str] = []
         continuing = False
         for line in makefile_lines[install_idx + 1:]:
@@ -616,20 +625,33 @@ class TestUIStaticAndTemplates(unittest.TestCase):
         for step in (
             "\t$(MAKE) apply-secrets",
             "\t$(MAKE) upload-pipelines",
-            "\t$(MAKE) deploy-console-app",
             "\t$(MAKE) deploy-console-plugin",
         ):
             self.assertIn(step, recipe_lines)
 
         secrets_idx = recipe_lines.index("\t$(MAKE) apply-secrets")
         pipelines_idx = recipe_lines.index("\t$(MAKE) upload-pipelines")
-        app_idx = recipe_lines.index("\t$(MAKE) deploy-console-app")
         plugin_idx = recipe_lines.index("\t$(MAKE) deploy-console-plugin")
-        for idx in (secrets_idx, pipelines_idx, app_idx, plugin_idx):
+        for idx in (secrets_idx, pipelines_idx, plugin_idx):
             self.assertFalse(recipe_lines[idx - 1].rstrip().endswith("\\"))
         self.assertLess(secrets_idx, pipelines_idx)
-        self.assertLess(pipelines_idx, app_idx)
-        self.assertLess(app_idx, plugin_idx)
+        self.assertLess(pipelines_idx, plugin_idx)
+
+        build_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("build-images:"))
+        build_end = next(
+            i for i in range(build_idx + 1, len(makefile_lines)) if makefile_lines[i] and not makefile_lines[i].startswith("\t")
+        )
+        build_recipe = makefile_lines[build_idx + 1:build_end]
+        self.assertIn("\t$(MAKE) build-console-app-image", build_recipe)
+        self.assertIn("\t$(MAKE) build-console-plugin-image", build_recipe)
+        app_build_idx = build_recipe.index("\t$(MAKE) build-console-app-image")
+        self.assertFalse(build_recipe[app_build_idx - 1].rstrip().endswith("\\"))
+
+        all_idx = next(i for i, line in enumerate(makefile_lines) if line.startswith("build-push-all:"))
+        all_end = next(
+            i for i in range(all_idx + 1, len(makefile_lines)) if makefile_lines[i] and not makefile_lines[i].startswith("\t")
+        )
+        self.assertEqual([line for line in makefile_lines[all_idx + 1:all_end] if line.strip()], ["\t$(MAKE) build-images"])
 
     def test_dockerfile_layer_caching_order(self):
         ui_df = (_REPO_ROOT / "ui" / "Dockerfile").read_text(encoding="utf-8")
@@ -1879,6 +1901,245 @@ class TestReviewFixesAndFastAPIRoutes(unittest.TestCase):
             with self.assertRaises(HTTPException) as bad_ctx:
                 api_repositories.delete_repository(req, git_repo="   ", git_branch="main")
             self.assertEqual(bad_ctx.exception.status_code, 422)
+
+    def test_delete_run_ui_api_kfp_and_mlflow_flow(self):
+        from datetime import UTC, datetime
+        from fastapi import HTTPException, Request
+        import api.pipelines as api_pipelines
+        from loaders.mlflow_asset_loader import MlFlowAssetLoader
+        import services.delete_run as delete_run_mod
+
+        html = (_REPO_ROOT / "ui" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (_REPO_ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+
+        md_idx = html.index('id="run-download-md-report"')
+        rerun_idx = html.index('id="run-rerun"')
+        del_idx = html.index('id="run-delete"')
+        self.assertLess(md_idx, rerun_idx)
+        self.assertLess(rerun_idx, del_idx)
+        self.assertIn('id="delete-run-modal"', html)
+        self.assertIn('id="delete-run-confirm"', html)
+        self.assertIn("openDeleteRunModal", js)
+        self.assertIn("closeDeleteRunModal(false)", js)
+        self.assertIn('state.thinking.kind === "delete"', js)
+        self.assertIn("deleteRun(", js)
+        self.assertIn('id === "run-delete" ? !selected', js)
+
+        def _mlf_run(run_id, tags, start_time=15_000):
+            return types.SimpleNamespace(
+                info=types.SimpleNamespace(run_id=run_id, start_time=start_time),
+                data=types.SimpleNamespace(tags=tags),
+            )
+
+        slug = "dbrletic-cron-job-creator-main"
+        exp_map = {
+            "team-ns/code-refactoring/assets/result-directories": types.SimpleNamespace(
+                experiment_id="10", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/assets/results": types.SimpleNamespace(
+                experiment_id="11", lifecycle_stage="active"
+            ),
+            "team-ns/code-refactoring/evaluations": types.SimpleNamespace(
+                experiment_id="12", lifecycle_stage="active"
+            ),
+            "team-ns/AIP-default": types.SimpleNamespace(
+                experiment_id="13", lifecycle_stage="active"
+            ),
+        }
+
+        class _TracePage(list):
+            def __init__(self, items, token=None):
+                super().__init__(items)
+                self.token = token
+
+        fake_mlf = mock.MagicMock()
+        fake_mlf.get_experiment_by_name.side_effect = lambda name: exp_map.get(name)
+
+        def _search_runs(experiment_ids, filter_string="", **kwargs):
+            self.assertEqual(experiment_ids, ["10", "11", "12", "13"])
+            if "run-del" in filter_string:
+                return [
+                    _mlf_run("mlf-md-report", {"category": "analysis", "git_slug": slug, "pipeline_run_id": "run-del", "kfp_run_id": "run-del"}),
+                    _mlf_run("mlf-idx", {"category": "indexing", "git_slug": slug, "pipeline_run_id": "run-del"}),
+                    _mlf_run("mlf-global-enrich", {"category": "enrichments", "pipeline_run_id": "run-del"}),
+                ]
+            if slug in filter_string:
+                return [
+                    _mlf_run("mlf-other-tagged", {"category": "analysis", "git_slug": slug, "pipeline_run_id": "run-keep"}, start_time=15_000),
+                    _mlf_run("mlf-eval-in-win", {"category": "evaluation", "git_slug": slug, "multi_repo": "False"}, start_time=20_000),
+                    _mlf_run("mlf-eval-old", {"category": "evaluation", "git_slug": slug, "multi_repo": "False"}, start_time=1_000),
+                    _mlf_run("mlf-adhoc", {"category": "analysis", "adhoc_query": "true", "git_slug": slug, "multi_repo": "False"}, start_time=20_000),
+                ]
+            return []
+
+        fake_mlf.search_runs.side_effect = _search_runs
+        fake_mlf.search_traces.return_value = _TracePage(
+            [types.SimpleNamespace(info=types.SimpleNamespace(trace_id="tr-del-1", request_id=None))]
+        )
+
+        loader = MlFlowAssetLoader(namespace="team-ns", workspace="default")
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=fake_mlf):
+            # Sibling run exists -> deletes tagged runs + in-window untagged eval, keeps other run & adhoc
+            cnt_sibling = loader.purge_run_records(
+                "run-del",
+                git_repo="https://github.com/dbrletic/cron-job-creator",
+                git_branch="main",
+                start_time_ms=10_000,
+                end_time_ms=30_000,
+                purge_untagged_for_target=False,
+            )
+        self.assertEqual(cnt_sibling, 3)
+        self.assertEqual(
+            {c.args[0] for c in fake_mlf.delete_run.call_args_list},
+            {"mlf-md-report", "mlf-idx", "mlf-eval-in-win"},
+        )
+        fake_mlf.delete_traces.assert_called_once_with(experiment_id="13", trace_ids=["tr-del-1"])
+
+        # Last run for target -> also deletes remaining untagged records for that target, still keeping run-keep
+        fake_mlf.delete_run.reset_mock()
+        with mock.patch("loaders.mlflow_asset_loader.MlflowClient", return_value=fake_mlf):
+            cnt_last = loader.purge_run_records(
+                "run-del",
+                git_repo="https://github.com/dbrletic/cron-job-creator",
+                git_branch="main",
+                start_time_ms=10_000,
+                end_time_ms=30_000,
+                purge_untagged_for_target=True,
+            )
+        self.assertEqual(cnt_last, 5)
+        self.assertEqual(
+            {c.args[0] for c in fake_mlf.delete_run.call_args_list},
+            {"mlf-md-report", "mlf-idx", "mlf-eval-in-win", "mlf-eval-old", "mlf-adhoc"},
+        )
+
+        # Service order: terminate active KFP run (with 1970 finished_at) -> purge MLflow -> delete KFP run
+        events: list[str] = []
+        active_run_obj = types.SimpleNamespace(
+            run_id="run-del",
+            display_name="single_repo_20261119_190159",
+            state="RUNNING",
+            created_at=datetime(2026, 11, 19, 19, 1, 59, tzinfo=UTC),
+            finished_at=datetime(1970, 1, 1, 0, 0, tzinfo=UTC),
+            runtime_config=types.SimpleNamespace(
+                parameters={
+                    "git_repo": "",
+                    "git_branch": "main",
+                    "project_workspace": "",
+                }
+            ),
+        )
+        fake_kfp = mock.MagicMock()
+        fake_kfp.get_run.return_value = active_run_obj
+        fake_kfp.get_experiment.return_value = types.SimpleNamespace(experiment_id="exp-1")
+        fake_kfp.list_runs.return_value = types.SimpleNamespace(runs=[active_run_obj], next_page_token="")
+        fake_kfp.terminate_run.side_effect = lambda rid: events.append(f"terminate:{rid}")
+        fake_kfp.delete_run.side_effect = lambda rid: events.append(f"kfp_delete:{rid}")
+
+        fake_default_loader = mock.MagicMock()
+
+        def _capture_purge(*args, **kwargs):
+            self.assertGreater(kwargs["end_time_ms"], kwargs["start_time_ms"])
+            self.assertEqual(kwargs["git_repo"], "https://github.com/dbrletic/cron-job-creator")
+            events.append(f"mlflow:{kwargs['purge_untagged_for_target']}")
+            return 4
+
+        fake_default_loader.purge_run_records.side_effect = _capture_purge
+
+        with mock.patch.dict(
+            os.environ,
+            {"KFP_NAMESPACE": "team-ns", "GIT_REPO": "https://github.com/dbrletic/cron-job-creator"},
+            clear=False,
+        ), mock.patch.object(delete_run_mod, "create_client", return_value=fake_kfp), \
+             mock.patch.object(delete_run_mod, "DefaultAssetLoader", return_value=fake_default_loader):
+            res = delete_run_mod.delete_kfp_run("run-del", namespace="team-ns", workspace="default")
+        self.assertEqual(res["deleted_mlflow_runs"], 4)
+        self.assertEqual(events, ["terminate:run-del", "mlflow:True", "kfp_delete:run-del"])
+
+        # Multi-repo run derives project_slug from runnable_repos JSON and passes multi_repo=True
+        multi_run_obj = types.SimpleNamespace(
+            run_id="run-multi-del",
+            display_name="multi_repo_20261119_200000",
+            state="SUCCEEDED",
+            created_at=datetime(2026, 11, 19, 20, 0, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 11, 19, 20, 30, 0, tzinfo=UTC),
+            runtime_config=types.SimpleNamespace(
+                parameters={
+                    "runnable_repos": '[{"git_repo": "https://github.com/org/svc-a", "git_branch": "main"}, {"git_repo": "https://github.com/org/svc-b", "git_branch": "main"}]',
+                    "project_slug": "",
+                }
+            ),
+        )
+        fake_kfp.get_run.return_value = multi_run_obj
+        fake_kfp.list_runs.return_value = types.SimpleNamespace(runs=[multi_run_obj], next_page_token="")
+        multi_loader = mock.MagicMock()
+        multi_loader.purge_run_records.return_value = 6
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch.object(delete_run_mod, "create_client", return_value=fake_kfp), \
+             mock.patch.object(delete_run_mod, "DefaultAssetLoader", return_value=multi_loader):
+            delete_run_mod.delete_kfp_run("run-multi-del", namespace="team-ns", workspace="default")
+        multi_kwargs = multi_loader.purge_run_records.call_args.kwargs
+        self.assertTrue(multi_kwargs["multi_repo"])
+        self.assertIn("svc-a-main", multi_kwargs["project_slug"])
+        self.assertIn("svc-b-main", multi_kwargs["project_slug"])
+        self.assertTrue(multi_kwargs["purge_untagged_for_target"])
+
+        # Failed MLflow purge leaves KFP run un-deleted so the user can retry
+        fake_kfp.delete_run.reset_mock()
+        failing_loader = mock.MagicMock()
+        failing_loader.purge_run_records.side_effect = RuntimeError("MLflow unavailable")
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch.object(delete_run_mod, "create_client", return_value=fake_kfp), \
+             mock.patch.object(delete_run_mod, "DefaultAssetLoader", return_value=failing_loader):
+            with self.assertRaises(RuntimeError):
+                delete_run_mod.delete_kfp_run("run-del", namespace="team-ns", workspace="default")
+        fake_kfp.delete_run.assert_not_called()
+
+        # Workspace mismatch raises LookupError -> FastAPI 404
+        other_ws_run = types.SimpleNamespace(
+            run_id="run-ws-b",
+            display_name="single_repo_ws_b",
+            state="SUCCEEDED",
+            created_at=None,
+            finished_at=None,
+            runtime_config=types.SimpleNamespace(parameters={"project_workspace": "team-b"}),
+        )
+        fake_kfp.get_run.return_value = other_ws_run
+        with mock.patch.dict(os.environ, {"KFP_NAMESPACE": "team-ns"}, clear=False), \
+             mock.patch.object(delete_run_mod, "create_client", return_value=fake_kfp):
+            with self.assertRaises(LookupError):
+                delete_run_mod.delete_kfp_run("run-ws-b", namespace="team-ns", workspace="team-a")
+
+        req = Request(cookies={"cu_namespace": "team-ns"})
+        with mock.patch.object(
+            api_pipelines,
+            "delete_pipeline_run",
+            return_value={"deleted": True, "job_id": "run-del", "run_id": "run-del", "deleted_mlflow_runs": 4},
+        ) as mock_api_del:
+            out = api_pipelines.delete_pipeline_run_route(
+                "run-del",
+                req,
+                git_repo="https://github.com/dbrletic/cron-job-creator",
+                git_branch="main",
+            )
+            self.assertTrue(out["deleted"])
+            mock_api_del.assert_called_once_with(
+                job_id="run-del",
+                git_repo="https://github.com/dbrletic/cron-job-creator",
+                git_branch="main",
+                multi_repo=False,
+                project_slug="",
+                namespace="team-ns",
+                workspace="default",
+            )
+
+        with mock.patch.object(api_pipelines, "delete_pipeline_run", side_effect=LookupError("missing")):
+            with self.assertRaises(HTTPException) as nf_ctx:
+                api_pipelines.delete_pipeline_run_route("missing-id", req)
+            self.assertEqual(nf_ctx.exception.status_code, 404)
+
+        with self.assertRaises(HTTPException) as empty_ctx:
+            api_pipelines.delete_pipeline_run_route("   ", req)
+        self.assertEqual(empty_ctx.exception.status_code, 422)
 
 
 if __name__ == "__main__":

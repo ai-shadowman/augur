@@ -150,6 +150,29 @@ def get_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any]:
     return get_kfp_run_info(job_id, namespace=namespace)
 
 
+def delete_pipeline_run(
+    job_id: str,
+    git_repo: str = "",
+    git_branch: str = "main",
+    multi_repo: bool = False,
+    project_slug: str = "",
+    namespace: str | None = None,
+    workspace: str | None = None,
+) -> dict[str, Any]:
+    """Delete a KFP run and purge its MLflow records via ``services.delete_run``."""
+    from services.delete_run import delete_kfp_run
+
+    return delete_kfp_run(
+        job_id=job_id,
+        git_repo=git_repo,
+        git_branch=git_branch,
+        multi_repo=multi_repo,
+        project_slug=project_slug,
+        namespace=namespace,
+        workspace=workspace,
+    )
+
+
 def fetch_reports_from_mlflow(
     git_repo: str = "",
     git_branch: str = "main",

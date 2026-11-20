@@ -304,19 +304,23 @@ def extract_active_stage(
     return "Queued" if state == "PENDING" else "Starting…"
 
 
-def get_kfp_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any]:
-    """Return normalised state and runtime parameters for a KFP run."""
-    client = create_client(namespace=namespace)
-    try:
-        run_detail = client.get_run(run_id=job_id)
-    except Exception as exc:
-        raise ValueError(f"KFP run '{job_id}' not found: {exc}") from exc
+def matches_run_workspace(project_workspace: str, workspace: str | None) -> bool:
+    """Return True when a KFP run's ``project_workspace`` belongs to *workspace*."""
+    req_ws = (workspace or "").strip()
+    if req_ws and req_ws.lower() != "default":
+        return not project_workspace or project_workspace.lower() == req_ws.lower()
+    return not project_workspace or project_workspace.lower() == "default"
 
-    run_obj = _unwrap_run(run_detail)
-    state_raw = getattr(run_obj, "state", None) or getattr(run_obj, "runtime_state", None)
-    state = _normalize_state(state_raw) or "PENDING"
 
-    display = _safe_str(run_obj, "display_name") or _safe_str(run_obj, "name") or job_id
+def extract_run_target(
+    run_obj: Any,
+    fallback_id: str = "",
+    include_env_repo: bool = True,
+) -> dict[str, Any]:
+    """Extract repo, branch, multi-repo flag, project slug, and workspace from a KFP run."""
+    import json
+
+    display = _safe_str(run_obj, "display_name") or _safe_str(run_obj, "name") or fallback_id
     display_lower = display.lower()
     rc = getattr(run_obj, "runtime_config", None)
     params = (getattr(rc, "parameters", None) if rc else None) or {}
@@ -330,22 +334,60 @@ def get_kfp_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any
         or display_lower.startswith("multi-repo")
         or (not git_repo and not is_single)
     )
-    if not is_multi and not git_repo:
+    if include_env_repo and not is_multi and not git_repo:
         git_repo = os.getenv("GIT_REPO", "")
         git_branch = str(params.get("git_branch") or os.getenv("GIT_BRANCH", "main") or "main")
 
-    if is_multi and not project_slug:
+    repos: list[dict[str, str]] = []
+    if is_multi:
         raw_repos = params.get("runnable_repos", "")
         if raw_repos:
             try:
-                import json
+                parsed = json.loads(raw_repos) if isinstance(raw_repos, str) else raw_repos
+                if isinstance(parsed, list):
+                    repos = [
+                        {
+                            "git_repo": entry.get("git_repo", ""),
+                            "git_branch": entry.get("git_branch", "main"),
+                        }
+                        for entry in parsed
+                        if isinstance(entry, dict) and entry.get("git_repo")
+                    ]
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not parse runnable_repos for run %s", fallback_id, exc_info=True)
+        if not project_slug and repos:
+            try:
                 from utils.pipeline_utils import generate_multi_repo_slug
 
-                parsed = json.loads(raw_repos) if isinstance(raw_repos, str) else raw_repos
-                if isinstance(parsed, list) and parsed:
-                    project_slug = generate_multi_repo_slug(parsed)
-            except Exception:
-                pass
+                project_slug = generate_multi_repo_slug(repos)
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not derive multi-repo slug for run %s", fallback_id, exc_info=True)
+    elif git_repo:
+        repos = [{"git_repo": git_repo, "git_branch": git_branch}]
+
+    return {
+        "display": display,
+        "git_repo": git_repo,
+        "git_branch": git_branch,
+        "multi_repo": is_multi,
+        "project_slug": project_slug,
+        "project_workspace": project_workspace,
+        "repos": repos,
+    }
+
+
+def get_kfp_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any]:
+    """Return normalised state and runtime parameters for a KFP run."""
+    client = create_client(namespace=namespace)
+    try:
+        run_detail = client.get_run(run_id=job_id)
+    except Exception as exc:
+        raise ValueError(f"KFP run '{job_id}' not found: {exc}") from exc
+
+    run_obj = _unwrap_run(run_detail)
+    state_raw = getattr(run_obj, "state", None) or getattr(run_obj, "runtime_state", None)
+    state = _normalize_state(state_raw) or "PENDING"
+    target = extract_run_target(run_obj, fallback_id=job_id)
 
     current_stage = extract_active_stage(
         run_detail,
@@ -356,14 +398,14 @@ def get_kfp_run_info(job_id: str, namespace: str | None = None) -> dict[str, Any
 
     return {
         "job_id": job_id,
-        "run_name": display,
+        "run_name": target["display"],
         "state": state,
         "current_stage": current_stage,
-        "git_repo": git_repo,
-        "git_branch": git_branch or "main",
-        "multi_repo": is_multi,
-        "project_slug": project_slug,
-        "project_workspace": project_workspace,
+        "git_repo": target["git_repo"],
+        "git_branch": target["git_branch"] or "main",
+        "multi_repo": target["multi_repo"],
+        "project_slug": target["project_slug"],
+        "project_workspace": target["project_workspace"],
     }
 
 

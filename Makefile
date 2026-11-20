@@ -30,7 +30,7 @@ CONSOLE_ROUTE_ENABLED     ?= true
 CONSOLE_ROUTE_AUTH        ?= false
 CONSOLE_ROUTE_HOST        ?=
 
-install:
+install: ## Deploy full AUGUR stack, secrets, OTel, MLflow assets, pipelines, and console
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Creating namespace $$KFP_NAMESPACE..." && \
@@ -80,10 +80,9 @@ install:
 		$(MAKE) upload-mlflow-assets; \
 	fi
 	$(MAKE) upload-pipelines
-	$(MAKE) deploy-console-app
 	$(MAKE) deploy-console-plugin
 
-apply-secrets:
+apply-secrets: ## Recreate code-understanding-env secret in OpenShift from .env
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Recreating secret code-understanding-env..." && \
@@ -110,10 +109,10 @@ apply-secrets:
 		--type=merge \
 		-p "{\"stringData\":{\"MLFLOW_WORKSPACE\":\"$$KFP_NAMESPACE\"}}"
 
-update-secrets:
+update-secrets: ## Alias for apply-secrets
 	$(MAKE) apply-secrets
 
-build-images:
+build-images: ## Build and push all pipeline, console app, and console plugin images via podman
 	@set -a && . $(ENV_FILE) && set +a && \
 	DATAGEN_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_DATA_GENERATION_BASE_IMAGE_NAME:$$KFP_DATA_GENERATION_BASE_IMAGE_TAG" && \
 	INDEX_IMG="$$KFP_IMAGE_REGISTRY/$$KFP_INDEXING_BASE_IMAGE_NAME:$$KFP_INDEXING_BASE_IMAGE_TAG" && \
@@ -147,8 +146,10 @@ build-images:
 		-t "$$TOOLS_IMG" . && \
 	echo "==> Pushing pipeline-tools image..." && \
 	podman push "$$TOOLS_IMG"
+	$(MAKE) build-console-app-image
+	$(MAKE) build-console-plugin-image
 
-build-console-app-image:
+build-console-app-image: ## Build and push the FastAPI + UI console container image via podman
 	@set -a && . $(ENV_FILE) && set +a && \
 	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	echo "==> Building console application image: $$CONSOLE_IMG..." && \
@@ -156,7 +157,7 @@ build-console-app-image:
 	echo "==> Pushing console application image: $$CONSOLE_IMG..." && \
 	podman push "$$CONSOLE_IMG"
 
-build-console-plugin-image:
+build-console-plugin-image: ## Build and push the OpenShift dynamic plugin container image via podman
 	@set -a && . $(ENV_FILE) && set +a && \
 	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	echo "==> Building console plugin image: $$PLUGIN_IMG..." && \
@@ -164,18 +165,16 @@ build-console-plugin-image:
 	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
 	podman push "$$PLUGIN_IMG"
 
-push-console-plugin-image:
+push-console-plugin-image: ## Push the previously built OpenShift dynamic plugin image via podman
 	@set -a && . $(ENV_FILE) && set +a && \
 	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	echo "==> Pushing console plugin image: $$PLUGIN_IMG..." && \
 	podman push "$$PLUGIN_IMG"
 
-build-push-all:
+build-push-all: ## Alias for build-images
 	$(MAKE) build-images
-	$(MAKE) build-console-app-image
-	$(MAKE) build-console-plugin-image
 
-oc-build-images:
+oc-build-images: ## Trigger in-cluster OpenShift BuildConfigs for all four pipeline images
 	@set -a && . $(ENV_FILE) && set +a && \
 	echo "==> Kicking off OpenShift BuildConfigs in namespace $$KFP_NAMESPACE..." && \
 	oc start-build "$${KFP_DATA_GENERATION_BASE_IMAGE_NAME:-data-generation}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-} && \
@@ -183,7 +182,7 @@ oc-build-images:
 	oc start-build "$${KFP_ANALYSIS_BASE_IMAGE_NAME:-data-analysis}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-} && \
 	oc start-build "$${KFP_PIPELINE_TOOLS_IMAGE_NAME:-pipeline-tools}" -n "$$KFP_NAMESPACE" $${BUILD_FLAGS:-}
 
-upload-pipelines:
+upload-pipelines: ## Compile and upload Kubeflow pipelines via an in-cluster Job
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Waiting for pipeline server to be ready..." && \
@@ -205,7 +204,7 @@ upload-pipelines:
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-pipelines-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
-upload-mlflow-assets:
+upload-mlflow-assets: ## Upload static prompts and datasets to MLflow via an in-cluster Job
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	echo "==> Deleting existing upload-assets job..." && \
@@ -225,7 +224,7 @@ upload-mlflow-assets:
 		--set tls.enableVerification="$${ENABLE_TLS_VERIFICATION:-false}" \
 		-s templates/upload-assets-job.yaml | oc apply -n $$KFP_NAMESPACE -f -
 
-run-adhoc-query:
+run-adhoc-query: ## Run an ad-hoc GraphRAG query Job in OpenShift (requires QUESTION_FILE)
 	@[ -z "$(QUESTION_FILE)" ] && { echo "Error: QUESTION_FILE is required: generate it via wrappers/adhoc.sh." >&2; exit 1; } || true
 	@set -a && . $(ENV_FILE) && set +a && \
 	[ "$${ENABLE_TLS_VERIFICATION:-false}" = "false" ] || \
@@ -268,7 +267,7 @@ run-adhoc-query:
 	oc delete configmap adhoc-query-$$JOB_ID -n $$KFP_NAMESPACE --ignore-not-found=true; \
 	exit $$LOG_EXIT
 
-run-pipelines:
+run-pipelines: ## Trigger and stream a single-repo or multi-repo KFP run Job in OpenShift
 	@set -a && . $(ENV_FILE) && set +a && \
 	JOB_ID="$$(date +%Y%m%d%H%M%S)$$(printf '%04x' $$((RANDOM)))" && \
 	\
@@ -313,7 +312,7 @@ run-pipelines:
 	echo "==> Streaming pipeline run results..." && \
 	oc logs -f job/run-pipelines-$$JOB_ID -n $$KFP_NAMESPACE
 
-benchmark-llm:
+benchmark-llm: ## Run GuideLLM concurrency benchmark (in-cluster Job, or local with LOCAL=1)
 	@set -a && . $(ENV_FILE) && set +a && \
 	if [ "$${LOCAL:-0}" = "1" ] || [ "$${LOCAL:-false}" = "true" ]; then \
 		echo "==> Running GuideLLM concurrency benchmark locally..." && \
@@ -351,7 +350,7 @@ benchmark-llm:
 		oc delete configmap benchmark-llm-scripts -n $$KFP_NAMESPACE --ignore-not-found=true; \
 	fi
 
-deploy-otel:
+deploy-otel: ## Deploy TempoStack, OpenTelemetry Collector, and Distributed Tracing UIPlugin
 	@set -a && . $(ENV_FILE) && set +a && \
 	\
 	if [ -z "$$OTEL_SERVICE_NAME" ] || [ -z "$$OTEL_NAMESPACE" ]; then \
@@ -422,7 +421,7 @@ deploy-otel:
 # Console application
 # ============================================================================
 
-run-console-app:
+run-console-app: ## Run the Code Understanding FastAPI + UI server locally on 127.0.0.1:8080
 	@set -a && . $(ENV_FILE) && set +a && \
 	: "$${KFP_NAMESPACE:?Set KFP_NAMESPACE in .env or pass KFP_NAMESPACE=<namespace> to make}" && \
 	export KFP_NAMESPACE && \
@@ -435,7 +434,7 @@ run-console-app:
 	export KFP_HOST="https://$$KFP_ROUTE_HOST" && \
 	uv run --project ui --frozen uvicorn --app-dir ui main:app --host 127.0.0.1 --port 8080
 
-_deploy-console-app-manifests:
+_deploy-console-app-manifests: ## Internal helper to render and roll out console app manifests
 	@set -a && . $(ENV_FILE) && set +a && \
 	case "$$(printf '%s' "$${CONSOLE_ROUTE_ENABLED:-$(CONSOLE_ROUTE_ENABLED)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_ENABLED=true ;; *) ROUTE_ENABLED=false ;; esac && \
 	case "$$(printf '%s' "$${CONSOLE_ROUTE_AUTH:-$(CONSOLE_ROUTE_AUTH)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_AUTH=true ;; *) ROUTE_AUTH=false ;; esac && \
@@ -474,18 +473,18 @@ _deploy-console-app-manifests:
 	echo "==> Run: make port-forward-console-app  then open http://localhost:8080" && \
 	echo ""
 
-deploy-console-app:
+deploy-console-app: ## Deploy standalone Code Understanding console (and update plugin API if present)
 	@set -a && . $(ENV_FILE) && set +a && \
 	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
 	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	$(MAKE) _deploy-console-app-manifests CONSOLE_IMG="$$CONSOLE_IMG"
 
-port-forward-console-app:
+port-forward-console-app: ## Forward localhost:8080 to the in-cluster code-understanding-console Service
 	@set -a && . $(ENV_FILE) && set +a && \
 	echo "==> Forwarding http://localhost:8080 -> code-understanding-console:8080" && \
 	oc port-forward svc/code-understanding-console 8080:8080 -n $$KFP_NAMESPACE
 
-oc-deploy-console-app:
+oc-deploy-console-app: ## Build console-app image in-cluster via OpenShift binary build and deploy it
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
 	APP_TAG="$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
@@ -503,7 +502,7 @@ oc-deploy-console-app:
 # OpenShift console plugin
 # ============================================================================
 
-_deploy-console-plugin-manifests:
+_deploy-console-plugin-manifests: ## Internal helper to render and roll out OpenShift console plugin manifests
 	@set -a && . $(ENV_FILE) && set +a && \
 	case "$$(printf '%s' "$${CONSOLE_ROUTE_ENABLED:-$(CONSOLE_ROUTE_ENABLED)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_ENABLED=true ;; *) ROUTE_ENABLED=false ;; esac && \
 	case "$$(printf '%s' "$${CONSOLE_ROUTE_AUTH:-$(CONSOLE_ROUTE_AUTH)}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1|true|yes) ROUTE_AUTH=true ;; *) ROUTE_AUTH=false ;; esac && \
@@ -552,14 +551,14 @@ _deploy-console-plugin-manifests:
 		echo ""; \
 	fi
 
-deploy-console-plugin:
+deploy-console-plugin: ## Deploy console app, OpenShift dynamic plugin, and enable ConsolePlugin
 	@set -a && . $(ENV_FILE) && set +a && \
 	[ -n "$$KFP_IMAGE_REGISTRY" ] || { echo "KFP_IMAGE_REGISTRY must be set" >&2; exit 1; } && \
 	CONSOLE_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}:$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
 	PLUGIN_IMG="$$KFP_IMAGE_REGISTRY/$${CONSOLE_PLUGIN_IMAGE_NAME:-$(CONSOLE_PLUGIN_IMAGE_NAME)}:$${CONSOLE_PLUGIN_IMAGE_TAG:-$(CONSOLE_PLUGIN_IMAGE_TAG)}" && \
 	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
 
-oc-deploy-console-plugin:
+oc-deploy-console-plugin: ## Build console-app and console-plugin images in-cluster and deploy both
 	@set -a && . $(ENV_FILE) && set +a && \
 	APP_NAME="$${CONSOLE_APP_IMAGE_NAME:-$(CONSOLE_APP_IMAGE_NAME)}" && \
 	APP_TAG="$${CONSOLE_APP_IMAGE_TAG:-$(CONSOLE_APP_IMAGE_TAG)}" && \
@@ -583,7 +582,7 @@ oc-deploy-console-plugin:
 	PLUGIN_IMG="image-registry.openshift-image-registry.svc:5000/$$KFP_NAMESPACE/$$PLUGIN_NAME:$$PLUGIN_TAG" && \
 	$(MAKE) _deploy-console-plugin-manifests CONSOLE_IMG="$$CONSOLE_IMG" PLUGIN_IMG="$$PLUGIN_IMG"
 
-enable-console-plugin:
+enable-console-plugin: ## Enable code-understanding-console in the cluster OpenShift Console operator
 	@echo "==> Enabling code-understanding-console in OpenShift console..." && \
 	EXISTING="$$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}' 2>/dev/null)" && \
 	if echo "$$EXISTING" | grep -q 'code-understanding-console'; then \
@@ -606,6 +605,6 @@ enable-console-plugin:
 	echo ""
 
 .PHONY: list-commands
-list-commands:
+list-commands: ## List available make commands and their descriptions
 	@echo "==> Available commands:"
-	@awk -F: '/^[a-zA-Z0-9][a-zA-Z0-9_-]*:$$/ || /^[a-zA-Z0-9][a-zA-Z0-9_-]*:[^=]/ { print "  " $$1 }' "$(firstword $(MAKEFILE_LIST))"
+	@awk '{ sub(/\r$$/, "", $$0) } /^[a-zA-Z0-9][a-zA-Z0-9_-]*:([^=]|$$)/ { tgt = $$1; sub(/:.*/, "", tgt); desc = ""; if (match($$0, /##[[:space:]]*/)) desc = substr($$0, RSTART + RLENGTH); printf "  %-28s %s\n", tgt, desc }' "$(firstword $(MAKEFILE_LIST))"
