@@ -27,7 +27,12 @@ def purge_kfp_runs_for_repo(
 ) -> list[str]:
     """Terminate (if active) and delete single-repo KFP runs matching ``(git_repo, git_branch)``."""
     from loaders.mlflow_asset_loader import _repo_identity
-    from services.get_run_status import _ACTIVE_RUN_STATES, _normalize_state
+    from services.get_run_status import (
+        _ACTIVE_RUN_STATES,
+        _normalize_state,
+        extract_run_target,
+        matches_run_workspace,
+    )
     from utils.service_utils import create_client, get_kfp_experiment_name
 
     target = _repo_identity({"git_repo": git_repo, "git_branch": git_branch})
@@ -62,29 +67,12 @@ def purge_kfp_runs_for_repo(
             run_id = getattr(r, "run_id", None) or getattr(r, "id", "")
             if not isinstance(run_id, str) or not run_id:
                 continue
-            display = getattr(r, "display_name", None) or getattr(r, "name", "") or run_id
-            rc = getattr(r, "runtime_config", None)
-            params = (getattr(rc, "parameters", None) if rc else None) or {}
-            run_repo = str(params.get("git_repo") or "")
-            run_branch = str(params.get("git_branch") or "main") if run_repo else ""
-            project_workspace = str(params.get("project_workspace") or "")
-            if workspace and workspace.strip().lower() != "default":
-                if project_workspace and project_workspace.lower() != workspace.strip().lower():
-                    continue
-            elif project_workspace and project_workspace.lower() != "default":
-                if not workspace or workspace.strip().lower() == "default":
-                    continue
-
-            display_lower = str(display).lower()
-            is_single = display_lower.startswith("single_repo") or display_lower.startswith("single-repo")
-            is_multi = (
-                display_lower.startswith("multi_repo")
-                or display_lower.startswith("multi-repo")
-                or (not run_repo and not is_single)
-            )
-            if is_multi or not run_repo:
+            info = extract_run_target(r, fallback_id=run_id, include_env_repo=False)
+            if not matches_run_workspace(info["project_workspace"], workspace):
                 continue
-            if _repo_identity({"git_repo": run_repo, "git_branch": run_branch}) != target:
+            if info["multi_repo"] or not info["git_repo"]:
+                continue
+            if _repo_identity({"git_repo": info["git_repo"], "git_branch": info["git_branch"]}) != target:
                 continue
 
             state_raw = getattr(r, "state", None) or getattr(r, "runtime_state", None)

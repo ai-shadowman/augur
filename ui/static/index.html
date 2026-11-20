@@ -895,14 +895,15 @@
       </section>
       <section id="tab-runs" class="cu-card hidden">
         <div class="cu-breadcrumb-row"><nav aria-label="Breadcrumb"><ol class="cu-breadcrumb"><li><a href="#" data-tab="repos">Code Understanding</a></li><li>Runs</li></ol></nav><button type="button" class="cu-btn-icon cu-refresh-btn" title="Refresh" aria-label="Refresh" style="color:var(--cu-red);border-color:var(--cu-red);padding:0.2rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
-        <h2>Runs</h2>
+        <h2 id="runs-heading" tabindex="-1">Runs</h2>
         <div class="cu-pipeline-row">
-          <p class="cu-muted" style="margin:0;flex:1">Select a run to view, download, query or re-run analysis reports.</p>
+          <p class="cu-muted" style="margin:0;flex:1">Select a run to view, download, query, delete or re-run analysis reports.</p>
         </div>
         <div class="cu-pipeline-row">
           <div class="cu-note hidden" id="run-selection-note"></div>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-view-report" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="11" y1="9" x2="8" y2="9"/></svg>View Report</button>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download PDF Report</button>
+          <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-delete" disabled><svg class="cu-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-download-md-report" disabled><svg class="cu-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>Download Markdown Report</button>
           <button type="button" class="cu-btn cu-btn-secondary cu-run-action" id="run-rerun" disabled><svg class="cu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Re-run</button>
         </div>
@@ -1022,6 +1023,22 @@
       <div class="cu-modal-footer">
         <button type="button" class="cu-btn cu-btn-link" id="delete-repo-cancel">Cancel</button>
         <button type="button" class="cu-btn cu-btn-primary" id="delete-repo-confirm">Delete</button>
+      </div>
+    </div>
+  </div>
+  <div id="delete-run-modal" class="cu-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="delete-run-title">
+    <div class="cu-modal">
+      <div class="cu-modal-header">
+        <h3 id="delete-run-title">Delete Run</h3>
+        <button type="button" class="cu-modal-close" id="delete-run-close" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="cu-modal-body">
+        <div id="delete-run-target" style="font-size:0.9rem"></div>
+        <p class="cu-muted" style="margin:0;font-size:0.85rem">This permanently deletes the pipeline run and all associated MLflow data, including indexes, reports, and traces.</p>
+      </div>
+      <div class="cu-modal-footer">
+        <button type="button" class="cu-btn cu-btn-link" id="delete-run-cancel">Cancel</button>
+        <button type="button" class="cu-btn cu-btn-primary" id="delete-run-confirm">Delete</button>
       </div>
     </div>
   </div>

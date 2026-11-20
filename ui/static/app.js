@@ -420,17 +420,17 @@ function showTab(name) {
   }
 }
 
-function buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug) {
+function buildRunDetailUrl(runId, gitRepo, gitBranch, projectSlug, multiRepo = false) {
   const qs = new URLSearchParams();
   if (gitRepo) {
     qs.set("git_repo", gitRepo);
     if (gitBranch) qs.set("git_branch", gitBranch);
-  } else if (projectSlug) {
+  } else if (projectSlug || multiRepo) {
     qs.set("multi_repo", "true");
-    qs.set("project_slug", projectSlug);
+    if (projectSlug) qs.set("project_slug", projectSlug);
   }
   const query = qs.toString();
-  return `/api/v2/pipelines/runs/${runId}${query ? `?${query}` : ""}`;
+  return `/api/v2/pipelines/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`;
 }
 
 function formatReportHeading(gitRepo, gitBranch, projectSlug) {
@@ -795,7 +795,7 @@ function runListCard(run) {
   return `<tr>
     <td>
       <div style="display:flex;align-items:center;gap:0.75rem">
-        <input type="checkbox" class="cu-check cu-radio cu-run-select" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-title="${esc(title)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-project-slug="${esc(projectSlug)}" data-succeeded="${succeeded}"/>
+        <input type="checkbox" class="cu-check cu-radio cu-run-select" data-run-id="${esc(run.run_id)}" data-run-name="${esc(run.name)}" data-title="${esc(title)}" data-git-repo="${esc(run.git_repo || "")}" data-git-branch="${esc(run.git_branch || "")}" data-multi-repo="${isMulti}" data-project-slug="${esc(projectSlug)}" data-succeeded="${succeeded}"/>
         <div>
           <span class="cu-index-title">${esc(title)}</span>
           <div class="cu-index-owner" style="font-size:0.8rem">${esc(run.name || "")}</div>
@@ -828,13 +828,15 @@ function applySelectedRunControls(cb) {
   const selected = Boolean(cb && cb.checked);
   const succeeded = selected && cb.dataset.succeeded === "true";
   state.selectedRunId = selected ? (cb.dataset.runId || null) : null;
-  for (const id of ["run-view-report", "run-download-report", "run-download-md-report", "run-rerun"]) {
+  for (const id of ["run-view-report", "run-download-report", "run-delete", "run-download-md-report", "run-rerun"]) {
     const btn = $(id);
-    btn.disabled = !(selected && succeeded);
+    btn.disabled = id === "run-delete" ? !selected : !(selected && succeeded);
     btn.dataset.runId = selected ? cb.dataset.runId : "";
     btn.dataset.runName = selected ? cb.dataset.runName : "";
+    btn.dataset.title = selected ? (cb.dataset.title || "") : "";
     btn.dataset.gitRepo = selected ? cb.dataset.gitRepo : "";
     btn.dataset.gitBranch = selected ? cb.dataset.gitBranch : "";
+    btn.dataset.multiRepo = selected ? (cb.dataset.multiRepo || "false") : "false";
     btn.dataset.projectSlug = selected ? (cb.dataset.projectSlug || "") : "";
   }
   updateRunSelectionNote(selected ? cb : null);
@@ -934,6 +936,83 @@ function jobCard(job) {
 }
 
 let pendingDeleteRepo = null;
+let pendingDeleteRun = null;
+
+function openDeleteRunModal(runTarget) {
+  if (state.thinking && state.thinking.kind === "delete") return;
+  pendingDeleteRun = runTarget;
+  const heading = runTarget.title || runTarget.runName || runTarget.runId;
+  const sub = runTarget.runName && runTarget.runName !== heading ? runTarget.runName : runTarget.runId;
+  $("delete-run-target").innerHTML =
+    `<strong>${esc(heading)}</strong>` +
+    `<div class="cu-muted" style="font-size:0.82rem;margin-top:0.2rem;word-break:break-all">${esc(sub)}</div>`;
+  document.querySelector(".cu-shell").inert = true;
+  $("delete-run-modal").classList.remove("hidden");
+  $("delete-run-cancel").focus();
+}
+
+function closeDeleteRunModal(restoreFocus = true) {
+  $("delete-run-modal").classList.add("hidden");
+  document.querySelector(".cu-shell").inert = false;
+  pendingDeleteRun = null;
+  if (restoreFocus) {
+    const trigger = $("run-delete");
+    if (trigger && !trigger.disabled) trigger.focus();
+  }
+}
+
+async function deleteRun(runTarget) {
+  const runId = runTarget.runId;
+  if (!runId) return;
+  const idx = state.allRuns.findIndex((r) => r.run_id === runId);
+  const removed = idx >= 0 ? state.allRuns[idx] : null;
+  const wasSelected = state.selectedRunId === runId;
+  let nextThinking = state.thinking && state.thinking.kind !== "delete" ? state.thinking : null;
+  if (state.pollRunId === runId) {
+    if (state.poll) clearInterval(state.poll);
+    state.poll = null;
+    state.pollRunId = null;
+    if (nextThinking && nextThinking.kind === "pipeline") nextThinking = null;
+  }
+  if ($("report-viewer-subtitle").textContent === (runTarget.runName || runId)) {
+    $("report-viewer-title").textContent = "";
+    $("report-viewer-subtitle").textContent = "";
+    $("report-viewer-content").innerHTML = "";
+  }
+  if (idx >= 0) state.allRuns.splice(idx, 1);
+  if (wasSelected) state.selectedRunId = null;
+  renderRunPage(state.runPage);
+  syncRunsAutoRefresh();
+  banner("");
+  setThinking({
+    kind: "delete",
+    label: "Deleting run",
+    status: "Removing pipeline run and MLflow records…",
+  });
+  try {
+    await api(
+      buildRunDetailUrl(
+        runId,
+        runTarget.gitRepo || "",
+        runTarget.gitBranch || "",
+        runTarget.projectSlug || "",
+        runTarget.multiRepo === "true",
+      ),
+      { method: "DELETE" },
+    );
+    await load();
+  } catch (e) {
+    if (removed && !state.allRuns.some((r) => r.run_id === runId)) {
+      state.allRuns.splice(Math.min(idx, state.allRuns.length), 0, removed);
+    }
+    if (wasSelected) state.selectedRunId = runId;
+    renderRunPage(state.runPage);
+    syncRunsAutoRefresh();
+    banner(String(e.message || e), true);
+  } finally {
+    setThinking(nextThinking);
+  }
+}
 
 function openDeleteRepoModal(repo) {
   if (state.thinking && state.thinking.kind === "delete") return;
@@ -1165,7 +1244,7 @@ function renderRunPage(page) {
 }
 
 async function refreshActiveRuns() {
-  if (_runsRefreshInFlight || document.hidden) return;
+  if (_runsRefreshInFlight || document.hidden || (state.thinking && state.thinking.kind === "delete")) return;
   _runsRefreshInFlight = true;
   try {
     const prevActiveIds = new Set(
@@ -1174,6 +1253,7 @@ async function refreshActiveRuns() {
         .map((r) => r.run_id)
     );
     const v2runs = await api("/api/v2/pipelines/runs");
+    if (state.thinking && state.thinking.kind === "delete") return;
     state.allRuns = [...(v2runs.runs || [])];
     renderRunPage(state.runPage);
     const newlyFinished = state.allRuns.some(
@@ -1603,9 +1683,26 @@ $("delete-repo-confirm").addEventListener("click", async () => {
   closeDeleteRepoModal();
   if (target) await deleteRepo(target);
 });
+$("run-delete").addEventListener("click", () => {
+  const btn = $("run-delete");
+  if (!btn.dataset.runId) return;
+  openDeleteRunModal({ ...btn.dataset });
+});
+$("delete-run-close").addEventListener("click", () => closeDeleteRunModal());
+$("delete-run-cancel").addEventListener("click", () => closeDeleteRunModal());
+$("delete-run-modal").addEventListener("click", (e) => { if (e.target === $("delete-run-modal")) closeDeleteRunModal(); });
+$("delete-run-confirm").addEventListener("click", async () => {
+  const target = pendingDeleteRun;
+  closeDeleteRunModal(false);
+  if (!target) return;
+  const pending = deleteRun(target);
+  ($("run-list").querySelector(".cu-run-select") || $("runs-heading"))?.focus();
+  await pending;
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("add-repo-modal").classList.contains("hidden")) closeAddRepo();
   if (e.key === "Escape" && !$("delete-repo-modal").classList.contains("hidden")) closeDeleteRepoModal();
+  if (e.key === "Escape" && !$("delete-run-modal").classList.contains("hidden")) closeDeleteRunModal();
 });
 $("add-custom").onclick = async () => {
   const btn = $("add-custom");

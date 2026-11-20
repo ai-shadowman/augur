@@ -191,6 +191,20 @@ class AssetLoader(ABC):
         """Soft-deletes backing-store runs/records for a single repository."""
         return 0
 
+    def purge_run_records(
+        self,
+        run_id: str,
+        git_repo: str = "",
+        git_branch: str = "main",
+        multi_repo: bool = False,
+        project_slug: str = "",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        purge_untagged_for_target: bool = False,
+    ) -> int:
+        """Soft-deletes backing-store runs/records for a single pipeline run."""
+        return 0
+
     @abstractmethod
     def num_prompts(self, prompt_prefix: str) -> int:
         """Returns the number of prompts with the given prefix.

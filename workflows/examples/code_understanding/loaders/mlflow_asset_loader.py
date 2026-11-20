@@ -876,18 +876,8 @@ class MlFlowAssetLoader(AssetLoader):
             self.register_enrichments(enrichment_files={"repos/repo_list.json": remaining})
             return remaining
 
-    def purge_repo_records(
-        self,
-        git_repo: str,
-        git_branch: str = "main",
-        kfp_run_ids: list[str] | None = None,
-    ) -> int:
-        """Soft-deletes single-repo MLflow runs and traces for ``(git_repo, git_branch)``."""
+    def _resolve_purge_experiments(self, client) -> tuple[list[str], str | None]:
         from utils.pipeline_utils import resolve_mlflow_prefix
-
-        git_slug = _repo_slug(git_repo, git_branch)
-        if not git_slug:
-            return 0
 
         prefix = resolve_mlflow_prefix(namespace=self.namespace, workspace=self.workspace)
         eval_exp = f"{prefix}/code-refactoring/evaluations"
@@ -905,6 +895,86 @@ class MlFlowAssetLoader(AssetLoader):
                 ]
             )
         )
+        active_exp_ids: list[str] = []
+        telemetry_exp_id: str | None = None
+        for exp_name in exp_names:
+            exp = client.get_experiment_by_name(exp_name)
+            if not exp or getattr(exp, "lifecycle_stage", None) != "active":
+                continue
+            exp_id = str(exp.experiment_id)
+            active_exp_ids.append(exp_id)
+            if exp_name == telemetry_exp:
+                telemetry_exp_id = exp_id
+        return active_exp_ids, telemetry_exp_id
+
+    @staticmethod
+    def _delete_traces_for_kfp_runs(
+        client,
+        telemetry_exp_id: str | None,
+        clean_run_ids: list[str],
+    ) -> None:
+        if not (
+            telemetry_exp_id
+            and clean_run_ids
+            and hasattr(client, "search_traces")
+            and hasattr(client, "delete_traces")
+        ):
+            return
+        for rid in clean_run_ids:
+            safe_rid = escape_mlflow_filter_value(rid)
+            try:
+                trace_ids: list[str] = []
+                page_token: str | None = None
+                seen_tokens: set[str] = set()
+                while True:
+                    trace_kwargs: dict[str, object] = {
+                        "locations": [telemetry_exp_id],
+                        "filter_string": f"tags.`kfp.run_id` = '{safe_rid}'",
+                        "include_spans": False,
+                    }
+                    if page_token:
+                        trace_kwargs["page_token"] = page_token
+                    traces = client.search_traces(**trace_kwargs)
+                    trace_ids.extend(
+                        tid
+                        for t in (traces or [])
+                        if isinstance(
+                            (
+                                tid := getattr(getattr(t, "info", None), "trace_id", None)
+                                or getattr(getattr(t, "info", None), "request_id", None)
+                            ),
+                            str,
+                        )
+                        and tid
+                    )
+                    next_token = getattr(traces, "token", None)
+                    if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+                        break
+                    seen_tokens.add(next_token)
+                    page_token = next_token
+                for i in range(0, len(trace_ids), 100):
+                    client.delete_traces(
+                        experiment_id=telemetry_exp_id,
+                        trace_ids=trace_ids[i : i + 100],
+                    )
+            except Exception:
+                logging.debug(
+                    "Skipping trace cleanup in experiment %s for run %s",
+                    telemetry_exp_id,
+                    rid,
+                    exc_info=True,
+                )
+
+    def purge_repo_records(
+        self,
+        git_repo: str,
+        git_branch: str = "main",
+        kfp_run_ids: list[str] | None = None,
+    ) -> int:
+        """Soft-deletes single-repo MLflow runs and traces for ``(git_repo, git_branch)``."""
+        git_slug = _repo_slug(git_repo, git_branch)
+        if not git_slug:
+            return 0
 
         safe_slug = escape_mlflow_filter_value(git_slug)
         filters = [f"tags.\"git_slug\" = '{safe_slug}'"]
@@ -917,17 +987,7 @@ class MlFlowAssetLoader(AssetLoader):
             filters.append(f"tags.\"kfp_run_id\" = '{safe_rid}'")
 
         client = MlflowClient()
-        active_exp_ids: list[str] = []
-        telemetry_exp_id: str | None = None
-        for exp_name in exp_names:
-            exp = client.get_experiment_by_name(exp_name)
-            if not exp or getattr(exp, "lifecycle_stage", None) != "active":
-                continue
-            exp_id = str(exp.experiment_id)
-            active_exp_ids.append(exp_id)
-            if exp_name == telemetry_exp:
-                telemetry_exp_id = exp_id
-
+        active_exp_ids, telemetry_exp_id = self._resolve_purge_experiments(client)
         if not active_exp_ids:
             return 0
 
@@ -951,57 +1011,104 @@ class MlFlowAssetLoader(AssetLoader):
             client.delete_run(run_id)
             deleted_count += 1
 
-        if (
-            telemetry_exp_id
-            and clean_run_ids
-            and hasattr(client, "search_traces")
-            and hasattr(client, "delete_traces")
-        ):
-            for rid in clean_run_ids:
-                safe_rid = escape_mlflow_filter_value(rid)
-                try:
-                    trace_ids: list[str] = []
-                    page_token: str | None = None
-                    seen_tokens: set[str] = set()
-                    while True:
-                        trace_kwargs: dict[str, object] = {
-                            "locations": [telemetry_exp_id],
-                            "filter_string": f"tags.`kfp.run_id` = '{safe_rid}'",
-                            "include_spans": False,
-                        }
-                        if page_token:
-                            trace_kwargs["page_token"] = page_token
-                        traces = client.search_traces(**trace_kwargs)
-                        trace_ids.extend(
-                            tid
-                            for t in (traces or [])
-                            if isinstance(
-                                (
-                                    tid := getattr(getattr(t, "info", None), "trace_id", None)
-                                    or getattr(getattr(t, "info", None), "request_id", None)
-                                ),
-                                str,
-                            )
-                            and tid
-                        )
-                        next_token = getattr(traces, "token", None)
-                        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
-                            break
-                        seen_tokens.add(next_token)
-                        page_token = next_token
-                    for i in range(0, len(trace_ids), 100):
-                        client.delete_traces(
-                            experiment_id=telemetry_exp_id,
-                            trace_ids=trace_ids[i : i + 100],
-                        )
-                except Exception:
-                    logging.debug(
-                        "Skipping trace cleanup in experiment %s for run %s",
-                        telemetry_exp_id,
-                        rid,
-                        exc_info=True,
-                    )
+        self._delete_traces_for_kfp_runs(client, telemetry_exp_id, clean_run_ids)
+        return deleted_count
 
+    def purge_run_records(
+        self,
+        run_id: str,
+        git_repo: str = "",
+        git_branch: str = "main",
+        multi_repo: bool = False,
+        project_slug: str = "",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        purge_untagged_for_target: bool = False,
+    ) -> int:
+        """Soft-deletes MLflow runs and traces associated with a single KFP pipeline run."""
+        from utils.pipeline_utils import sanitize_slug
+
+        clean_id = (run_id or "").strip()
+        if not clean_id:
+            return 0
+
+        clean_project_slug = sanitize_slug(project_slug)
+        git_slug = (
+            (clean_project_slug or "multi-repo")
+            if multi_repo
+            else (_repo_slug(git_repo, git_branch) if git_repo else clean_project_slug)
+        )
+
+        client = MlflowClient()
+        active_exp_ids, telemetry_exp_id = self._resolve_purge_experiments(client)
+        if not active_exp_ids:
+            return 0
+
+        safe_id = escape_mlflow_filter_value(clean_id)
+        filters = [
+            f"tags.\"pipeline_run_id\" = '{safe_id}'",
+            f"tags.\"kfp_run_id\" = '{safe_id}'",
+        ]
+        if git_slug and (purge_untagged_for_target or start_time_ms is not None):
+            safe_slug = escape_mlflow_filter_value(git_slug)
+            filters.append(f"tags.\"git_slug\" = '{safe_slug}'")
+
+        matched_runs: dict[str, object] = {}
+        for flt in filters:
+            for run in _search_all_runs(client, active_exp_ids, flt):
+                rid = getattr(getattr(run, "info", None), "run_id", None)
+                if isinstance(rid, str) and rid:
+                    matched_runs[rid] = run
+
+        win_start = (start_time_ms - 5_000) if start_time_ms is not None else None
+        win_end = (
+            ((end_time_ms if end_time_ms is not None else start_time_ms) + 60_000)
+            if start_time_ms is not None
+            else None
+        )
+
+        deleted_count = 0
+        for mlf_run_id, run in matched_runs.items():
+            tags = _run_tags(run)
+            slug_tag = str(tags.get("git_slug") or "").strip()
+            if tags.get("category") == "enrichments" and not slug_tag:
+                continue
+
+            p_rid = str(tags.get("pipeline_run_id") or "").strip()
+            k_rid = str(tags.get("kfp_run_id") or "").strip()
+            if p_rid == clean_id or k_rid == clean_id:
+                client.delete_run(mlf_run_id)
+                deleted_count += 1
+                continue
+            if p_rid or k_rid:
+                continue
+
+            if not git_slug or slug_tag != git_slug:
+                continue
+            if "multi_repo" in tags:
+                run_is_multi = str(tags.get("multi_repo") or "").strip().lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
+                if run_is_multi != bool(multi_repo):
+                    continue
+            if not purge_untagged_for_target:
+                if str(tags.get("adhoc_query") or "").strip().lower() == "true":
+                    continue
+                run_start = getattr(getattr(run, "info", None), "start_time", None)
+                if (
+                    win_start is None
+                    or win_end is None
+                    or not isinstance(run_start, (int, float))
+                    or not (win_start <= run_start <= win_end)
+                ):
+                    continue
+
+            client.delete_run(mlf_run_id)
+            deleted_count += 1
+
+        self._delete_traces_for_kfp_runs(client, telemetry_exp_id, [clean_id])
         return deleted_count
 
     def num_prompts(self, prompt_prefix: str) -> int:
