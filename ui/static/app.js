@@ -828,7 +828,7 @@ function applySelectedRunControls(cb) {
   const selected = Boolean(cb && cb.checked);
   const succeeded = selected && cb.dataset.succeeded === "true";
   state.selectedRunId = selected ? (cb.dataset.runId || null) : null;
-  for (const id of ["run-view-report", "run-download-report", "run-delete", "run-download-md-report", "run-rerun"]) {
+  for (const id of ["run-view-report", "run-download-report", "run-download-md-report", "run-rerun", "run-delete"]) {
     const btn = $(id);
     btn.disabled = id === "run-delete" ? !selected : !(selected && succeeded);
     btn.dataset.runId = selected ? cb.dataset.runId : "";
